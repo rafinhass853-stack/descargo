@@ -1,0 +1,45 @@
+/* Ajuste de Layout para o Painel */
+.dashboard-container {
+  display: flex;
+  height: 100vh;
+  width: 100vw;
+  background-color: #000;
+  overflow: hidden;
+}
+
+.sidebar {
+  width: 280px;
+  background-color: #0d0d0d;
+  border-right: 1px solid #222;
+  display: flex;
+  flex-direction: column;
+  padding: 25px; /* Mais espaço interno */
+}
+
+.sidebar-header {
+  margin-bottom: 30px;
+}
+
+.lista-scroll {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 20px;
+}
+
+.btn-sair {
+  width: 100%;
+  padding: 12px;
+  background-color: #d32f2f; /* Vermelho mais suave */
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-bottom: 10px; /* Garante que não encoste no final da tela */
+}
+
+.map-area {
+  flex: 1;
+  height: 100%;
+  background-color: #1a1a1a;
+}
