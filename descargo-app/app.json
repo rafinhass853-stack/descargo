@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "descargo-app",
+    "slug": "descargo-app",
+    "version": "1.0.0",
+    "scheme": "descargo-app",
+    "web": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDthKUMIbKwMbGihWVqwBT2LfJ3PUogjyM"
+        }
+      }
+    },
+    "android": {
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyDthKUMIbKwMbGihWVqwBT2LfJ3PUogjyM"
+        }
+      },
+      "package": "com.rafael.descargo"
+    }
+  }
+}
