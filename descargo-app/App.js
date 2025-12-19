@@ -2,11 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, SafeAreaView, 
   StatusBar, Dimensions, Platform, Alert, Modal, TextInput, ScrollView,
-  ActivityIndicator, Linking 
+  ActivityIndicator, Linking, Image 
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Camera, CameraView } from 'expo-camera';
-import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importação para os ícones
+import { MaterialCommunityIcons } from '@expo/vector-icons';
 
 // --- IMPORTAÇÕES DO FIREBASE ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -18,6 +18,11 @@ import {
   signInWithEmailAndPassword, 
   signOut 
 } from "firebase/auth";
+import { 
+  getFirestore, 
+  doc, 
+  onSnapshot 
+} from "firebase/firestore";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 
 // --- CONFIGURAÇÃO DO MAPA ---
@@ -42,7 +47,7 @@ const STATUS = {
   PARADA: 'PARADA'
 };
 
-// --- INICIALIZAÇÃO SEGURA DO FIREBASE ---
+// --- INICIALIZAÇÃO FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -53,6 +58,7 @@ const firebaseConfig = {
 };
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
+const db = getFirestore(app);
 
 let auth;
 try {
@@ -85,10 +91,7 @@ export default function App() {
     }
     setLoading(true);
     signInWithEmailAndPassword(auth, email.trim(), senha)
-      .catch((error) => {
-        console.log("Erro:", error.code);
-        Alert.alert("Erro no Login", "Verifique suas credenciais.");
-      })
+      .catch(() => Alert.alert("Erro no Login", "Verifique suas credenciais."))
       .finally(() => setLoading(false));
   };
 
@@ -136,23 +139,18 @@ export default function App() {
              <Text style={styles.btnTexto}>ENTRAR NO APP</Text>
           </TouchableOpacity>
 
-          {/* RODAPÉ DO DESENVOLVEDOR */}
           <View style={styles.footerDev}>
             <Text style={styles.textoDev}>Desenvolvido por Rafael Araujo</Text>
-            
             <View style={styles.rowIcones}>
               <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}>
                 <MaterialCommunityIcons name="instagram" size={30} color="#E1306C" />
               </TouchableOpacity>
-
               <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')}>
                 <MaterialCommunityIcons name="whatsapp" size={30} color="#25D366" />
               </TouchableOpacity>
-
               <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
                 <MaterialCommunityIcons name="linkedin" size={30} color="#0077B5" />
               </TouchableOpacity>
-
               <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}>
                 <MaterialCommunityIcons name="email-outline" size={30} color="#FFD700" />
               </TouchableOpacity>
@@ -166,7 +164,7 @@ export default function App() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
       {telaAtiva === 'inicio' ? (
-        <Dashboard setTelaAtiva={setTelaAtiva} />
+        <Dashboard setTelaAtiva={setTelaAtiva} usuarioEmail={usuario.email} />
       ) : telaAtiva === 'abastecimento' ? (
         <TelaAbastecimento aoVoltar={() => setTelaAtiva('inicio')} />
       ) : telaAtiva === 'conta' ? (
@@ -179,19 +177,31 @@ export default function App() {
 }
 
 // --- TELA DASHBOARD ---
-function Dashboard({ setTelaAtiva }) {
+function Dashboard({ setTelaAtiva, usuarioEmail }) {
   const [statusJornada, setStatusJornada] = useState(STATUS.OFFLINE);
   const [location, setLocation] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef(null);
+  
   const [ganhos, setGanhos] = useState("0,00");
-  const [descargas, setDescargas] = useState(0);
+  const [statusViagemDesc, setStatusViagemDesc] = useState("Sem programação");
+
+  useEffect(() => {
+    const docRef = doc(db, "viagens_ativas", usuarioEmail);
+    const unsubscribe = onSnapshot(docRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setGanhos(data.faturamento || "0,00");
+        setStatusViagemDesc(data.status_descricao || "Sem programação");
+      }
+    });
+    return () => unsubscribe();
+  }, [usuarioEmail]);
 
   useEffect(() => {
     (async () => {
-      let { status: locStatus } = await Location.requestForegroundPermissionsAsync();
-      await Camera.requestCameraPermissionsAsync();
-      if (locStatus === 'granted') {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status === 'granted') {
         let locationRes = await Location.getCurrentPositionAsync({});
         setLocation({
           latitude: locationRes.coords.latitude,
@@ -205,18 +215,15 @@ function Dashboard({ setTelaAtiva }) {
 
   const tirarFotoERegistrar = async () => {
     if (cameraRef.current) {
-      try {
-        await cameraRef.current.takePictureAsync({ quality: 0.5 });
-        setShowCamera(false);
-        setStatusJornada(statusJornada === STATUS.OFFLINE ? STATUS.EM_JORNADA : STATUS.OFFLINE);
-        Alert.alert("Sucesso", "Ponto registrado!");
-      } catch (e) { Alert.alert("Erro", e.message); }
+      await cameraRef.current.takePictureAsync({ quality: 0.5 });
+      setShowCamera(false);
+      setStatusJornada(statusJornada === STATUS.OFFLINE ? STATUS.EM_JORNADA : STATUS.OFFLINE);
+      Alert.alert("Sucesso", "Ponto registrado!");
     }
   };
 
   return (
     <View style={{ flex: 1 }}>
-      <StatusBar barStyle="light-content" />
       <View style={[styles.barraTop, { backgroundColor: statusJornada === STATUS.OFFLINE ? '#222' : '#2ecc71' }]}>
         <Text style={[styles.textoStatusTop, { color: statusJornada === STATUS.OFFLINE ? '#FFF' : '#000' }]}>
           {statusJornada === STATUS.OFFLINE ? 'VOCÊ ESTÁ OFFLINE' : `EM JORNADA (${statusJornada})`}
@@ -226,25 +233,34 @@ function Dashboard({ setTelaAtiva }) {
       <View style={styles.main}>
         <View style={styles.containerMapa}>
           {location ? (
-            <MapView provider={Platform.OS === 'android' ? PROVIDER_GOOGLE : undefined} style={styles.mapa} initialRegion={location} customMapStyle={mapStyleNoite}>
-              <Marker coordinate={location} />
+            <MapView 
+              provider={PROVIDER_GOOGLE} 
+              style={styles.mapa} 
+              initialRegion={location} 
+              customMapStyle={mapStyleNoite}
+            >
+              <Marker coordinate={location}>
+                <View style={styles.containerCaminhao}>
+                   <MaterialCommunityIcons name="truck-fast" size={35} color="#FFD700" />
+                </View>
+              </Marker>
             </MapView>
           ) : <View style={styles.mapaSimulado}><Text style={{color: '#FFF'}}>Carregando mapa...</Text></View>}
         </View>
 
         <View style={styles.overlayCards}>
           <View style={styles.cardResumo}>
-            <Text style={styles.labelResumo}>GANHOS DO DIA</Text>
+            <Text style={styles.labelResumo}>Faturamento Viagem</Text>
             <Text style={styles.valorResumo}>R$ {ganhos}</Text>
           </View>
           <View style={styles.cardResumo}>
-            <Text style={styles.labelResumo}>DESCARGAS</Text>
-            <Text style={styles.valorResumo}>{descargas}</Text>
+            <Text style={styles.labelResumo}>Status Atual</Text>
+            <Text style={styles.valorStatusTexto}>{statusViagemDesc}</Text>
           </View>
         </View>
 
         <View style={styles.areaBotaoCentral}>
-            {statusJornada !== STATUS.OFFLINE && statusJornada !== STATUS.ALMOCO && (
+            {statusJornada !== STATUS.OFFLINE && (
                <View style={styles.rowBotoes}>
                   <TouchableOpacity style={styles.btnApoio} onPress={() => setStatusJornada(STATUS.ALMOCO)}><Text style={styles.btnApoioText}>ALMOÇO</Text></TouchableOpacity>
                   <TouchableOpacity style={styles.btnApoio} onPress={() => setStatusJornada(STATUS.PARADA)}><Text style={styles.btnApoioText}>PARADA</Text></TouchableOpacity>
@@ -272,7 +288,67 @@ function Dashboard({ setTelaAtiva }) {
   );
 }
 
-// --- TELAS SECUNDÁRIAS ---
+// --- TELA ABASTECIMENTO (COM NOVOS CAMPOS E FOTO) ---
+function TelaAbastecimento({ aoVoltar }) {
+  const [km, setKm] = useState('');
+  const [litros, setLitros] = useState('');
+  const [valorLitro, setValorLitro] = useState('');
+  const [fotoHodometro, setFotoHodometro] = useState(null);
+  const [showCamera, setShowCamera] = useState(false);
+  const cameraRef = useRef(null);
+
+  const tirarFotoHodometro = async () => {
+    if (cameraRef.current) {
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+      setFotoHodometro(photo.uri);
+      setShowCamera(false);
+    }
+  };
+
+  return (
+    <View style={styles.containerTelas}>
+      <Text style={styles.tituloTela}>Abastecimento</Text>
+      
+      <ScrollView showsVerticalScrollIndicator={false}>
+        <TextInput style={styles.inputFundo} placeholder="KM ATUAL" placeholderTextColor="#666" keyboardType="numeric" value={km} onChangeText={setKm} />
+        <TextInput style={styles.inputFundo} placeholder="LITROS DIESEL" placeholderTextColor="#666" keyboardType="numeric" value={litros} onChangeText={setLitros} />
+        <TextInput style={styles.inputFundo} placeholder="VALOR POR LITRO R$" placeholderTextColor="#666" keyboardType="numeric" value={valorLitro} onChangeText={setValorLitro} />
+
+        <Text style={styles.labelInput}>Foto do Hodômetro (Nítida)</Text>
+        <TouchableOpacity style={styles.btnFoto} onPress={() => setShowCamera(true)}>
+          {fotoHodometro ? (
+            <Image source={{ uri: fotoHodometro }} style={styles.previewFoto} />
+          ) : (
+            <View style={{alignItems: 'center'}}>
+              <MaterialCommunityIcons name="camera" size={40} color="#FFD700" />
+              <Text style={{color: '#888', fontSize: 12}}>Toque para fotografar painel</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity style={[styles.btnSalvarAbastecimento, {marginTop: 20}]} onPress={() => Alert.alert("Sucesso", "Registrado!")}>
+          <Text style={styles.btnTexto}>SALVAR REGISTRO</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}>
+          <Text style={[styles.btnTexto, {color: '#FFF'}]}>CANCELAR</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      <Modal visible={showCamera} animationType="slide">
+        <CameraView style={{flex: 1}} facing="back" ref={cameraRef}>
+          <View style={styles.cameraOverlay}>
+            <View style={styles.guiaCamera}><Text style={{color: '#FFD700'}}>Enquadre o Hodômetro</Text></View>
+            <TouchableOpacity style={styles.btnCapturar} onPress={tirarFotoHodometro} />
+            <TouchableOpacity onPress={() => setShowCamera(false)}><Text style={{color:'#FFF', marginBottom: 20}}>Cancelar</Text></TouchableOpacity>
+          </View>
+        </CameraView>
+      </Modal>
+    </View>
+  );
+}
+
+// --- TELA CONTA (RESTAURADA) ---
 function TelaConta({ aoVoltar, logoff, userEmail }) {
   return (
     <View style={styles.containerTelas}>
@@ -294,26 +370,17 @@ function TelaConta({ aoVoltar, logoff, userEmail }) {
   );
 }
 
-function TelaAbastecimento({ aoVoltar }) {
-  return (
-    <View style={styles.containerTelas}>
-      <Text style={styles.tituloTela}>Abastecimento</Text>
-      <TextInput style={styles.inputFundo} placeholder="KM ATUAL" placeholderTextColor="#666" keyboardType="numeric" />
-      <TextInput style={styles.inputFundo} placeholder="LITROS DIESEL" placeholderTextColor="#666" keyboardType="numeric" />
-      <TouchableOpacity style={styles.btnSalvarAbastecimento} onPress={() => Alert.alert("Sucesso", "Registrado!")}>
-        <Text style={styles.btnTexto}>SALVAR REGISTRO</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={[styles.btnTexto, {color: '#FFF'}]}>CANCELAR</Text></TouchableOpacity>
-    </View>
-  );
-}
-
+// --- TELA HISTORICO (RESTAURADA) ---
 function TelaHistorico({ aoVoltar }) {
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Históricos</Text>
-      <TouchableOpacity style={styles.itemMenu}><Text style={styles.itemMenuTexto}>🛣️ Histórico de Viagens</Text></TouchableOpacity>
-      <TouchableOpacity style={styles.itemMenu}><Text style={styles.itemMenuTexto}>⏰ Histórico de Ponto</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Aviso", "Abrindo Histórico de Viagens...")}>
+        <Text style={styles.itemMenuTexto}>🛣️ Histórico de Viagens</Text>
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Aviso", "Abrindo Histórico de Ponto...")}>
+        <Text style={styles.itemMenuTexto}>⏰ Histórico de Ponto</Text>
+      </TouchableOpacity>
       <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={[styles.btnTexto, {color: '#FFD700'}]}>VOLTAR</Text></TouchableOpacity>
     </View>
   );
@@ -343,12 +410,9 @@ const styles = StyleSheet.create({
   contentLogin: { flexGrow: 1, padding: 35, justifyContent: 'center', alignItems: 'center' },
   logo: { fontSize: 45, fontWeight: '900', color: '#FFD700' },
   linhaDestaque: { height: 4, backgroundColor: '#FF8C00', width: 80, marginBottom: 40 },
-  
-  // ESTILOS DO RODAPÉ SOCIAL
-  footerDev: { marginTop: 50, alignItems: 'center', width: '100%' },
+  footerDev: { marginTop: 50, alignItems: 'center' },
   textoDev: { color: '#888', fontSize: 12, marginBottom: 15 },
-  rowIcones: { flexDirection: 'row', justifyContent: 'space-evenly', width: '80%' },
-
+  rowIcones: { flexDirection: 'row', gap: 20 },
   barraTop: { height: 50, justifyContent: 'center', alignItems: 'center' },
   textoStatusTop: { fontSize: 12, fontWeight: 'bold' },
   main: { flex: 1 },
@@ -356,9 +420,10 @@ const styles = StyleSheet.create({
   mapa: { width: width, height: height },
   mapaSimulado: { flex: 1, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
   overlayCards: { flexDirection: 'row', justifyContent: 'space-around', position: 'absolute', top: 20, width: '100%' },
-  cardResumo: { backgroundColor: 'rgba(26,26,26,0.9)', padding: 15, borderRadius: 12, width: '42%', alignItems: 'center' },
-  labelResumo: { color: '#888', fontSize: 10 },
+  cardResumo: { backgroundColor: 'rgba(26,26,26,0.95)', padding: 15, borderRadius: 12, width: '45%', alignItems: 'center', minHeight: 80, justifyContent: 'center' },
+  labelResumo: { color: '#888', fontSize: 10, marginBottom: 5 },
   valorResumo: { color: '#FFD700', fontSize: 20, fontWeight: 'bold' },
+  valorStatusTexto: { color: '#FFF', fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
   areaBotaoCentral: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center' },
   botaoJornada: { width: 110, height: 110, borderRadius: 55, justifyContent: 'center', alignItems: 'center' },
   textoJornada: { fontSize: 14, fontWeight: 'bold', textAlign: 'center' },
@@ -377,7 +442,12 @@ const styles = StyleSheet.create({
   btnVoltar: { padding: 18, alignItems: 'center', marginTop: 10 },
   btnTexto: { color: '#000', fontWeight: 'bold' },
   itemMenu: { padding: 20, borderBottomWidth: 1, borderColor: '#222', marginBottom: 10 },
-  itemMenuTexto: { color: '#FFF', fontSize: 16 }
+  itemMenuTexto: { color: '#FFF', fontSize: 16 },
+  containerCaminhao: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 5, borderRadius: 20, borderWidth: 1, borderColor: '#FFD700' },
+  btnFoto: { backgroundColor: '#1A1A1A', height: 150, borderRadius: 10, borderStyle: 'dashed', borderWidth: 2, borderColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  previewFoto: { width: '100%', height: '100%' },
+  labelInput: { color: '#FFD700', marginBottom: 10, fontSize: 12, fontWeight: 'bold' },
+  guiaCamera: { position: 'absolute', top: '40%', borderWidth: 2, borderColor: '#FFD700', width: '80%', height: 100, alignSelf: 'center', borderRadius: 10, justifyContent: 'center', alignItems: 'center' }
 });
 
 const mapStyleNoite = [{"elementType": "geometry", "stylers": [{"color": "#212121"}]}];
