@@ -2,26 +2,25 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   StyleSheet, Text, View, TouchableOpacity, SafeAreaView, 
   StatusBar, Dimensions, Platform, Alert, Modal, TextInput, ScrollView,
-  ActivityIndicator, Linking, Image 
+  ActivityIndicator, Linking, Image, FlatList 
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Camera, CameraView } from 'expo-camera';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
+// --- BIBLIOTECAS PARA PDF ---
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+
 // --- IMPORTAÇÕES DO FIREBASE ---
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
-  getAuth,
-  initializeAuth, 
-  getReactNativePersistence, 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  signOut 
+  getAuth, initializeAuth, getReactNativePersistence, 
+  onAuthStateChanged, signInWithEmailAndPassword, signOut 
 } from "firebase/auth";
 import { 
-  getFirestore, 
-  doc, 
-  onSnapshot 
+  getFirestore, doc, onSnapshot, collection, addDoc, 
+  query, where, getDocs, orderBy, serverTimestamp 
 } from "firebase/firestore";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -47,7 +46,6 @@ const STATUS = {
   PARADA: 'PARADA'
 };
 
-// --- INICIALIZAÇÃO FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -69,12 +67,24 @@ try {
   });
 }
 
+// Helper para formatar tempo (HH:MM:SS)
+const formatarTempo = (s) => {
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const segs = s % 60;
+  return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${segs.toString().padStart(2, '0')}`;
+};
+
 export default function App() {
   const [usuario, setUsuario] = useState(null); 
   const [loading, setLoading] = useState(true);
   const [telaAtiva, setTelaAtiva] = useState('inicio');
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+
+  // --- ESTADOS GLOBAIS DE JORNADA (Persistem ao navegar entre telas) ---
+  const [statusJornada, setStatusJornada] = useState(STATUS.OFFLINE);
+  const [segundos, setSegundos] = useState(0);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -83,6 +93,19 @@ export default function App() {
     });
     return unsubscribe;
   }, []);
+
+  // Cronômetro Global
+  useEffect(() => {
+    let intervalo = null;
+    if (statusJornada !== STATUS.OFFLINE) {
+      intervalo = setInterval(() => {
+        setSegundos(prev => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(intervalo);
+    }
+    return () => clearInterval(intervalo);
+  }, [statusJornada]);
 
   const realizarLoginEmail = () => {
     if (!email || !senha) {
@@ -99,6 +122,8 @@ export default function App() {
     signOut(auth).then(() => {
       setUsuario(null);
       setTelaAtiva('inicio');
+      setStatusJornada(STATUS.OFFLINE);
+      setSegundos(0);
     });
   };
 
@@ -117,7 +142,6 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.contentLogin}>
           <Text style={styles.logo}>DESCARGO</Text>
           <View style={styles.linhaDestaque} />
-          
           <TextInput 
             style={styles.inputFundo} 
             placeholder="E-mail" 
@@ -134,26 +158,14 @@ export default function App() {
             value={senha} 
             onChangeText={setSenha}
           />
-          
           <TouchableOpacity style={[styles.btnSalvarAbastecimento, {width: '100%'}]} onPress={realizarLoginEmail}>
              <Text style={styles.btnTexto}>ENTRAR NO APP</Text>
           </TouchableOpacity>
-
           <View style={styles.footerDev}>
             <Text style={styles.textoDev}>Desenvolvido por Rafael Araujo</Text>
             <View style={styles.rowIcones}>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}>
-                <MaterialCommunityIcons name="instagram" size={30} color="#E1306C" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')}>
-                <MaterialCommunityIcons name="whatsapp" size={30} color="#25D366" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
-                <MaterialCommunityIcons name="linkedin" size={30} color="#0077B5" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}>
-                <MaterialCommunityIcons name="email-outline" size={30} color="#FFD700" />
-              </TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')}><MaterialCommunityIcons name="whatsapp" size={30} color="#25D366" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}><MaterialCommunityIcons name="instagram" size={30} color="#E1306C" /></TouchableOpacity>
             </View>
           </View>
         </ScrollView>
@@ -164,23 +176,30 @@ export default function App() {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#000' }}>
       {telaAtiva === 'inicio' ? (
-        <Dashboard setTelaAtiva={setTelaAtiva} usuarioEmail={usuario.email} />
+        <Dashboard 
+            setTelaAtiva={setTelaAtiva} 
+            usuarioEmail={usuario.email} 
+            statusJornada={statusJornada} 
+            setStatusJornada={setStatusJornada}
+            segundos={segundos}
+            setSegundos={setSegundos}
+        />
       ) : telaAtiva === 'abastecimento' ? (
         <TelaAbastecimento aoVoltar={() => setTelaAtiva('inicio')} />
       ) : telaAtiva === 'conta' ? (
         <TelaConta aoVoltar={() => setTelaAtiva('inicio')} logoff={handleLogout} userEmail={usuario.email} />
       ) : telaAtiva === 'historico' ? (
-        <TelaHistorico aoVoltar={() => setTelaAtiva('inicio')} />
+        <TelaGerenciadorHistorico aoVoltar={() => setTelaAtiva('inicio')} userEmail={usuario.email} />
       ) : null}
     </SafeAreaView>
   );
 }
 
 // --- TELA DASHBOARD ---
-function Dashboard({ setTelaAtiva, usuarioEmail }) {
-  const [statusJornada, setStatusJornada] = useState(STATUS.OFFLINE);
+function Dashboard({ setTelaAtiva, usuarioEmail, statusJornada, setStatusJornada, segundos, setSegundos }) {
   const [location, setLocation] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
+  const [statusAlvo, setStatusAlvo] = useState(null);
   const cameraRef = useRef(null);
   
   const [ganhos, setGanhos] = useState("0,00");
@@ -213,12 +232,34 @@ function Dashboard({ setTelaAtiva, usuarioEmail }) {
     })();
   }, []);
 
-  const tirarFotoERegistrar = async () => {
+  const mudarStatusComFoto = (novoStatus) => {
+    setStatusAlvo(novoStatus);
+    setShowCamera(true);
+  };
+
+  const confirmarMudancaStatus = async () => {
     if (cameraRef.current) {
-      await cameraRef.current.takePictureAsync({ quality: 0.5 });
-      setShowCamera(false);
-      setStatusJornada(statusJornada === STATUS.OFFLINE ? STATUS.EM_JORNADA : STATUS.OFFLINE);
-      Alert.alert("Sucesso", "Ponto registrado!");
+      try {
+        await cameraRef.current.takePictureAsync({ quality: 0.5 });
+        const dataHoje = new Date().toISOString().split('T')[0];
+        
+        await addDoc(collection(db, "historico_ponto"), {
+          usuario: usuarioEmail,
+          status: statusAlvo,
+          data: dataHoje,
+          hora: new Date().toLocaleTimeString(),
+          timestamp: serverTimestamp(),
+          coordenadas: location ? { lat: location.latitude, lng: location.longitude } : null,
+          duracaoAnterior: statusJornada !== STATUS.OFFLINE ? formatarTempo(segundos) : "00:00:00"
+        });
+
+        setShowCamera(false);
+        setSegundos(0); 
+        setStatusJornada(statusAlvo);
+        Alert.alert("Sucesso", "Ponto registrado!");
+      } catch (e) {
+        Alert.alert("Erro", "Erro ao salvar.");
+      }
     }
   };
 
@@ -226,121 +267,210 @@ function Dashboard({ setTelaAtiva, usuarioEmail }) {
     <View style={{ flex: 1 }}>
       <View style={[styles.barraTop, { backgroundColor: statusJornada === STATUS.OFFLINE ? '#222' : '#2ecc71' }]}>
         <Text style={[styles.textoStatusTop, { color: statusJornada === STATUS.OFFLINE ? '#FFF' : '#000' }]}>
-          {statusJornada === STATUS.OFFLINE ? 'VOCÊ ESTÁ OFFLINE' : `EM JORNADA (${statusJornada})`}
+          {statusJornada === STATUS.OFFLINE ? 'VOCÊ ESTÁ OFFLINE' : `${statusJornada} (${formatarTempo(segundos)})`}
         </Text>
       </View>
 
       <View style={styles.main}>
         <View style={styles.containerMapa}>
           {location ? (
-            <MapView 
-              provider={PROVIDER_GOOGLE} 
-              style={styles.mapa} 
-              initialRegion={location} 
-              customMapStyle={mapStyleNoite}
-            >
+            <MapView provider={PROVIDER_GOOGLE} style={styles.mapa} initialRegion={location} customMapStyle={mapStyleNoite}>
               <Marker coordinate={location}>
-                <View style={styles.containerCaminhao}>
-                   <MaterialCommunityIcons name="truck-fast" size={35} color="#FFD700" />
-                </View>
+                <View style={styles.containerCaminhao}><MaterialCommunityIcons name="truck-fast" size={35} color="#FFD700" /></View>
               </Marker>
             </MapView>
           ) : <View style={styles.mapaSimulado}><Text style={{color: '#FFF'}}>Carregando mapa...</Text></View>}
         </View>
 
         <View style={styles.overlayCards}>
-          <View style={styles.cardResumo}>
-            <Text style={styles.labelResumo}>Faturamento Viagem</Text>
-            <Text style={styles.valorResumo}>R$ {ganhos}</Text>
-          </View>
-          <View style={styles.cardResumo}>
-            <Text style={styles.labelResumo}>Status Atual</Text>
-            <Text style={styles.valorStatusTexto}>{statusViagemDesc}</Text>
-          </View>
+          <View style={styles.cardResumo}><Text style={styles.labelResumo}>Faturamento</Text><Text style={styles.valorResumo}>R$ {ganhos}</Text></View>
+          <View style={styles.cardResumo}><Text style={styles.labelResumo}>Status</Text><Text style={styles.valorStatusTexto}>{statusViagemDesc}</Text></View>
         </View>
 
         <View style={styles.areaBotaoCentral}>
-            {statusJornada !== STATUS.OFFLINE && (
-               <View style={styles.rowBotoes}>
-                  <TouchableOpacity style={styles.btnApoio} onPress={() => setStatusJornada(STATUS.ALMOCO)}><Text style={styles.btnApoioText}>ALMOÇO</Text></TouchableOpacity>
-                  <TouchableOpacity style={styles.btnApoio} onPress={() => setStatusJornada(STATUS.PARADA)}><Text style={styles.btnApoioText}>PARADA</Text></TouchableOpacity>
-               </View>
+            {statusJornada === STATUS.OFFLINE ? (
+              <TouchableOpacity style={[styles.botaoJornada, { backgroundColor: '#FFD700' }]} onPress={() => mudarStatusComFoto(STATUS.EM_JORNADA)}>
+                <Text style={styles.textoJornada}>INICIAR{"\n"}JORNADA</Text>
+              </TouchableOpacity>
+            ) : (
+              <View style={{alignItems: 'center'}}>
+                <View style={styles.rowBotoes}>
+                  <TouchableOpacity style={styles.btnApoio} onPress={() => mudarStatusComFoto(STATUS.ALMOCO)}><Text style={styles.btnApoioText}>ALMOÇO</Text></TouchableOpacity>
+                  <TouchableOpacity style={styles.btnApoio} onPress={() => mudarStatusComFoto(STATUS.PARADA)}><Text style={styles.btnApoioText}>PARADA</Text></TouchableOpacity>
+                </View>
+                {statusJornada !== STATUS.EM_JORNADA && (
+                    <TouchableOpacity style={[styles.botaoJornada, { backgroundColor: '#3498db', marginBottom: 15 }]} onPress={() => mudarStatusComFoto(STATUS.EM_JORNADA)}>
+                        <Text style={styles.textoJornada}>RETORNAR</Text>
+                    </TouchableOpacity>
+                )}
+                <TouchableOpacity style={[styles.botaoJornada, { backgroundColor: '#e74c3c' }]} onPress={() => mudarStatusComFoto(STATUS.OFFLINE)}>
+                  <Text style={styles.textoJornada}>FIM DE{"\n"}JORNADA</Text>
+                </TouchableOpacity>
+              </View>
             )}
-            <TouchableOpacity 
-              style={[styles.botaoJornada, { backgroundColor: statusJornada === STATUS.OFFLINE ? '#FFD700' : '#e74c3c' }]} 
-              onPress={() => setShowCamera(true)}>
-              <Text style={styles.textoJornada}>{statusJornada === STATUS.OFFLINE ? 'INICIAR\nJORNADA' : 'FIM DE\nJORNADA'}</Text>
-            </TouchableOpacity>
         </View>
       </View>
 
       <Modal visible={showCamera} animationType="slide">
         <CameraView style={{flex: 1}} facing="front" ref={cameraRef}>
           <View style={styles.cameraOverlay}>
-            <TouchableOpacity style={styles.btnCapturar} onPress={tirarFotoERegistrar} />
+            <TouchableOpacity style={styles.btnCapturar} onPress={confirmarMudancaStatus} />
             <TouchableOpacity onPress={() => setShowCamera(false)}><Text style={{color:'#FFF', marginBottom: 20}}>Cancelar</Text></TouchableOpacity>
           </View>
         </CameraView>
       </Modal>
-
       <MenuNavegacao setTelaAtiva={setTelaAtiva} />
     </View>
   );
 }
 
-// --- TELA ABASTECIMENTO (COM NOVOS CAMPOS E FOTO) ---
+// --- GERENCIADOR DE TELAS DE HISTÓRICO ---
+function TelaGerenciadorHistorico({ aoVoltar, userEmail }) {
+  const [subTela, setSubTela] = useState('menu');
+
+  if (subTela === 'viagens') return <TelaHistoricoViagens aoVoltar={() => setSubTela('menu')} userEmail={userEmail} />;
+  if (subTela === 'ponto') return <TelaHistoricoPonto aoVoltar={() => setSubTela('menu')} userEmail={userEmail} />;
+
+  return (
+    <View style={styles.containerTelas}>
+      <Text style={styles.tituloTela}>Históricos</Text>
+      <TouchableOpacity style={styles.itemMenu} onPress={() => setSubTela('viagens')}>
+        <Text style={styles.itemMenuTexto}>🛣️ Histórico de Viagens</Text>
+        <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.itemMenu} onPress={() => setSubTela('ponto')}>
+        <Text style={styles.itemMenuTexto}>⏰ Histórico de Ponto (PDF)</Text>
+        <MaterialCommunityIcons name="chevron-right" size={24} color="#666" />
+      </TouchableOpacity>
+      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={[styles.btnTexto, {color: '#FFD700'}]}>VOLTAR</Text></TouchableOpacity>
+    </View>
+  );
+}
+
+// --- TELA HISTORICO VIAGENS (RESTAURADA) ---
+function TelaHistoricoViagens({ aoVoltar, userEmail }) {
+    const [viagens, setViagens] = useState([]);
+    const [loading, setLoading] = useState(true);
+
+    useEffect(() => {
+        const q = query(collection(db, "historico_viagens"), where("motorista", "==", userEmail), orderBy("data_fim", "desc"));
+        getDocs(q).then(snapshot => {
+            const lista = [];
+            snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
+            setViagens(lista);
+            setLoading(false);
+        });
+    }, []);
+
+    return (
+        <View style={styles.containerTelas}>
+            <Text style={styles.tituloTela}>Minhas Viagens</Text>
+            {loading ? <ActivityIndicator color="#FFD700" /> : (
+                <FlatList 
+                    data={viagens}
+                    keyExtractor={item => item.id}
+                    renderItem={({item}) => (
+                        <View style={styles.cardHistoricoItem}>
+                            <Text style={{color: '#FFD700', fontWeight: 'bold'}}>{item.rota}</Text>
+                            <Text style={{color: '#888', fontSize: 12}}>{item.data_fim}</Text>
+                            <Text style={{color: '#FFF', marginTop: 5}}>Valor: R$ {item.valor}</Text>
+                        </View>
+                    )}
+                />
+            )}
+            <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={{color: '#FFD700'}}>VOLTAR</Text></TouchableOpacity>
+        </View>
+    );
+}
+
+// --- TELA HISTORICO PONTO (COM PDF) ---
+function TelaHistoricoPonto({ aoVoltar, userEmail }) {
+  const [registros, setRegistros] = useState([]);
+  const [diaSelecionado, setDiaSelecionado] = useState(null);
+
+  useEffect(() => {
+    const q = query(collection(db, "historico_ponto"), where("usuario", "==", userEmail), orderBy("timestamp", "desc"));
+    getDocs(q).then(snapshot => {
+      const lista = [];
+      snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
+      setRegistros(lista);
+    });
+  }, []);
+
+  const gerarPDF = async (data) => {
+    const pontosDoDia = registros.filter(r => r.data === data).reverse();
+    let htmlContent = `<html><body style="font-family:sans-serif;padding:20px;">
+      <h1 style="color:#FF8C00;">Relatório de Ponto - DESCARGO</h1>
+      <p><strong>Motorista:</strong> ${userEmail}</p><p><strong>Data:</strong> ${data}</p>
+      <table style="width:100%;border-collapse:collapse;margin-top:20px;">
+        <tr style="background:#f2f2f2;"><th>Hora</th><th>Ação</th><th>Duração Anterior</th></tr>
+        ${pontosDoDia.map(p => `<tr><td style="border:1px solid #ddd;padding:8px;">${p.hora}</td><td style="border:1px solid #ddd;padding:8px;">${p.status}</td><td style="border:1px solid #ddd;padding:8px;">${p.duracaoAnterior || '-'}</td></tr>`).join('')}
+      </table></body></html>`;
+    const { uri } = await Print.printToFileAsync({ html: htmlContent });
+    await Sharing.shareAsync(uri);
+  };
+
+  const datasUnicas = [...new Set(registros.map(item => item.data))];
+
+  return (
+    <View style={styles.containerTelas}>
+      <Text style={styles.tituloTela}>Folha de Ponto</Text>
+      {diaSelecionado ? (
+        <View style={{flex: 1}}>
+          <TouchableOpacity onPress={() => setDiaSelecionado(null)}><Text style={{color: '#FFD700', marginBottom: 10}}>← Voltar</Text></TouchableOpacity>
+          <TouchableOpacity style={[styles.btnPDF, {alignSelf: 'flex-end', marginBottom: 10}]} onPress={() => gerarPDF(diaSelecionado)}>
+             <Text style={{fontWeight: 'bold'}}>GERAR PDF</Text>
+          </TouchableOpacity>
+          <FlatList 
+            data={registros.filter(r => r.data === diaSelecionado).reverse()}
+            renderItem={({item}) => (
+              <View style={styles.cardHistoricoItem}>
+                <Text style={{color: '#FFD700'}}>{item.hora} - {item.status}</Text>
+                <Text style={{color: '#888', fontSize: 11}}>Duração: {item.duracaoAnterior}</Text>
+              </View>
+            )}
+          />
+        </View>
+      ) : (
+        <ScrollView>
+          {datasUnicas.map(data => (
+            <TouchableOpacity key={data} style={styles.itemMenu} onPress={() => setDiaSelecionado(data)}>
+              <Text style={styles.itemMenuTexto}>📅 {data}</Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
+      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={{color: '#FFD700'}}>VOLTAR</Text></TouchableOpacity>
+    </View>
+  );
+}
+
+// --- TELA ABASTECIMENTO ---
 function TelaAbastecimento({ aoVoltar }) {
   const [km, setKm] = useState('');
   const [litros, setLitros] = useState('');
-  const [valorLitro, setValorLitro] = useState('');
   const [fotoHodometro, setFotoHodometro] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef(null);
 
-  const tirarFotoHodometro = async () => {
-    if (cameraRef.current) {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
-      setFotoHodometro(photo.uri);
-      setShowCamera(false);
-    }
-  };
-
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Abastecimento</Text>
-      
-      <ScrollView showsVerticalScrollIndicator={false}>
-        <TextInput style={styles.inputFundo} placeholder="KM ATUAL" placeholderTextColor="#666" keyboardType="numeric" value={km} onChangeText={setKm} />
-        <TextInput style={styles.inputFundo} placeholder="LITROS DIESEL" placeholderTextColor="#666" keyboardType="numeric" value={litros} onChangeText={setLitros} />
-        <TextInput style={styles.inputFundo} placeholder="VALOR POR LITRO R$" placeholderTextColor="#666" keyboardType="numeric" value={valorLitro} onChangeText={setValorLitro} />
-
-        <Text style={styles.labelInput}>Foto do Hodômetro (Nítida)</Text>
-        <TouchableOpacity style={styles.btnFoto} onPress={() => setShowCamera(true)}>
-          {fotoHodometro ? (
-            <Image source={{ uri: fotoHodometro }} style={styles.previewFoto} />
-          ) : (
-            <View style={{alignItems: 'center'}}>
-              <MaterialCommunityIcons name="camera" size={40} color="#FFD700" />
-              <Text style={{color: '#888', fontSize: 12}}>Toque para fotografar painel</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity style={[styles.btnSalvarAbastecimento, {marginTop: 20}]} onPress={() => Alert.alert("Sucesso", "Registrado!")}>
-          <Text style={styles.btnTexto}>SALVAR REGISTRO</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}>
-          <Text style={[styles.btnTexto, {color: '#FFF'}]}>CANCELAR</Text>
-        </TouchableOpacity>
-      </ScrollView>
-
+      <TextInput style={styles.inputFundo} placeholder="KM ATUAL" placeholderTextColor="#666" keyboardType="numeric" value={km} onChangeText={setKm} />
+      <TextInput style={styles.inputFundo} placeholder="LITROS" placeholderTextColor="#666" keyboardType="numeric" value={litros} onChangeText={setLitros} />
+      <TouchableOpacity style={styles.btnFoto} onPress={() => setShowCamera(true)}>
+          {fotoHodometro ? <Image source={{ uri: fotoHodometro }} style={styles.previewFoto} /> : <MaterialCommunityIcons name="camera" size={40} color="#FFD700" />}
+      </TouchableOpacity>
+      <TouchableOpacity style={[styles.btnSalvarAbastecimento, {marginTop: 20}]} onPress={() => Alert.alert("Sucesso", "Registrado!")}><Text style={styles.btnTexto}>SALVAR</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={{color: '#FFF'}}>CANCELAR</Text></TouchableOpacity>
       <Modal visible={showCamera} animationType="slide">
         <CameraView style={{flex: 1}} facing="back" ref={cameraRef}>
           <View style={styles.cameraOverlay}>
-            <View style={styles.guiaCamera}><Text style={{color: '#FFD700'}}>Enquadre o Hodômetro</Text></View>
-            <TouchableOpacity style={styles.btnCapturar} onPress={tirarFotoHodometro} />
-            <TouchableOpacity onPress={() => setShowCamera(false)}><Text style={{color:'#FFF', marginBottom: 20}}>Cancelar</Text></TouchableOpacity>
+             <TouchableOpacity style={styles.btnCapturar} onPress={async () => {
+                 const photo = await cameraRef.current.takePictureAsync({ quality: 0.5 });
+                 setFotoHodometro(photo.uri);
+                 setShowCamera(false);
+             }} />
           </View>
         </CameraView>
       </Modal>
@@ -348,40 +478,14 @@ function TelaAbastecimento({ aoVoltar }) {
   );
 }
 
-// --- TELA CONTA (RESTAURADA) ---
+// --- TELA CONTA ---
 function TelaConta({ aoVoltar, logoff, userEmail }) {
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Minha Conta</Text>
       <Text style={{color: '#888', marginBottom: 20}}>Logado como: {userEmail}</Text>
-      <ScrollView>
-        <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Em breve", "Meus Dados")}>
-          <Text style={styles.itemMenuTexto}>👤 Meus Dados / Cadastro</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Em breve", "Escala")}>
-          <Text style={styles.itemMenuTexto}>📅 Minha Escala</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.itemMenu, {borderColor: '#e74c3c', marginTop: 30}]} onPress={logoff}>
-          <Text style={[styles.itemMenuTexto, {color: '#e74c3c'}]}>🚪 Sair do Aplicativo</Text>
-        </TouchableOpacity>
-      </ScrollView>
-      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={[styles.btnTexto, {color: '#FFD700'}]}>VOLTAR AO INÍCIO</Text></TouchableOpacity>
-    </View>
-  );
-}
-
-// --- TELA HISTORICO (RESTAURADA) ---
-function TelaHistorico({ aoVoltar }) {
-  return (
-    <View style={styles.containerTelas}>
-      <Text style={styles.tituloTela}>Históricos</Text>
-      <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Aviso", "Abrindo Histórico de Viagens...")}>
-        <Text style={styles.itemMenuTexto}>🛣️ Histórico de Viagens</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.itemMenu} onPress={() => Alert.alert("Aviso", "Abrindo Histórico de Ponto...")}>
-        <Text style={styles.itemMenuTexto}>⏰ Histórico de Ponto</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={[styles.btnTexto, {color: '#FFD700'}]}>VOLTAR</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.itemMenu} onPress={logoff}><Text style={{color: '#e74c3c'}}>Sair do Aplicativo</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.btnVoltar} onPress={aoVoltar}><Text style={{color: '#FFD700'}}>VOLTAR</Text></TouchableOpacity>
     </View>
   );
 }
@@ -389,18 +493,10 @@ function TelaHistorico({ aoVoltar }) {
 function MenuNavegacao({ setTelaAtiva }) {
   return (
     <View style={styles.menuInferior}>
-      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('inicio')}>
-        <Text style={{fontSize: 22}}>🏠</Text><Text style={styles.menuText}>Início</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('historico')}>
-        <Text style={{fontSize: 22}}>📊</Text><Text style={styles.menuText}>Histórico</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('abastecimento')}>
-        <Text style={{fontSize: 22}}>🚛</Text><Text style={styles.menuText}>Operação</Text>
-      </TouchableOpacity>
-      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('conta')}>
-        <Text style={{fontSize: 22}}>👤</Text><Text style={styles.menuText}>Conta</Text>
-      </TouchableOpacity>
+      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('inicio')}><MaterialCommunityIcons name="home-outline" size={24} color="#FFF" /><Text style={styles.menuText}>Início</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('historico')}><MaterialCommunityIcons name="history" size={24} color="#FFF" /><Text style={styles.menuText}>Históricos</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('abastecimento')}><MaterialCommunityIcons name="truck-fast-outline" size={24} color="#FFF" /><Text style={styles.menuText}>Operação</Text></TouchableOpacity>
+      <TouchableOpacity style={styles.menuItem} onPress={() => setTelaAtiva('conta')}><MaterialCommunityIcons name="account-outline" size={24} color="#FFF" /><Text style={styles.menuText}>Conta</Text></TouchableOpacity>
     </View>
   );
 }
@@ -413,41 +509,34 @@ const styles = StyleSheet.create({
   footerDev: { marginTop: 50, alignItems: 'center' },
   textoDev: { color: '#888', fontSize: 12, marginBottom: 15 },
   rowIcones: { flexDirection: 'row', gap: 20 },
-  barraTop: { height: 50, justifyContent: 'center', alignItems: 'center' },
+  barraTop: { height: 60, justifyContent: 'center', alignItems: 'center', paddingTop: 10 },
   textoStatusTop: { fontSize: 12, fontWeight: 'bold' },
   main: { flex: 1 },
   containerMapa: { ...StyleSheet.absoluteFillObject },
   mapa: { width: width, height: height },
   mapaSimulado: { flex: 1, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
   overlayCards: { flexDirection: 'row', justifyContent: 'space-around', position: 'absolute', top: 20, width: '100%' },
-  cardResumo: { backgroundColor: 'rgba(26,26,26,0.95)', padding: 15, borderRadius: 12, width: '45%', alignItems: 'center', minHeight: 80, justifyContent: 'center' },
+  cardResumo: { backgroundColor: 'rgba(26,26,26,0.95)', padding: 15, borderRadius: 12, width: '45%', alignItems: 'center' },
   labelResumo: { color: '#888', fontSize: 10, marginBottom: 5 },
   valorResumo: { color: '#FFD700', fontSize: 20, fontWeight: 'bold' },
-  valorStatusTexto: { color: '#FFF', fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
+  valorStatusTexto: { color: '#FFF', fontSize: 12, textAlign: 'center' },
   areaBotaoCentral: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center' },
-  botaoJornada: { width: 110, height: 110, borderRadius: 55, justifyContent: 'center', alignItems: 'center' },
-  textoJornada: { fontSize: 14, fontWeight: 'bold', textAlign: 'center' },
+  botaoJornada: { width: 100, height: 100, borderRadius: 50, justifyContent: 'center', alignItems: 'center' },
+  textoJornada: { fontSize: 12, fontWeight: 'bold', textAlign: 'center' },
   rowBotoes: { flexDirection: 'row', marginBottom: 15, gap: 10 },
-  btnApoio: { backgroundColor: '#333', padding: 10, borderRadius: 8, width: 100, alignItems: 'center' },
+  btnApoio: { backgroundColor: '#333', padding: 10, borderRadius: 8, width: 90, alignItems: 'center' },
   btnApoioText: { color: '#FFF', fontSize: 10, fontWeight: 'bold' },
   menuInferior: { height: 80, backgroundColor: '#111', flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
   menuText: { color: '#FFF', fontSize: 11 },
   menuItem: { alignItems: 'center' },
   cameraOverlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center' },
-  btnCapturar: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#FFF', marginBottom: 20 },
+  btnCapturar: { width: 70, height: 70, borderRadius: 35, backgroundColor: '#FFF', marginBottom: 40 },
   containerTelas: { flex: 1, backgroundColor: '#000', padding: 20, paddingTop: 50 },
   tituloTela: { color: '#FFD700', fontSize: 24, fontWeight: 'bold', marginBottom: 30 },
   inputFundo: { backgroundColor: '#1A1A1A', color: '#FFF', padding: 15, borderRadius: 10, marginBottom: 15, width: '100%' },
   btnSalvarAbastecimento: { backgroundColor: '#FFD700', padding: 18, borderRadius: 10, alignItems: 'center' },
   btnVoltar: { padding: 18, alignItems: 'center', marginTop: 10 },
   btnTexto: { color: '#000', fontWeight: 'bold' },
-  itemMenu: { padding: 20, borderBottomWidth: 1, borderColor: '#222', marginBottom: 10 },
+  itemMenu: { padding: 20, borderBottomWidth: 1, borderColor: '#222', marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   itemMenuTexto: { color: '#FFF', fontSize: 16 },
-  containerCaminhao: { backgroundColor: 'rgba(0,0,0,0.5)', padding: 5, borderRadius: 20, borderWidth: 1, borderColor: '#FFD700' },
-  btnFoto: { backgroundColor: '#1A1A1A', height: 150, borderRadius: 10, borderStyle: 'dashed', borderWidth: 2, borderColor: '#333', justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
-  previewFoto: { width: '100%', height: '100%' },
-  labelInput: { color: '#FFD700', marginBottom: 10, fontSize: 12, fontWeight: 'bold' },
-  guiaCamera: { position: 'absolute', top: '40%', borderWidth: 2, borderColor: '#FFD700', width: '80%', height: 100, alignSelf: 'center', borderRadius: 10, justifyContent: 'center', alignItems: 'center' }
-});
-
-const mapStyleNoite = [{"elementType": "geometry", "stylers": [{"color": "#212121"}]}];
+  cardHistoricoItem: { backgroundColor: '#111', padding: 15,
