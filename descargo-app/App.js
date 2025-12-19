@@ -6,6 +6,7 @@ import {
 } from 'react-native';
 import * as Location from 'expo-location';
 import { Camera, CameraView } from 'expo-camera';
+import { MaterialCommunityIcons } from '@expo/vector-icons'; // Importação para os ícones
 
 // --- IMPORTAÇÕES DO FIREBASE ---
 import { initializeApp, getApps, getApp } from "firebase/app";
@@ -53,7 +54,6 @@ const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
-// Correção para o erro auth/already-initialized
 let auth;
 try {
   auth = getAuth(app);
@@ -111,7 +111,7 @@ export default function App() {
     return (
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" />
-        <View style={styles.contentLogin}>
+        <ScrollView contentContainerStyle={styles.contentLogin}>
           <Text style={styles.logo}>DESCARGO</Text>
           <View style={styles.linhaDestaque} />
           
@@ -136,10 +136,29 @@ export default function App() {
              <Text style={styles.btnTexto}>ENTRAR NO APP</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')} style={{marginTop: 30}}>
-             <Text style={{color: '#2ecc71', fontWeight: 'bold'}}>💬 SUPORTE WHATSAPP</Text>
-          </TouchableOpacity>
-        </View>
+          {/* RODAPÉ DO DESENVOLVEDOR */}
+          <View style={styles.footerDev}>
+            <Text style={styles.textoDev}>Desenvolvido por Rafael Araujo</Text>
+            
+            <View style={styles.rowIcones}>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}>
+                <MaterialCommunityIcons name="instagram" size={30} color="#E1306C" />
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')}>
+                <MaterialCommunityIcons name="whatsapp" size={30} color="#25D366" />
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
+                <MaterialCommunityIcons name="linkedin" size={30} color="#0077B5" />
+              </TouchableOpacity>
+
+              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}>
+                <MaterialCommunityIcons name="email-outline" size={30} color="#FFD700" />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </ScrollView>
       </SafeAreaView>
     );
   }
@@ -253,7 +272,7 @@ function Dashboard({ setTelaAtiva }) {
   );
 }
 
-// --- TELA DE CONTA ---
+// --- TELAS SECUNDÁRIAS ---
 function TelaConta({ aoVoltar, logoff, userEmail }) {
   return (
     <View style={styles.containerTelas}>
@@ -275,7 +294,6 @@ function TelaConta({ aoVoltar, logoff, userEmail }) {
   );
 }
 
-// --- TELA DE ABASTECIMENTO ---
 function TelaAbastecimento({ aoVoltar }) {
   return (
     <View style={styles.containerTelas}>
@@ -290,7 +308,6 @@ function TelaAbastecimento({ aoVoltar }) {
   );
 }
 
-// --- TELA DE HISTÓRICO ---
 function TelaHistorico({ aoVoltar }) {
   return (
     <View style={styles.containerTelas}>
@@ -302,7 +319,6 @@ function TelaHistorico({ aoVoltar }) {
   );
 }
 
-// --- COMPONENTE MENU NAVEGAÇÃO ---
 function MenuNavegacao({ setTelaAtiva }) {
   return (
     <View style={styles.menuInferior}>
@@ -324,14 +340,21 @@ function MenuNavegacao({ setTelaAtiva }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  contentLogin: { flex: 1, padding: 35, justifyContent: 'center', alignItems: 'center' },
+  contentLogin: { flexGrow: 1, padding: 35, justifyContent: 'center', alignItems: 'center' },
   logo: { fontSize: 45, fontWeight: '900', color: '#FFD700' },
   linhaDestaque: { height: 4, backgroundColor: '#FF8C00', width: 80, marginBottom: 40 },
+  
+  // ESTILOS DO RODAPÉ SOCIAL
+  footerDev: { marginTop: 50, alignItems: 'center', width: '100%' },
+  textoDev: { color: '#888', fontSize: 12, marginBottom: 15 },
+  rowIcones: { flexDirection: 'row', justifyContent: 'space-evenly', width: '80%' },
+
   barraTop: { height: 50, justifyContent: 'center', alignItems: 'center' },
   textoStatusTop: { fontSize: 12, fontWeight: 'bold' },
   main: { flex: 1 },
   containerMapa: { ...StyleSheet.absoluteFillObject },
   mapa: { width: width, height: height },
+  mapaSimulado: { flex: 1, backgroundColor: '#111', justifyContent: 'center', alignItems: 'center' },
   overlayCards: { flexDirection: 'row', justifyContent: 'space-around', position: 'absolute', top: 20, width: '100%' },
   cardResumo: { backgroundColor: 'rgba(26,26,26,0.9)', padding: 15, borderRadius: 12, width: '42%', alignItems: 'center' },
   labelResumo: { color: '#888', fontSize: 10 },

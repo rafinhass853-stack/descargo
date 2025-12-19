@@ -14,7 +14,6 @@ body, html, #root {
   overflow: hidden;
 }
 
-/* TELA DE LOGIN DARK */
 .container-login {
   height: 100vh;
   display: flex;
@@ -52,6 +51,7 @@ body, html, #root {
   border-radius: 8px;
   color: #FFF;
   font-size: 16px;
+  outline: none;
 }
 
 .btn-entrar {
@@ -66,60 +66,41 @@ body, html, #root {
   cursor: pointer;
 }
 
-/* PAINEL GESTOR (SIDEBAR + MAPA) */
-.dashboard-container {
-  display: flex;
-  height: 100vh;
+/* RODAPÉ DO DESENVOLVEDOR */
+.footer-dev {
+  margin-top: 50px;
+  padding-top: 20px;
+  border-top: 1px solid #222;
 }
 
-.sidebar {
-  width: 300px;
-  background-color: #0a0a0a;
-  border-right: 1px solid #222;
-  display: flex;
-  flex-direction: column;
-  padding: 30px 20px;
+.dev-name {
+  color: #888;
+  font-size: 13px;
+  text-decoration: none;
+  display: block;
+  margin-bottom: 20px;
 }
 
-.logo-small {
+.dev-name:hover {
   color: #FFD700;
-  font-size: 22px;
-  font-weight: 800;
 }
 
-.gestor-label {
-  color: #666;
-  font-size: 10px;
-  letter-spacing: 2px;
-  margin-bottom: 30px;
+.social-icons-row {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 30px; /* Espaço entre os logos */
 }
 
-.lista-scroll {
-  flex: 1;
-  overflow-y: auto;
+.logo-social-web {
+  width: 28px;  /* Tamanho do logo */
+  height: 28px;
+  object-fit: contain;
+  transition: transform 0.2s;
+  filter: grayscale(20%); /* Opcional: deixa um pouco mais discreto */
 }
 
-.card-mini {
-  background: #161616;
-  padding: 15px;
-  border-radius: 10px;
-  margin-bottom: 12px;
-  border: 1px solid #222;
-  cursor: pointer;
-}
-
-.btn-sair {
-  background-color: #d32f2f;
-  color: #fff;
-  border: none;
-  padding: 12px;
-  border-radius: 8px;
-  font-weight: bold;
-  cursor: pointer;
-  margin-top: 20px;
-}
-
-.map-area {
-  flex: 1;
-  background-color: #1a1a1a;
+.logo-social-web:hover {
+  transform: scale(1.2);
+  filter: grayscale(0%); /* Volta a cor total no hover */
 }

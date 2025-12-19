@@ -18,17 +18,12 @@ export default function Login() {
 
     setLoading(true);
     try {
-      // Tenta logar no Firebase com os dados digitados
       await signInWithEmailAndPassword(auth, email.trim(), password);
       console.log("Sucesso: Gestor logado!");
     } catch (error) {
       console.error("Erro completo:", error.code);
-      
-      // Mensagens amigáveis para erros comuns
       if (error.code === 'auth/invalid-credential') {
-        alert("E-mail ou senha incorretos. Verifique os dados no Firebase.");
-      } else if (error.code === 'auth/user-not-found') {
-        alert("Usuário não encontrado.");
+        alert("E-mail ou senha incorretos.");
       } else {
         alert("Erro ao acessar o painel: " + error.message);
       }
@@ -51,7 +46,6 @@ export default function Login() {
             placeholder="E-mail" 
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            autoCapitalize="none"
           />
           
           <input 
@@ -67,14 +61,34 @@ export default function Login() {
           </button>
         </form>
 
-        <a 
-          href="https://wa.me/5516988318626" 
-          target="_blank" 
-          rel="noreferrer" 
-          className="suporte-link"
-        >
-          💬 SUPORTE WHATSAPP
-        </a>
+        <div className="footer-dev">
+          <a 
+            href="https://www.linkedin.com/in/rafael-araujo1992/" 
+            target="_blank" 
+            rel="noreferrer" 
+            className="dev-name"
+          >
+            Desenvolvido por Rafael Araujo
+          </a>
+
+          <div className="social-icons-row">
+            <a href="https://www.instagram.com/rafael.araujo1992/" target="_blank" rel="noreferrer">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg" alt="Instagram" className="logo-social-web" />
+            </a>
+            
+            <a href="https://wa.me/5516988318626" target="_blank" rel="noreferrer">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg" alt="WhatsApp" className="logo-social-web" />
+            </a>
+            
+            <a href="https://www.linkedin.com/in/rafael-araujo1992/" target="_blank" rel="noreferrer">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/c/ca/LinkedIn_logo_initials.png" alt="LinkedIn" className="logo-social-web" />
+            </a>
+            
+            <a href="mailto:rafinhass853@gmail.com">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/7/7e/Gmail_icon_%282020%29.svg" alt="E-mail" className="logo-social-web" />
+            </a>
+          </div>
+        </div>
       </div>
     </div>
   );
