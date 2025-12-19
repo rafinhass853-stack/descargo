@@ -1,45 +1,125 @@
-/* Ajuste de Layout para o Painel */
-.dashboard-container {
-  display: flex;
+/* RESET GERAL */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  font-family: 'Inter', sans-serif;
+}
+
+body, html, #root {
+  background-color: #000 !important;
+  color: #FFF;
   height: 100vh;
   width: 100vw;
-  background-color: #000;
   overflow: hidden;
 }
 
+/* TELA DE LOGIN DARK */
+.container-login {
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background-color: #000;
+}
+
+.content-login {
+  text-align: center;
+  width: 100%;
+  max-width: 350px;
+}
+
+.logo {
+  color: #FFD700;
+  font-size: 42px;
+  font-weight: 900;
+  margin-bottom: 5px;
+}
+
+.linha-destaque {
+  height: 4px;
+  background: linear-gradient(to right, #FFD700, #FF8C00);
+  width: 60px;
+  margin: 0 auto 25px;
+}
+
+.input-fundo {
+  width: 100%;
+  padding: 14px;
+  margin-bottom: 15px;
+  background-color: #111;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #FFF;
+  font-size: 16px;
+}
+
+.btn-entrar {
+  width: 100%;
+  padding: 14px;
+  background-color: #FFD700;
+  color: #000;
+  border: none;
+  border-radius: 8px;
+  font-weight: bold;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+/* PAINEL GESTOR (SIDEBAR + MAPA) */
+.dashboard-container {
+  display: flex;
+  height: 100vh;
+}
+
 .sidebar {
-  width: 280px;
-  background-color: #0d0d0d;
+  width: 300px;
+  background-color: #0a0a0a;
   border-right: 1px solid #222;
   display: flex;
   flex-direction: column;
-  padding: 25px; /* Mais espaço interno */
+  padding: 30px 20px;
 }
 
-.sidebar-header {
+.logo-small {
+  color: #FFD700;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.gestor-label {
+  color: #666;
+  font-size: 10px;
+  letter-spacing: 2px;
   margin-bottom: 30px;
 }
 
 .lista-scroll {
   flex: 1;
   overflow-y: auto;
-  margin-bottom: 20px;
+}
+
+.card-mini {
+  background: #161616;
+  padding: 15px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  border: 1px solid #222;
+  cursor: pointer;
 }
 
 .btn-sair {
-  width: 100%;
-  padding: 12px;
-  background-color: #d32f2f; /* Vermelho mais suave */
-  color: white;
+  background-color: #d32f2f;
+  color: #fff;
   border: none;
+  padding: 12px;
   border-radius: 8px;
   font-weight: bold;
   cursor: pointer;
-  margin-bottom: 10px; /* Garante que não encoste no final da tela */
+  margin-top: 20px;
 }
 
 .map-area {
   flex: 1;
-  height: 100%;
   background-color: #1a1a1a;
 }
