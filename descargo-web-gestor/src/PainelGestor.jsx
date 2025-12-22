@@ -5,13 +5,14 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import { 
   Truck, Users, LayoutDashboard, ClipboardList, 
-  LogOut, Fuel, Settings, UserCheck 
+  LogOut, Fuel, Settings, UserCheck, UserPlus 
 } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
-// Importação do novo componente
+// Importação dos componentes
 import PainelCargas from './PainelCargas';
+import CriarAcessoMotorista from './CriarAcessoMotorista'; // Importado aqui
 
 // --- ÍCONE DE CAMINHÃO ---
 const caminhaoIcon = new L.Icon({
@@ -39,6 +40,62 @@ const PainelGestor = () => {
 
     const handleLogout = () => signOut(auth);
 
+    // Função para renderizar o conteúdo baseado no menu
+    const renderConteudo = () => {
+        switch (menuAtivo) {
+            case 'dashboard':
+                return (
+                    <>
+                        <h2 style={styles.titulo}>Monitoramento em Tempo Real (Satélite)</h2>
+                        <div style={styles.grid}>
+                            <div style={styles.card}>
+                                <span style={styles.cardLabel}>MOTORISTAS LOGADOS</span>
+                                <span style={styles.cardValor}>{motoristasOnline.length}</span>
+                            </div>
+                            <div style={styles.card}>
+                                <span style={styles.cardLabel}>EM JORNADA</span>
+                                <span style={styles.cardValor}>
+                                    {motoristasOnline.filter(m => m.status !== 'OFFLINE').length}
+                                </span>
+                            </div>
+                        </div>
+
+                        <div style={styles.mapaContainer}>
+                            <MapContainer 
+                                center={[-21.78, -48.17]} 
+                                zoom={6} 
+                                style={{ height: '100%', width: '100%' }}
+                            >
+                                <TileLayer 
+                                    url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+                                    attribution='&copy; Google Maps'
+                                />
+                                {motoristasOnline.map((mot) => (
+                                    mot.lat && mot.lng && (
+                                        <Marker key={mot.id} position={[mot.lat, mot.lng]} icon={caminhaoIcon}>
+                                            <Popup>
+                                                <div style={{color: '#000', padding: '5px'}}>
+                                                    <strong style={{fontSize: '14px'}}>{mot.usuario}</strong><br/>
+                                                    <span style={{color: '#d35400', fontWeight: 'bold'}}>Status: {mot.status || 'Logado'}</span><br/>
+                                                    <small style={{color: '#666'}}>Atualizado: {mot.ultimaAtualizacao?.toDate().toLocaleTimeString()}</small>
+                                                </div>
+                                            </Popup>
+                                        </Marker>
+                                    )
+                                ))}
+                            </MapContainer>
+                        </div>
+                    </>
+                );
+            case 'cargas':
+                return <PainelCargas />;
+            case 'criar_acesso':
+                return <CriarAcessoMotorista onFechar={() => setMenuAtivo('dashboard')} />;
+            default:
+                return <div style={{color: '#666'}}>Em desenvolvimento...</div>;
+        }
+    };
+
     return (
         <div style={styles.container}>
             {/* Sidebar */}
@@ -61,7 +118,16 @@ const PainelGestor = () => {
                     <div style={styles.navItem}><Users size={18} /> Motoristas</div>
                     <div style={styles.navItem}><Fuel size={18} /> Abastecimento</div>
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
-                    <div style={styles.navItem}><UserCheck size={18} /> RH / Funcionários</div>
+                    <div style={styles.navItem}><Settings size={18} /> Cadastro Clientes</div>
+                    <div style={styles.navItem}><UserCheck size={18} />Controle de Folgas</div>
+                    
+                    {/* Botão de Criar Acesso Atualizado */}
+                    <div 
+                        onClick={() => setMenuAtivo('criar_acesso')}
+                        style={menuAtivo === 'criar_acesso' ? styles.navItemAtivo : styles.navItem}
+                    >
+                        <UserPlus size={18} />Criar acesso
+                    </div>
                 </nav>
                 <button onClick={handleLogout} style={styles.btnSair}><LogOut size={18} /> Sair</button>
             </aside>
@@ -73,51 +139,7 @@ const PainelGestor = () => {
                 </header>
 
                 <div style={styles.content}>
-                    {menuAtivo === 'dashboard' ? (
-                        <>
-                            <h2 style={styles.titulo}>Monitoramento em Tempo Real (Satélite)</h2>
-                            <div style={styles.grid}>
-                                <div style={styles.card}>
-                                    <span style={styles.cardLabel}>MOTORISTAS LOGADOS</span>
-                                    <span style={styles.cardValor}>{motoristasOnline.length}</span>
-                                </div>
-                                <div style={styles.card}>
-                                    <span style={styles.cardLabel}>EM JORNADA</span>
-                                    <span style={styles.cardValor}>
-                                        {motoristasOnline.filter(m => m.status !== 'OFFLINE').length}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div style={styles.mapaContainer}>
-                                <MapContainer 
-                                    center={[-21.78, -48.17]} 
-                                    zoom={6} 
-                                    style={{ height: '100%', width: '100%' }}
-                                >
-                                    <TileLayer 
-                                        url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
-                                        attribution='&copy; Google Maps'
-                                    />
-                                    {motoristasOnline.map((mot) => (
-                                        mot.lat && mot.lng && (
-                                            <Marker key={mot.id} position={[mot.lat, mot.lng]} icon={caminhaoIcon}>
-                                                <Popup>
-                                                    <div style={{color: '#000', padding: '5px'}}>
-                                                        <strong style={{fontSize: '14px'}}>{mot.usuario}</strong><br/>
-                                                        <span style={{color: '#d35400', fontWeight: 'bold'}}>Status: {mot.status || 'Logado'}</span><br/>
-                                                        <small style={{color: '#666'}}>Atualizado: {mot.ultimaAtualizacao?.toDate().toLocaleTimeString()}</small>
-                                                    </div>
-                                                </Popup>
-                                            </Marker>
-                                        )
-                                    ))}
-                                </MapContainer>
-                            </div>
-                        </>
-                    ) : (
-                        <PainelCargas />
-                    )}
+                    {renderConteudo()}
                 </div>
             </main>
         </div>

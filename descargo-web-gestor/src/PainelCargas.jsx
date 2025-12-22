@@ -3,6 +3,9 @@ import { db } from "./firebase";
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc } from "firebase/firestore";
 import { Plus, MapPin, Truck, UserPlus, Info, Weight, Calendar, Clock, ExternalLink } from 'lucide-react';
 
+// Importamos o novo componente de ações
+import AcoesCargas from './AcoesCargas';
+
 const PainelCargas = () => {
     const [cargas, setCargas] = useState([]);
     const [novaCarga, setNovaCarga] = useState({
@@ -10,6 +13,10 @@ const PainelCargas = () => {
         origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
         destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
     });
+
+    // Estados para controlar o Modal de Ações/Motoristas
+    const [modalAberto, setModalAberto] = useState(false);
+    const [cargaParaAtribuir, setCargaParaAtribuir] = useState(null);
 
     useEffect(() => {
         const q = query(collection(db, "ordens_servico"), orderBy("criadoEm", "desc"));
@@ -30,6 +37,7 @@ const PainelCargas = () => {
                 dt: dtFinal,
                 status: 'AGUARDANDO PROGRAMAÇÃO',
                 motorista: '',
+                motoristaId: '', // Adicionado para rastrear o ID do motorista logado no app
                 criadoEm: serverTimestamp()
             });
             setNovaCarga({
@@ -41,14 +49,27 @@ const PainelCargas = () => {
         } catch (error) { console.error(error); }
     };
 
-    const handleProgramarVeiculo = async (idCarga) => {
-        const nomeMotorista = prompt("Informe o Motorista e Placa:");
-        if (nomeMotorista) {
-            await updateDoc(doc(db, "ordens_servico", idCarga), {
-                motorista: nomeMotorista,
-                status: 'PROGRAMADA'
+    // Função que será chamada quando o modal de AcoesCargas confirmar o envio
+    const confirmarAtribuicao = async (motoristaInfo) => {
+        try {
+            const cargaRef = doc(db, "ordens_servico", cargaParaAtribuir.id);
+            await updateDoc(cargaRef, {
+                motorista: motoristaInfo.nome,
+                motoristaId: motoristaInfo.id,
+                status: 'PROGRAMADA',
+                enviadoEm: serverTimestamp()
             });
+            setModalAberto(false);
+            setCargaParaAtribuir(null);
+        } catch (error) {
+            console.error("Erro ao atualizar carga:", error);
+            alert("Erro ao atribuir motorista.");
         }
+    };
+
+    const handleAbrirAcoes = (carga) => {
+        setCargaParaAtribuir(carga);
+        setModalAberto(true);
     };
 
     return (
@@ -58,7 +79,7 @@ const PainelCargas = () => {
                 <div style={styles.statsBadge}>{cargas.length} Cargas Ativas</div>
             </header>
 
-            {/* Formulário com Seletores de Data/Hora */}
+            {/* Formulário */}
             <section style={styles.cardForm}>
                 <form onSubmit={handleSubmit}>
                     <div style={styles.gridForm}>
@@ -98,7 +119,7 @@ const PainelCargas = () => {
                 </form>
             </section>
 
-            {/* Tabela com Links e Datas Nitidas */}
+            {/* Tabela */}
             <section style={styles.cardLista}>
                 <div style={styles.tableWrapper}>
                     <table style={styles.table}>
@@ -169,7 +190,8 @@ const PainelCargas = () => {
 
                                     <td style={styles.td}>
                                         <div style={styles.actionGroup}>
-                                            <button onClick={() => handleProgramarVeiculo(item.id)} style={styles.circleBtn}>
+                                            {/* BOTÃO QUE ABRE O MODAL MÁGICO */}
+                                            <button onClick={() => handleAbrirAcoes(item)} style={styles.circleBtn}>
                                                 <UserPlus size={16} />
                                             </button>
                                             {item.observacao && <div style={styles.infoIcon} title={item.observacao}><Info size={16}/></div>}
@@ -181,6 +203,15 @@ const PainelCargas = () => {
                     </table>
                 </div>
             </section>
+
+            {/* MODAL DE AÇÕES (Só aparece se modalAberto for true) */}
+            {modalAberto && (
+                <AcoesCargas 
+                    cargaSelecionada={cargaParaAtribuir} 
+                    onFechar={() => setModalAberto(false)}
+                    onConfirmar={confirmarAtribuicao} 
+                />
+            )}
         </div>
     );
 };
@@ -190,39 +221,32 @@ const styles = {
     header: { display: 'flex', justifyContent: 'space-between', marginBottom: '20px' },
     titulo: { color: '#FFD700', fontSize: '20px', fontWeight: 'bold' },
     statsBadge: { color: '#666', fontSize: '12px' },
-    
     cardForm: { backgroundColor: '#111', padding: '20px', borderRadius: '8px', border: '1px solid #222', marginBottom: '20px' },
     gridForm: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' },
     formColumn: { display: 'flex', flexDirection: 'column', gap: '10px' },
     columnTitle: { fontSize: '12px', color: '#FFD700', borderBottom: '1px solid #222', paddingBottom: '5px', display: 'flex', alignItems: 'center', gap: '5px' },
     input: { backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px', outline: 'none' },
-    
-    // Estilo especial para Data/Hora com Calendário Nativo
     dateTimeWrapper: { position: 'relative', display: 'flex', alignItems: 'center' },
     dateTimeIcon: { position: 'absolute', left: '10px', color: '#FFD700', pointerEvents: 'none' },
     inputDate: { 
         backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px 10px 10px 35px', 
         borderRadius: '4px', fontSize: '13px', width: '100%', cursor: 'pointer', outline: 'none',
-        colorScheme: 'dark' // Força o calendário a aparecer no tema escuro
+        colorScheme: 'dark' 
     },
-
     textarea: { width: '100%', backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '4px', marginTop: '15px', minHeight: '60px' },
     btnSalvar: { width: '100%', backgroundColor: '#FFD700', border: 'none', padding: '15px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px', marginTop: '10px' },
-
     cardLista: { backgroundColor: '#111', borderRadius: '8px', border: '1px solid #222' },
     tableWrapper: { overflowX: 'auto' },
     table: { width: '100%', borderCollapse: 'collapse' },
     th: { padding: '12px', fontSize: '11px', color: '#555', borderBottom: '2px solid #222', textAlign: 'left' },
     td: { padding: '12px', borderBottom: '1px solid #1a1a1a', verticalAlign: 'top' },
     tr: { transition: '0.2s' },
-
     infoBlock: { display: 'flex', flexDirection: 'column', gap: '3px' },
     rowFlex: { display: 'flex', alignItems: 'center', gap: '8px' },
     mainInfo: { fontWeight: 'bold', fontSize: '13px' },
     subInfo: { fontSize: '10px', color: '#555' },
     cityHighlight: { color: '#FFD700', fontSize: '11px', fontWeight: 'bold' },
     dateLabel: { color: '#00d1b2', fontSize: '11px', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' },
-    
     mapBtn: { backgroundColor: '#222', color: '#FF9F43', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center' },
     dtText: { color: '#FFF', fontSize: '11px', fontWeight: 'bold' },
     statusBadge: { padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' },
