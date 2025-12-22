@@ -1,106 +1,42 @@
-/* RESET GERAL */
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-  font-family: 'Inter', sans-serif;
-}
-
-body, html, #root {
-  background-color: #000 !important;
-  color: #FFF;
-  height: 100vh;
-  width: 100vw;
-  overflow: hidden;
-}
-
-.container-login {
-  height: 100vh;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  background-color: #000;
-}
-
-.content-login {
+#root {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2rem;
   text-align: center;
-  width: 100%;
-  max-width: 350px;
 }
 
 .logo {
-  color: #FFD700;
-  font-size: 42px;
-  font-weight: 900;
-  margin-bottom: 5px;
+  height: 6em;
+  padding: 1.5em;
+  will-change: filter;
+  transition: filter 300ms;
+}
+.logo:hover {
+  filter: drop-shadow(0 0 2em #646cffaa);
+}
+.logo.react:hover {
+  filter: drop-shadow(0 0 2em #61dafbaa);
 }
 
-.linha-destaque {
-  height: 4px;
-  background: linear-gradient(to right, #FFD700, #FF8C00);
-  width: 60px;
-  margin: 0 auto 25px;
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.input-fundo {
-  width: 100%;
-  padding: 14px;
-  margin-bottom: 15px;
-  background-color: #111;
-  border: 1px solid #333;
-  border-radius: 8px;
-  color: #FFF;
-  font-size: 16px;
-  outline: none;
+@media (prefers-reduced-motion: no-preference) {
+  a:nth-of-type(2) .logo {
+    animation: logo-spin infinite 20s linear;
+  }
 }
 
-.btn-entrar {
-  width: 100%;
-  padding: 14px;
-  background-color: #FFD700;
-  color: #000;
-  border: none;
-  border-radius: 8px;
-  font-weight: bold;
-  font-size: 16px;
-  cursor: pointer;
+.card {
+  padding: 2em;
 }
 
-/* RODAPÉ DO DESENVOLVEDOR */
-.footer-dev {
-  margin-top: 50px;
-  padding-top: 20px;
-  border-top: 1px solid #222;
-}
-
-.dev-name {
+.read-the-docs {
   color: #888;
-  font-size: 13px;
-  text-decoration: none;
-  display: block;
-  margin-bottom: 20px;
-}
-
-.dev-name:hover {
-  color: #FFD700;
-}
-
-.social-icons-row {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  gap: 30px; /* Espaço entre os logos */
-}
-
-.logo-social-web {
-  width: 28px;  /* Tamanho do logo */
-  height: 28px;
-  object-fit: contain;
-  transition: transform 0.2s;
-  filter: grayscale(20%); /* Opcional: deixa um pouco mais discreto */
-}
-
-.logo-social-web:hover {
-  transform: scale(1.2);
-  filter: grayscale(0%); /* Volta a cor total no hover */
 }

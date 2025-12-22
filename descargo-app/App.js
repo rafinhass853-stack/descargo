@@ -20,7 +20,8 @@ import {
 } from "firebase/auth";
 import { 
   getFirestore, doc, onSnapshot, collection, addDoc, 
-  query, where, getDocs, orderBy, serverTimestamp 
+  query, where, getDocs, orderBy, serverTimestamp,
+  setDoc 
 } from "firebase/firestore";
 import ReactNativeAsyncStorage from "@react-native-async-storage/async-storage";
 
@@ -67,7 +68,14 @@ try {
   });
 }
 
-// Helper para formatar tempo (HH:MM:SS)
+const mapStyleNoite = [
+  { "elementType": "geometry", "stylers": [{ "color": "#242f3e" }] },
+  { "elementType": "labels.text.fill", "stylers": [{ "color": "#746855" }] },
+  { "elementType": "labels.text.stroke", "stylers": [{ "color": "#242f3e" }] },
+  { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#38414e" }] },
+  { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#17263c" }] }
+];
+
 const formatarTempo = (s) => {
   const hrs = Math.floor(s / 3600);
   const mins = Math.floor((s % 3600) / 60);
@@ -81,20 +89,58 @@ export default function App() {
   const [telaAtiva, setTelaAtiva] = useState('inicio');
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
-
-  // --- ESTADOS GLOBAIS DE JORNADA (Persistem ao navegar entre telas) ---
   const [statusJornada, setStatusJornada] = useState(STATUS.OFFLINE);
   const [segundos, setSegundos] = useState(0);
 
+  // --- LOGICA DE RASTREAMENTO GLOBAL (LOGADO = RASTREANDO) ---
   useEffect(() => {
+    let watchId;
+
+    const iniciarRastreamentoGpsGlobal = async (userEmail) => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+
+      watchId = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 30000, // 30 segundos
+          distanceInterval: 10,
+        },
+        async (locationData) => {
+          const { latitude, longitude } = locationData.coords;
+          
+          try {
+            await setDoc(doc(db, "localizacao_realtime", userEmail), {
+              usuario: userEmail,
+              lat: latitude,
+              lng: longitude,
+              ultimaAtualizacao: serverTimestamp(),
+              status: statusJornada // Envia o status atual, mesmo que seja OFFLINE
+            }, { merge: true });
+          } catch (e) {
+            console.log("Erro GPS Global:", e);
+          }
+        }
+      );
+    };
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUsuario(user);
       setLoading(false);
+      
+      if (user) {
+        iniciarRastreamentoGpsGlobal(user.email);
+      } else {
+        if (watchId) watchId.remove();
+      }
     });
-    return unsubscribe;
-  }, []);
 
-  // Cronômetro Global
+    return () => {
+      unsubscribe();
+      if (watchId) watchId.remove();
+    };
+  }, [statusJornada]); // Relacionado ao status para atualizar o status no mapa também
+
   useEffect(() => {
     let intervalo = null;
     if (statusJornada !== STATUS.OFFLINE) {
@@ -142,22 +188,8 @@ export default function App() {
         <ScrollView contentContainerStyle={styles.contentLogin}>
           <Text style={styles.logo}>DESCARGO</Text>
           <View style={styles.linhaDestaque} />
-          <TextInput 
-            style={styles.inputFundo} 
-            placeholder="E-mail" 
-            placeholderTextColor="#666" 
-            value={email} 
-            onChangeText={setEmail}
-            autoCapitalize="none"
-          />
-          <TextInput 
-            style={styles.inputFundo} 
-            placeholder="Senha" 
-            placeholderTextColor="#666" 
-            secureTextEntry 
-            value={senha} 
-            onChangeText={setSenha}
-          />
+          <TextInput style={styles.inputFundo} placeholder="E-mail" placeholderTextColor="#666" value={email} onChangeText={setEmail} autoCapitalize="none" />
+          <TextInput style={styles.inputFundo} placeholder="Senha" placeholderTextColor="#666" secureTextEntry value={senha} onChangeText={setSenha} />
           <TouchableOpacity style={[styles.btnSalvarAbastecimento, {width: '100%'}]} onPress={realizarLoginEmail}>
              <Text style={styles.btnTexto}>ENTRAR NO APP</Text>
           </TouchableOpacity>
@@ -201,7 +233,6 @@ function Dashboard({ setTelaAtiva, usuarioEmail, statusJornada, setStatusJornada
   const [showCamera, setShowCamera] = useState(false);
   const [statusAlvo, setStatusAlvo] = useState(null);
   const cameraRef = useRef(null);
-  
   const [ganhos, setGanhos] = useState("0,00");
   const [statusViagemDesc, setStatusViagemDesc] = useState("Sem programação");
 
@@ -324,13 +355,12 @@ function Dashboard({ setTelaAtiva, usuarioEmail, statusJornada, setStatusJornada
   );
 }
 
-// --- GERENCIADOR DE TELAS DE HISTÓRICO ---
+// --- TELAS DE HISTÓRICO, ABASTECIMENTO E CONTA (MANTIDAS) ---
+
 function TelaGerenciadorHistorico({ aoVoltar, userEmail }) {
   const [subTela, setSubTela] = useState('menu');
-
   if (subTela === 'viagens') return <TelaHistoricoViagens aoVoltar={() => setSubTela('menu')} userEmail={userEmail} />;
   if (subTela === 'ponto') return <TelaHistoricoPonto aoVoltar={() => setSubTela('menu')} userEmail={userEmail} />;
-
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Históricos</Text>
@@ -347,11 +377,9 @@ function TelaGerenciadorHistorico({ aoVoltar, userEmail }) {
   );
 }
 
-// --- TELA HISTORICO VIAGENS (RESTAURADA) ---
 function TelaHistoricoViagens({ aoVoltar, userEmail }) {
     const [viagens, setViagens] = useState([]);
     const [loading, setLoading] = useState(true);
-
     useEffect(() => {
         const q = query(collection(db, "historico_viagens"), where("motorista", "==", userEmail), orderBy("data_fim", "desc"));
         getDocs(q).then(snapshot => {
@@ -361,7 +389,6 @@ function TelaHistoricoViagens({ aoVoltar, userEmail }) {
             setLoading(false);
         });
     }, []);
-
     return (
         <View style={styles.containerTelas}>
             <Text style={styles.tituloTela}>Minhas Viagens</Text>
@@ -383,11 +410,9 @@ function TelaHistoricoViagens({ aoVoltar, userEmail }) {
     );
 }
 
-// --- TELA HISTORICO PONTO (COM PDF) ---
 function TelaHistoricoPonto({ aoVoltar, userEmail }) {
   const [registros, setRegistros] = useState([]);
   const [diaSelecionado, setDiaSelecionado] = useState(null);
-
   useEffect(() => {
     const q = query(collection(db, "historico_ponto"), where("usuario", "==", userEmail), orderBy("timestamp", "desc"));
     getDocs(q).then(snapshot => {
@@ -396,7 +421,6 @@ function TelaHistoricoPonto({ aoVoltar, userEmail }) {
       setRegistros(lista);
     });
   }, []);
-
   const gerarPDF = async (data) => {
     const pontosDoDia = registros.filter(r => r.data === data).reverse();
     let htmlContent = `<html><body style="font-family:sans-serif;padding:20px;">
@@ -409,9 +433,7 @@ function TelaHistoricoPonto({ aoVoltar, userEmail }) {
     const { uri } = await Print.printToFileAsync({ html: htmlContent });
     await Sharing.shareAsync(uri);
   };
-
   const datasUnicas = [...new Set(registros.map(item => item.data))];
-
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Folha de Ponto</Text>
@@ -445,14 +467,12 @@ function TelaHistoricoPonto({ aoVoltar, userEmail }) {
   );
 }
 
-// --- TELA ABASTECIMENTO ---
 function TelaAbastecimento({ aoVoltar }) {
   const [km, setKm] = useState('');
   const [litros, setLitros] = useState('');
   const [fotoHodometro, setFotoHodometro] = useState(null);
   const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef(null);
-
   return (
     <View style={styles.containerTelas}>
       <Text style={styles.tituloTela}>Abastecimento</Text>
@@ -478,7 +498,6 @@ function TelaAbastecimento({ aoVoltar }) {
   );
 }
 
-// --- TELA CONTA ---
 function TelaConta({ aoVoltar, logoff, userEmail }) {
   return (
     <View style={styles.containerTelas}>
@@ -501,6 +520,7 @@ function MenuNavegacao({ setTelaAtiva }) {
   );
 }
 
+// --- ESTILOS ---
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   contentLogin: { flexGrow: 1, padding: 35, justifyContent: 'center', alignItems: 'center' },
@@ -539,4 +559,9 @@ const styles = StyleSheet.create({
   btnTexto: { color: '#000', fontWeight: 'bold' },
   itemMenu: { padding: 20, borderBottomWidth: 1, borderColor: '#222', marginBottom: 10, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   itemMenuTexto: { color: '#FFF', fontSize: 16 },
-  cardHistoricoItem: { backgroundColor: '#111', padding: 15,
+  cardHistoricoItem: { backgroundColor: '#111', padding: 15, borderRadius: 10, marginBottom: 10 },
+  containerCaminhao: { backgroundColor: '#000', padding: 5, borderRadius: 20, borderWidth: 2, borderColor: '#FFD700' },
+  btnFoto: { width: '100%', height: 150, backgroundColor: '#1A1A1A', borderRadius: 10, justifyContent: 'center', alignItems: 'center', borderStyle: 'dashed', borderWidth: 1, borderColor: '#FFD700' },
+  previewFoto: { width: '100%', height: '100%', borderRadius: 10 },
+  btnPDF: { backgroundColor: '#FFD700', padding: 8, borderRadius: 5 }
+});

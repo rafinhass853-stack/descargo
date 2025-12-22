@@ -1,44 +1,26 @@
 import React, { useState, useEffect } from 'react';
-import { auth } from './firebaseConfig';
-import { onAuthStateChanged } from 'firebase/auth';
-import Login from './Login';
-import PainelGestor from './PainelGestor'; // Importando o novo painel profissional
-import './App.css';
+import { auth } from './firebase';
+import { onAuthStateChanged } from "firebase/auth";
+import TelaLogin from './TelaLogin';
+import PainelGestor from './PainelGestor';
 
 function App() {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [usuario, setUsuario] = useState(null);
+  const [carregando, setCarregando] = useState(true);
 
-  // Monitora o estado da autenticação em tempo real
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setLoading(false);
+    // Monitora se o Firebase autenticou o gestor
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setUsuario(user);
+      setCarregando(false);
     });
-
-    return () => unsubscribe(); // Limpa o monitoramento ao fechar o app
+    return () => unsubscribe();
   }, []);
 
-  // Tela de carregamento com o estilo Dark
-  if (loading) {
-    return (
-      <div className="container-login">
-        <div className="content-login">
-          <h1 className="logo">DESCARGO</h1>
-          <div className="linha-destaque"></div>
-          <p style={{ color: '#FFD700', fontWeight: 'bold' }}>INICIALIZANDO SISTEMA...</p>
-        </div>
-      </div>
-    );
-  }
+  if (carregando) return <div style={{background:'#000', height:'100vh'}} />;
 
-  // Se não houver usuário logado, mostra a tela de Login Dark & Gold
-  if (!user) {
-    return <Login />;
-  }
-
-  // Se estiver logado, mostra o Painel Gestor com Mapa e Lista Lateral
-  return <PainelGestor />;
+  // Se houver usuário, mostra o Painel. Se não, mostra o Login.
+  return usuario ? <PainelGestor /> : <TelaLogin />;
 }
 
 export default App;
