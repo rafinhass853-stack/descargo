@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc } from "firebase/firestore";
-import { Plus, MapPin, Truck, UserPlus, Info, Weight, Calendar, Clock, ExternalLink } from 'lucide-react';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc } from "firebase/firestore";
+import { Plus, MapPin, Truck, UserPlus, Info, Weight, Calendar, Clock, ExternalLink, Trash2 } from 'lucide-react';
 
-// Importamos o novo componente de ações
 import AcoesCargas from './AcoesCargas';
 
 const PainelCargas = () => {
@@ -14,7 +13,6 @@ const PainelCargas = () => {
         destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
     });
 
-    // Estados para controlar o Modal de Ações/Motoristas
     const [modalAberto, setModalAberto] = useState(false);
     const [cargaParaAtribuir, setCargaParaAtribuir] = useState(null);
 
@@ -37,7 +35,7 @@ const PainelCargas = () => {
                 dt: dtFinal,
                 status: 'AGUARDANDO PROGRAMAÇÃO',
                 motorista: '',
-                motoristaId: '', // Adicionado para rastrear o ID do motorista logado no app
+                motoristaId: '',
                 criadoEm: serverTimestamp()
             });
             setNovaCarga({
@@ -49,7 +47,18 @@ const PainelCargas = () => {
         } catch (error) { console.error(error); }
     };
 
-    // Função que será chamada quando o modal de AcoesCargas confirmar o envio
+    const handleExcluirCarga = async (id) => {
+        if (window.confirm("Tem certeza que deseja excluir esta carga permanentemente?")) {
+            try {
+                await deleteDoc(doc(db, "ordens_servico", id));
+                alert("Carga removida do sistema.");
+            } catch (error) {
+                console.error(error);
+                alert("Erro ao excluir.");
+            }
+        }
+    };
+
     const confirmarAtribuicao = async (motoristaInfo) => {
         try {
             const cargaRef = doc(db, "ordens_servico", cargaParaAtribuir.id);
@@ -79,7 +88,6 @@ const PainelCargas = () => {
                 <div style={styles.statsBadge}>{cargas.length} Cargas Ativas</div>
             </header>
 
-            {/* Formulário */}
             <section style={styles.cardForm}>
                 <form onSubmit={handleSubmit}>
                     <div style={styles.gridForm}>
@@ -98,7 +106,7 @@ const PainelCargas = () => {
                             <input placeholder="Link Google Maps" value={novaCarga.origemLink} onChange={e => setNovaCarga({...novaCarga, origemLink: e.target.value})} style={styles.input} />
                             <div style={styles.dateTimeWrapper}>
                                 <Calendar size={14} style={styles.dateTimeIcon} />
-                                <input type="datetime-local" value={novaCarga.origemData} onChange={e => setNovaCarga({...novaCarga, origemData: e.target.value})} style={styles.inputDate} required title="Selecione data e hora da coleta" />
+                                <input type="datetime-local" value={novaCarga.origemData} onChange={e => setNovaCarga({...novaCarga, origemData: e.target.value})} style={styles.inputDate} required />
                             </div>
                         </div>
 
@@ -110,16 +118,15 @@ const PainelCargas = () => {
                             <input placeholder="Link Google Maps" value={novaCarga.destinoLink} onChange={e => setNovaCarga({...novaCarga, destinoLink: e.target.value})} style={styles.input} />
                             <div style={styles.dateTimeWrapper}>
                                 <Calendar size={14} style={styles.dateTimeIcon} />
-                                <input type="datetime-local" value={novaCarga.destinoData} onChange={e => setNovaCarga({...novaCarga, destinoData: e.target.value})} style={styles.inputDate} required title="Selecione data e hora da entrega" />
+                                <input type="datetime-local" value={novaCarga.destinoData} onChange={e => setNovaCarga({...novaCarga, destinoData: e.target.value})} style={styles.inputDate} required />
                             </div>
                         </div>
                     </div>
-                    <textarea placeholder="Observações e Requisitos (MOPP, Senhas, Ajudantes...)" value={novaCarga.observacao} onChange={e => setNovaCarga({...novaCarga, observacao: e.target.value})} style={styles.textarea} />
+                    <textarea placeholder="Observações e Requisitos..." value={novaCarga.observacao} onChange={e => setNovaCarga({...novaCarga, observacao: e.target.value})} style={styles.textarea} />
                     <button type="submit" style={styles.btnSalvar}>LANÇAR AGORA</button>
                 </form>
             </section>
 
-            {/* Tabela */}
             <section style={styles.cardLista}>
                 <div style={styles.tableWrapper}>
                     <table style={styles.table}>
@@ -127,10 +134,10 @@ const PainelCargas = () => {
                             <tr style={styles.headRow}>
                                 <th style={styles.th}>STATUS</th>
                                 <th style={styles.th}>DT</th>
-                                <th style={styles.th}>COLETA / MAPS</th>
-                                <th style={styles.th}>ENTREGA / MAPS</th>
-                                <th style={styles.th}>DADOS CARGA</th>
-                                <th style={styles.th}>PROGRAMAÇÃO</th>
+                                <th style={styles.th}>COLETA</th>
+                                <th style={styles.th}>ENTREGA</th>
+                                <th style={styles.th}>DADOS</th>
+                                <th style={styles.th}>MOTORISTA</th>
                                 <th style={styles.th}>AÇÕES</th>
                             </tr>
                         </thead>
@@ -155,9 +162,7 @@ const PainelCargas = () => {
                                                 <span style={styles.mainInfo}>{item.origemCliente}</span>
                                                 {item.origemLink && <a href={item.origemLink} target="_blank" rel="noreferrer" style={styles.mapBtn}><MapPin size={12}/></a>}
                                             </div>
-                                            <span style={styles.subInfo}>{item.origemCnpj}</span>
                                             <span style={styles.cityHighlight}>{item.origemCidade}</span>
-                                            <span style={styles.dateLabel}><Clock size={10}/> {item.origemData ? new Date(item.origemData).toLocaleString('pt-BR') : '-'}</span>
                                         </div>
                                     </td>
 
@@ -167,9 +172,7 @@ const PainelCargas = () => {
                                                 <span style={styles.mainInfo}>{item.destinoCliente}</span>
                                                 {item.destinoLink && <a href={item.destinoLink} target="_blank" rel="noreferrer" style={styles.mapBtn}><MapPin size={12}/></a>}
                                             </div>
-                                            <span style={styles.subInfo}>{item.destinoCnpj}</span>
                                             <span style={styles.cityHighlight}>{item.destinoCidade}</span>
-                                            <span style={styles.dateLabel}><Clock size={10}/> {item.destinoData ? new Date(item.destinoData).toLocaleString('pt-BR') : '-'}</span>
                                         </div>
                                     </td>
 
@@ -190,11 +193,12 @@ const PainelCargas = () => {
 
                                     <td style={styles.td}>
                                         <div style={styles.actionGroup}>
-                                            {/* BOTÃO QUE ABRE O MODAL MÁGICO */}
                                             <button onClick={() => handleAbrirAcoes(item)} style={styles.circleBtn}>
                                                 <UserPlus size={16} />
                                             </button>
-                                            {item.observacao && <div style={styles.infoIcon} title={item.observacao}><Info size={16}/></div>}
+                                            <button onClick={() => handleExcluirCarga(item.id)} style={{...styles.circleBtn, backgroundColor: '#331111', color: '#ff4444'}}>
+                                                <Trash2 size={16} />
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -204,7 +208,6 @@ const PainelCargas = () => {
                 </div>
             </section>
 
-            {/* MODAL DE AÇÕES (Só aparece se modalAberto for true) */}
             {modalAberto && (
                 <AcoesCargas 
                     cargaSelecionada={cargaParaAtribuir} 
@@ -244,16 +247,13 @@ const styles = {
     infoBlock: { display: 'flex', flexDirection: 'column', gap: '3px' },
     rowFlex: { display: 'flex', alignItems: 'center', gap: '8px' },
     mainInfo: { fontWeight: 'bold', fontSize: '13px' },
-    subInfo: { fontSize: '10px', color: '#555' },
     cityHighlight: { color: '#FFD700', fontSize: '11px', fontWeight: 'bold' },
-    dateLabel: { color: '#00d1b2', fontSize: '11px', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' },
     mapBtn: { backgroundColor: '#222', color: '#FF9F43', padding: '4px', borderRadius: '4px', display: 'flex', alignItems: 'center' },
     dtText: { color: '#FFF', fontSize: '11px', fontWeight: 'bold' },
     statusBadge: { padding: '4px 8px', borderRadius: '4px', fontSize: '10px', fontWeight: 'bold' },
     motoristaBox: { color: '#2ecc71', fontSize: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
     actionGroup: { display: 'flex', gap: '10px', alignItems: 'center' },
     circleBtn: { backgroundColor: '#FFD700', border: 'none', width: '30px', height: '30px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    infoIcon: { color: '#333' }
 };
 
 export default PainelCargas;
