@@ -1,4 +1,5 @@
 node_modules/
 .expo/
-dist/
-.env
+npm-debug.*
+yarn-debug.*
+yarn-error.*

@@ -3,21 +3,27 @@
     "name": "descargo-app",
     "slug": "descargo-app",
     "version": "1.0.0",
-    "scheme": "descargo-app",
-    "web": {
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDthKUMIbKwMbGihWVqwBT2LfJ3PUogjyM"
-        }
-      }
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
     },
     "android": {
-      "config": {
-        "googleMaps": {
-          "apiKey": "AIzaSyDthKUMIbKwMbGihWVqwBT2LfJ3PUogjyM"
-        }
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
       },
-      "package": "com.rafael.descargo"
+      "edgeToEdgeEnabled": true
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
     }
   }
 }
