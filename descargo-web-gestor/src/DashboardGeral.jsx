@@ -80,8 +80,8 @@ const DashboardGeral = ({ totalMotoristas, motoristasOnline, styles }) => {
                 >
                     <MapResizer />
                     <TileLayer 
-                        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                        attribution='&copy; OpenStreetMap contributors'
+                        url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}"
+                        attribution='&copy; Google Maps'
                     />
                     {motoristasOnline.map((mot) => (
                         mot.lat && mot.lng && (
