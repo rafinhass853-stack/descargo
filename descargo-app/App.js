@@ -40,7 +40,8 @@ import {
   updateDoc, 
   setDoc, 
   serverTimestamp,
-  or
+  or,
+  and // Adicionado para corrigir o erro de InvalidQuery
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -110,13 +111,16 @@ export default function App() {
       const emailFiltro = user.email.toLowerCase().trim(); 
       const userId = user.uid;
 
+      // CORREÇÃO: Uso do and() para envolver o or() e o where() de status
       const q = query(
         collection(db, "notificacoes_cargas"),
-        or(
-          where("motoristaEmail", "==", emailFiltro),
-          where("motoristaId", "==", userId)
-        ),
-        where("status", "in", ["pendente", "aceito"])
+        and(
+          or(
+            where("motoristaEmail", "==", emailFiltro),
+            where("motoristaId", "==", userId)
+          ),
+          where("status", "in", ["pendente", "aceito"])
+        )
       );
 
       const unsubscribeCargas = onSnapshot(q, (snapshot) => {
@@ -125,7 +129,6 @@ export default function App() {
           const id = change.doc.id;
 
           if (change.type === "added" && dados.status === "pendente") {
-            // AJUSTE: INFORMAÇÕES NÍTIDAS SOLICITADAS
             Alert.alert(
               "🔔 NOVA VIAGEM",
               `Tipo: ${dados.tipoViagem || "Não informado"}\n` +
@@ -173,10 +176,10 @@ export default function App() {
       setStatusOperacional(novoStatusOp);
       sincronizarComFirestore({ statusOperacional: novoStatusOp });
 
-      // AJUSTE: TRAÇAR ROTA AUTOMATICAMENTE COM PROTEÇÃO PARA NÃO DAR ERRO "EMPTY"
+      // CORREÇÃO: Proteção contra links vazios ("") vindo do Firebase
       const destinoFinal = dados.linkEntrega || dados.destino || dados.clienteEntrega;
-      if (destinoFinal && destinoFinal.trim() !== "") {
-        if (destinoFinal.startsWith('http')) {
+      if (destinoFinal && destinoFinal.toString().trim() !== "") {
+        if (destinoFinal.toString().startsWith('http')) {
           Linking.openURL(destinoFinal);
         } else {
           const url = Platform.select({
@@ -356,10 +359,14 @@ export default function App() {
             </TouchableOpacity>
           </View>
           <View style={styles.routeActions}>
-            <TouchableOpacity onPress={() => (cargaAtiva.linkColeta && cargaAtiva.linkColeta.trim() !== "") ? Linking.openURL(cargaAtiva.linkColeta) : Alert.alert("Aviso", "Link de coleta não disponível")} style={[styles.routeBtn, {backgroundColor: '#D97706'}]}>
+            <TouchableOpacity 
+              onPress={() => (cargaAtiva.linkColeta && cargaAtiva.linkColeta.trim() !== "") ? Linking.openURL(cargaAtiva.linkColeta) : Alert.alert("Aviso", "Link de coleta não disponível")} 
+              style={[styles.routeBtn, {backgroundColor: '#D97706'}]}>
               <FontAwesome name="map-marker" size={14} color="#000" /><Text style={styles.routeBtnText}>ROTA ORIGEM</Text>
             </TouchableOpacity>
-            <TouchableOpacity onPress={() => (cargaAtiva.linkEntrega && cargaAtiva.linkEntrega.trim() !== "") ? Linking.openURL(cargaAtiva.linkEntrega) : Alert.alert("Aviso", "Link de entrega não disponível")} style={[styles.routeBtn, {backgroundColor: '#2563EB'}]}>
+            <TouchableOpacity 
+              onPress={() => (cargaAtiva.linkEntrega && cargaAtiva.linkEntrega.trim() !== "") ? Linking.openURL(cargaAtiva.linkEntrega) : Alert.alert("Aviso", "Link de entrega não disponível")} 
+              style={[styles.routeBtn, {backgroundColor: '#2563EB'}]}>
               <MaterialIcons name="assistant-navigation" size={14} color="#FFF" /><Text style={[styles.routeBtnText, {color: '#FFF'}]}>ROTA DESTINO</Text>
             </TouchableOpacity>
           </View>

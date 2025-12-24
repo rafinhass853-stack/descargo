@@ -4,7 +4,8 @@ import { auth, db } from "./firebase";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
   Truck, Users, LayoutDashboard, ClipboardList, 
-  LogOut, Fuel, Settings, UserCheck, Bell, Container, BarChart3
+  LogOut, Fuel, Settings, UserCheck, Bell, Container, BarChart3,
+  MapPin 
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -13,6 +14,7 @@ import Motoristas from './Motoristas';
 import Veiculos from './Veiculos';
 import Carretas from './Carretas';
 import Notificacoes from './Notificacoes';
+import ClientesPontos from './ClientesPontos'; // Importação ativada
 
 // Importação dos seus Dashboards
 import DashboardGeral from './DashboardGeral';
@@ -61,6 +63,7 @@ const PainelGestor = () => {
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
+            case 'clientes_pontos': return <ClientesPontos />; // Componente agora é renderizado
             case 'notificacoes': return <Notificacoes />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
         }
@@ -83,6 +86,11 @@ const PainelGestor = () => {
                     <div onClick={() => setMenuAtivo('cargas')} style={menuAtivo === 'cargas' ? styles.navItemAtivo : styles.navItem}>
                         <ClipboardList size={18} /> Painel de Cargas
                     </div>
+
+                    <div onClick={() => setMenuAtivo('clientes_pontos')} style={menuAtivo === 'clientes_pontos' ? styles.navItemAtivo : styles.navItem}>
+                        <MapPin size={18} /> Clientes e Pontos
+                    </div>
+
                     <div onClick={() => setMenuAtivo('veiculos')} style={menuAtivo === 'veiculos' ? styles.navItemAtivo : styles.navItem}>
                         <Truck size={18} /> Veículos
                     </div>
@@ -93,6 +101,8 @@ const PainelGestor = () => {
                         <Users size={18} /> Motoristas
                     </div>
                     
+                    <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
+
                     <div style={styles.navItem}><Fuel size={18} /> Dash Combustível</div>
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
                     <div style={styles.navItem}><UserCheck size={18} />Folgas</div>
@@ -128,7 +138,6 @@ const styles = {
     header: { height: '60px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 30px', color: '#444', fontSize: '11px' },
     content: { padding: '25px', flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' },
     titulo: { color: '#FFD700', fontSize: '22px', margin: 0, borderLeft: '4px solid #FFD700', paddingLeft: '15px' },
-    // RESTAURANDO OS GRIDS E CARDS DO DASHBOARD:
     grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' },
     card: { backgroundColor: '#111', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     cardInfo: { display: 'flex', flexDirection: 'column' },
