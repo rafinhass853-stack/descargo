@@ -59,25 +59,42 @@ const PainelCargas = () => {
         }
     };
 
+    // --- AJUSTADO PARA SUPORTAR DESASSOCIAÇÃO ---
     const confirmarAtribuicao = async (motoristaInfo) => {
         try {
             const cargaRef = doc(db, "ordens_servico", cargaParaAtribuir.id);
-            await updateDoc(cargaRef, {
-                motorista: motoristaInfo.nome,
-                motoristaId: motoristaInfo.id,
-                status: 'PROGRAMADA',
-                enviadoEm: serverTimestamp()
-            });
+            
+            if (motoristaInfo) {
+                // Vincular Motorista
+                await updateDoc(cargaRef, {
+                    motorista: motoristaInfo.nome,
+                    motoristaId: motoristaInfo.id,
+                    status: 'PROGRAMADA',
+                    enviadoEm: serverTimestamp()
+                });
+            } else {
+                // Desassociar (motoristaInfo veio null do modal)
+                await updateDoc(cargaRef, {
+                    motorista: '',
+                    motoristaId: '',
+                    status: 'AGUARDANDO PROGRAMAÇÃO',
+                    enviadoEm: null
+                });
+            }
             setModalAberto(false);
             setCargaParaAtribuir(null);
         } catch (error) {
             console.error("Erro ao atualizar carga:", error);
-            alert("Erro ao atribuir motorista.");
+            alert("Erro na operação.");
         }
     };
 
     const handleAbrirAcoes = (carga) => {
-        setCargaParaAtribuir(carga);
+        // Mapeamos 'motorista' para 'motoristaNome' para o modal reconhecer
+        setCargaParaAtribuir({
+            ...carga,
+            motoristaNome: carga.motorista 
+        });
         setModalAberto(true);
     };
 

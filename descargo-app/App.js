@@ -1,39 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  SafeAreaView, StatusBar, KeyboardAvoidingView, 
-  Platform, ActivityIndicator, Alert, ScrollView 
-} from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
-import MapViewDirections from 'react-native-maps-directions'; 
-import * as Location from 'expo-location';
-import * as Linking from 'expo-linking';
-import { FontAwesome, MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-
-// FIREBASE
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword } from 'firebase/auth';
-import { getFirestore, collection, query, where, onSnapshot, doc, updateDoc } from 'firebase/firestore';
-
-// Configuração Firebase
-const firebaseConfig = {
-  apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
-  authDomain: "descargo-4090a.firebaseapp.com",
-  projectId: "descargo-4090a",
-  storageBucket: "descargo-4090a.firebasestorage.app",
-  messagingSenderId: "345718597496",
-  appId: "1:345718597496:web:97af37f598666e0a3bca8d"
-};
-
-// IMPORTANTE: Para o rotograma interno, use a mesma chave de API do Google Maps
-const GOOGLE_MAPS_APIKEY = "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M";
-
-const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const auth = getAuth(app);
-const db = getFirestore(app);
+// ... (mantém todos os imports e configurações Firebase)
 
 export default function App() {
   const mapRef = useRef(null);
+
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [user, setUser] = useState(null); 
   const [email, setEmail] = useState('');
@@ -41,11 +10,12 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
   const [cargaAtiva, setCargaAtiva] = useState(null);
-  
-  // Destino atual para o desenho do rotograma
   const [destinoCoords, setDestinoCoords] = useState(null);
 
-  // --- ESCUTA NOTIFICAÇÕES E CARGA ATIVA EM TEMPO REAL ---
+  const [statusOperacional, setStatusOperacional] = useState('Sem programação');
+  const [statusJornada, setStatusJornada] = useState('fora da jornada');
+
+  // ESCUTA CARGAS
   useEffect(() => {
     if (isLoggedIn && user) {
       const q = query(
@@ -62,12 +32,7 @@ export default function App() {
           if (change.type === "added" && dados.status === "pendente") {
             Alert.alert(
               "🚛 VIAGEM PROGRAMADA",
-              `DT: ${dados.dt}\n` +
-              `Carreta: ${dados.carreta}\n` +
-              `Peso: ${dados.peso} KG\n\n` +
-              `📍 COLETA: ${dados.clienteColeta}\n` +
-              `🏁 ENTREGA: ${dados.clienteEntrega}\n\n` +
-              `Obs: ${dados.observacao}`,
+              `DT: ${dados.dt}\n📍 COLETA: ${dados.clienteColeta}\n🏁 ENTREGA: ${dados.clienteEntrega}`,
               [
                 { text: "RECUSAR", style: "cancel" },
                 { text: "ACEITAR", onPress: () => aceitarCarga(id, dados) }
@@ -92,52 +57,70 @@ export default function App() {
         lidoEm: new Date()
       });
       setCargaAtiva({ id: docId, ...dadosCarga });
-      Alert.alert("Sucesso", "Carga confirmada! Escolha a Rota abaixo para iniciar o traçado.");
-    } catch (e) {
-      Alert.alert("Erro", "Não foi possível confirmar a carga.");
+      setStatusOperacional('Viagem vazio'); 
+    } catch {
+      Alert.alert("Erro", "Não foi possível confirmar.");
     }
   };
 
-  // FUNÇÃO PARA PEGAR O LINK E TRANSFORMAR EM ROTA NO MAPA
-  const iniciarRotograma = (url) => {
-    if (!url || url.includes("Considerar")) {
-      return Alert.alert("Atenção", "Link não disponível ou considerar endereço da NF.");
-    }
+  const alternarJornada = () => {
+    setStatusJornada(
+      statusJornada === 'dentro da jornada'
+        ? 'fora da jornada'
+        : 'dentro da jornada'
+    );
+  };
 
-    // Tenta extrair coordenadas do link do Google Maps (@lat,long)
-    const regex = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
-    const match = url.match(regex);
-
-    if (match) {
-      const coords = {
-        latitude: parseFloat(match[1]),
-        longitude: parseFloat(match[2]),
-      };
-      setDestinoCoords(coords);
-    } else {
-      // Se não achar coordenadas no link, tenta abrir o GPS externo como segurança
-      Alert.alert(
-        "Link de Texto", 
-        "Não extraímos coordenadas automáticas. Abrir no Google Maps externo?",
-        [
-          { text: "Cancelar" },
-          { text: "Abrir Externo", onPress: () => Linking.openURL(url) }
-        ]
-      );
-    }
+  const selecionarStatusOperacional = () => {
+    Alert.alert("Alterar Status", "Como está a operação agora?", [
+      { text: "Sem programação", onPress: () => setStatusOperacional("Sem programação") },
+      { text: "Viagem vazio", onPress: () => setStatusOperacional("Viagem vazio") },
+      { text: "Viagem carregado", onPress: () => setStatusOperacional("Viagem carregado") },
+      { text: "Manutenção", onPress: () => setStatusOperacional("Manutenção") },
+      { text: "Cancelar", style: "cancel" }
+    ]);
   };
 
   const handleLogin = async () => {
-    if (!email || !password) return Alert.alert('Atenção', 'Preencha os campos.');
+    if (!email || !password) {
+      return Alert.alert('Atenção', 'Preencha os campos.');
+    }
+
     setLoading(true);
     try {
       const response = await signInWithEmailAndPassword(auth, email, password);
-      setUser(response.user); 
+      setUser(response.user);
       setIsLoggedIn(true);
-    } catch (error) {
+    } catch {
       Alert.alert('Falha no Login', 'E-mail ou senha incorretos.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setIsLoggedIn(false);
+      setUser(null);
+      setEmail('');
+      setPassword('');
+      setCargaAtiva(null);
+      setDestinoCoords(null);
+      setStatusOperacional('Sem programação');
+      setStatusJornada('fora da jornada');
+    } catch {
+      Alert.alert('Erro', 'Não foi possível sair.');
+    }
+  };
+
+  const centralizarNoGPS = () => {
+    if (mapRef.current && location) {
+      mapRef.current.animateToRegion({
+        ...location,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01
+      });
     }
   };
 
@@ -157,19 +140,55 @@ export default function App() {
       <SafeAreaView style={styles.loginContainer}>
         <StatusBar barStyle="light-content" />
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{flex: 1}}>
-          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.header}>
               <Text style={styles.logoText}>DESCARGO</Text>
               <View style={styles.underline} />
               <Text style={styles.subtitle}>PAINEL DO MOTORISTA</Text>
             </View>
+
             <View style={styles.form}>
-              <TextInput style={styles.input} placeholder="E-mail" placeholderTextColor="#666" value={email} onChangeText={setEmail} autoCapitalize="none" />
-              <TextInput style={styles.input} placeholder="Senha" placeholderTextColor="#666" value={password} onChangeText={setPassword} secureTextEntry />
-              <TouchableOpacity style={styles.button} onPress={handleLogin} activeOpacity={0.8}>
-                {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>ENTRAR NO SISTEMA</Text>}
+              <TextInput
+                style={styles.input}
+                placeholder="E-mail"
+                placeholderTextColor="#666"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+              />
+              <TextInput
+                style={styles.input}
+                placeholder="Senha"
+                placeholderTextColor="#666"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+              />
+              <TouchableOpacity style={styles.button} onPress={handleLogin}>
+                {loading
+                  ? <ActivityIndicator color="#000" />
+                  : <Text style={styles.buttonText}>ENTRAR NO SISTEMA</Text>
+                }
               </TouchableOpacity>
             </View>
+
+            {/* REDES SOCIAIS */}
+            <View style={styles.socialContainer}>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
+                <FontAwesome name="linkedin-square" size={32} color="#0e76a8" style={styles.socialIcon}/>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}>
+                <FontAwesome name="instagram" size={32} color="#c13584" style={styles.socialIcon}/>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}>
+                <FontAwesome name="envelope" size={32} color="#f39c12" style={styles.socialIcon}/>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('tel:16988318626')}>
+                <FontAwesome name="whatsapp" size={32} color="#25D366" style={styles.socialIcon}/>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.signature}>Desenvolvido por Rafael Araujo</Text>
+
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -179,87 +198,100 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
+
+      {/* MAPA */}
       <MapView
         ref={mapRef}
         provider={PROVIDER_GOOGLE}
         style={styles.map}
         mapType="hybrid"
+        showsUserLocation
         initialRegion={{
           latitude: -23.5505,
           longitude: -46.6333,
           latitudeDelta: 0.01,
           longitudeDelta: 0.01,
         }}
-        showsUserLocation={true}
-        showsMyLocationButton={true}
       >
         {location && destinoCoords && (
-          <>
-            <MapViewDirections
-              origin={location}
-              destination={destinoCoords}
-              apikey={GOOGLE_MAPS_APIKEY}
-              strokeWidth={4}
-              strokeColor="#FFD700"
-              onReady={result => {
-                mapRef.current.fitToCoordinates(result.coordinates, {
-                  edgePadding: { right: 30, bottom: 250, left: 30, top: 100 },
-                });
-              }}
-            />
-            <Marker coordinate={destinoCoords}>
-              <View style={styles.markerContainer}>
-                <MaterialCommunityIcons name="flag-checkered" size={30} color="#FFD700" />
-              </View>
-            </Marker>
-          </>
+          <MapViewDirections
+            origin={location}
+            destination={destinoCoords}
+            apikey={GOOGLE_MAPS_APIKEY}
+            strokeWidth={4}
+            strokeColor="#FFD700"
+          />
         )}
       </MapView>
 
-      {/* ROTOGRAMA ATIVO (CARD DE VIAGEM) */}
-      {cargaAtiva && (
-        <View style={styles.activeRouteCard}>
-          <View style={styles.routeHeader}>
-            <View>
-              <Text style={styles.routeLabel}>ROTOGRAMA INTERNO - DT {cargaAtiva.dt}</Text>
-              <Text style={styles.routeInfo}>{cargaAtiva.carreta} | {cargaAtiva.peso} KG</Text>
-            </View>
-            <TouchableOpacity onPress={() => { setCargaAtiva(null); setDestinoCoords(null); }}>
-              <Ionicons name="close-circle" size={26} color="#666" />
-            </TouchableOpacity>
-          </View>
-          
-          <Text style={styles.routeCities}>{cargaAtiva.origem} ➔ {cargaAtiva.destino}</Text>
-          
-          <View style={styles.routeActions}>
-            <TouchableOpacity 
-              style={[styles.routeBtn, {backgroundColor: '#D97706'}]} 
-              onPress={() => iniciarRotograma(cargaAtiva.linkColeta)}
-            >
-              <MaterialCommunityIcons name="map-marker-path" size={20} color="#000" />
-              <Text style={styles.routeBtnText}>ROTA COLETA</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.routeBtn, {backgroundColor: '#2563EB'}]} 
-              onPress={() => iniciarRotograma(cargaAtiva.linkEntrega)}
-            >
-              <MaterialCommunityIcons name="truck-delivery" size={20} color="#FFF" />
-              <Text style={[styles.routeBtnText, {color: '#FFF'}]}>ROTA ENTREGA</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem} onPress={() => setDestinoCoords(null)}>
-          <Ionicons name="home" size={24} color="#FFD700" />
-          <Text style={[styles.tabText, {color: '#FFD700', fontWeight: 'bold'}]}>Início</Text>
+      {/* STATUS */}
+      <View style={styles.topStatusContainer}>
+        <TouchableOpacity style={styles.statusBox} onPress={selecionarStatusOperacional}>
+          <Text style={styles.statusLabel}>STATUS</Text>
+          <Text style={styles.statusValue}>{statusOperacional.toUpperCase()}</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}><MaterialCommunityIcons name="shield-account" size={24} color="#888" /><Text style={styles.tabText}>Conta</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}><FontAwesome name="briefcase" size={22} color="#888" /><Text style={styles.tabText}>Operação</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}><Ionicons name="calendar" size={24} color="#888" /><Text style={styles.tabText}>Escala</Text></TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.statusBox,
+            { borderColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444' }
+          ]}
+          onPress={alternarJornada}
+        >
+          <Text style={styles.statusLabel}>JORNADA</Text>
+          <Text
+            style={[
+              styles.statusValue,
+              { color: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#888' }
+            ]}
+          >
+            {statusJornada.toUpperCase()}
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      {/* TAB BAR */}
+      <View style={styles.tabBar}>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="home" size={24} color="#FFD700" />
+          <Text style={[styles.tabText, { color: '#FFD700' }]}>Início</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <MaterialCommunityIcons name="shield-account" size={24} color="#888" />
+          <Text style={styles.tabText}>Conta</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <FontAwesome name="briefcase" size={22} color="#888" />
+          <Text style={styles.tabText}>Operação</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem}>
+          <Ionicons name="calendar" size={24} color="#888" />
+          <Text style={styles.tabText}>Escala</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* BOTÃO GPS */}
+      <TouchableOpacity style={styles.gpsButton} onPress={centralizarNoGPS}>
+        <Ionicons name="navigate-circle-outline" size={36} color="#FFD700" />
+      </TouchableOpacity>
+
+      {/* BOTÃO SAIR COM CONFIRMAÇÃO */}
+      <TouchableOpacity
+        style={styles.logoutButton}
+        onPress={() => {
+          Alert.alert(
+            "Confirmação",
+            "Deseja realmente sair do app?",
+            [
+              { text: "Cancelar", style: "cancel" },
+              { text: "Sair", style: "destructive", onPress: handleLogout }
+            ]
+          );
+        }}
+      >
+        <Ionicons name="log-out-outline" size={20} color="#FFD700" />
+        <Text style={styles.logoutText}>Sair</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -267,26 +299,112 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   map: { width: '100%', height: '100%' },
+
+  logoutButton: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 20 : 15,
+    right: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#333',
+    zIndex: 999,
+  },
+  logoutText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: 'bold',
+    marginLeft: 6,
+  },
+
+  gpsButton: {
+    position: 'absolute',
+    bottom: Platform.OS === 'ios' ? 80 : 70,
+    right: 15,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    padding: 5,
+    borderRadius: 25,
+    zIndex: 998,
+  },
+
+  topStatusContainer: {
+    position: 'absolute',
+    top: Platform.OS === 'ios' ? 50 : 30,
+    left: 15,
+    right: 15,
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  statusBox: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+    alignItems: 'center',
+  },
+
+  statusLabel: { color: '#666', fontSize: 9, fontWeight: 'bold' },
+  statusValue: { fontSize: 11, fontWeight: '900', color: '#FFD700' },
+
   loginContainer: { flex: 1, backgroundColor: '#000' },
-  scrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 30 },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 30 },
   header: { alignItems: 'center', marginBottom: 60 },
-  logoText: { fontSize: 48, fontWeight: '900', color: '#FFD700', letterSpacing: 1 },
-  underline: { height: 3, width: 65, backgroundColor: '#D97706', marginTop: -2 },
-  subtitle: { color: '#888', fontSize: 13, fontWeight: 'bold', letterSpacing: 4, marginTop: 25 },
-  form: { width: '100%', maxWidth: 400 },
-  input: { backgroundColor: '#111', color: '#FFF', padding: 20, borderRadius: 10, marginBottom: 15, fontSize: 16, borderWidth: 1, borderColor: '#222' },
-  button: { backgroundColor: '#FFD700', padding: 20, borderRadius: 10, alignItems: 'center', marginTop: 10, minHeight: 60, justifyContent: 'center' },
-  buttonText: { color: '#000', fontWeight: '900', fontSize: 16 },
-  activeRouteCard: { position: 'absolute', bottom: 100, left: 15, right: 15, backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: 15, padding: 15, borderWidth: 1, borderColor: '#333', elevation: 10 },
-  routeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
-  routeLabel: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', textTransform: 'uppercase' },
-  routeInfo: { color: '#FFF', fontSize: 16, fontWeight: '900' },
-  routeCities: { color: '#BBB', fontSize: 13, marginVertical: 10, fontWeight: '600' },
-  routeActions: { flexDirection: 'row', gap: 10, marginTop: 5 },
-  routeBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', padding: 14, borderRadius: 10, gap: 8 },
-  routeBtnText: { fontSize: 11, fontWeight: '900' },
-  tabBar: { position: 'absolute', bottom: 0, flexDirection: 'row', backgroundColor: '#000', paddingVertical: 15, borderTopWidth: 1, borderTopColor: '#222', justifyContent: 'space-around', width: '100%', paddingBottom: Platform.OS === 'ios' ? 30 : 15 },
-  tabItem: { alignItems: 'center', justifyContent: 'center' },
-  tabText: { color: '#888', fontSize: 10, marginTop: 4 },
-  markerContainer: { backgroundColor: 'rgba(0,0,0,0.6)', padding: 5, borderRadius: 20, borderWidth: 1, borderColor: '#FFD700' }
+  logoText: { fontSize: 48, fontWeight: '900', color: '#FFD700' },
+  underline: { height: 3, width: 65, backgroundColor: '#D97706' },
+  subtitle: { color: '#888', fontSize: 13, marginTop: 25 },
+
+  form: { width: '100%' },
+  input: {
+    backgroundColor: '#111',
+    color: '#FFF',
+    padding: 20,
+    borderRadius: 10,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#222'
+  },
+  button: {
+    backgroundColor: '#FFD700',
+    padding: 20,
+    borderRadius: 10,
+    alignItems: 'center'
+  },
+  buttonText: { color: '#000', fontWeight: '900' },
+
+  socialContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginTop: 20
+  },
+  socialIcon: {
+    marginHorizontal: 10
+  },
+  signature: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 10
+  },
+
+  tabBar: {
+    position: 'absolute',
+    bottom: 0,
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingVertical: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#222',
+    backgroundColor: '#000',
+    paddingBottom: Platform.OS === 'ios' ? 30 : 15
+  },
+  tabItem: { alignItems: 'center' },
+  tabText: { color: '#888', fontSize: 10, marginTop: 4 }
 });

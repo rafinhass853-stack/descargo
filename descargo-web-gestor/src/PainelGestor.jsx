@@ -4,17 +4,17 @@ import { auth, db } from "./firebase";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
   Truck, Users, LayoutDashboard, ClipboardList, 
-  LogOut, Fuel, Settings, UserCheck, UserPlus, Container, BarChart3
+  LogOut, Fuel, Settings, UserCheck, Bell, Container, BarChart3
 } from 'lucide-react';
 
 // Importação das Telas de Operação
 import PainelCargas from './PainelCargas';
-import CriarAcessoMotorista from './CriarAcessoMotorista'; 
 import Motoristas from './Motoristas';
 import Veiculos from './Veiculos';
 import Carretas from './Carretas';
+import Notificacoes from './Notificacoes';
 
-// Importação dos seus novos Dashboards (estão na raiz src conforme sua imagem)
+// Importação dos seus Dashboards
 import DashboardGeral from './DashboardGeral';
 import Dashboard1 from './Dashboard1';
 
@@ -23,7 +23,6 @@ const PainelGestor = () => {
     const [totalMotoristas, setTotalMotoristas] = useState(0);
     const [menuAtivo, setMenuAtivo] = useState('dashboard');
 
-    // Monitoramento Realtime (Logados no App)
     useEffect(() => {
         const q = query(collection(db, "localizacao_realtime"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -36,7 +35,6 @@ const PainelGestor = () => {
         return () => unsubscribe();
     }, []);
 
-    // Monitoramento Total de Motoristas (Nome da coleção corrigido conforme seu Firebase)
     useEffect(() => {
         const q = query(collection(db, "cadastro_motoristas"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -63,7 +61,7 @@ const PainelGestor = () => {
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
-            case 'criar_acesso': return <CriarAcessoMotorista onFechar={() => setMenuAtivo('dashboard')} />;
+            case 'notificacoes': return <Notificacoes />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
         }
     };
@@ -73,7 +71,6 @@ const PainelGestor = () => {
             <aside style={styles.sidebar}>
                 <h1 style={styles.logo}>DESCARGO</h1>
                 <nav style={styles.nav}>
-                    {/* DASHBOARDS */}
                     <div onClick={() => setMenuAtivo('dashboard')} style={menuAtivo === 'dashboard' ? styles.navItemAtivo : styles.navItem}>
                         <LayoutDashboard size={18} /> Monitoramento
                     </div>
@@ -83,7 +80,6 @@ const PainelGestor = () => {
 
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
 
-                    {/* OPERACIONAL */}
                     <div onClick={() => setMenuAtivo('cargas')} style={menuAtivo === 'cargas' ? styles.navItemAtivo : styles.navItem}>
                         <ClipboardList size={18} /> Painel de Cargas
                     </div>
@@ -101,8 +97,8 @@ const PainelGestor = () => {
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
                     <div style={styles.navItem}><UserCheck size={18} />Folgas</div>
                     
-                    <div onClick={() => setMenuAtivo('criar_acesso')} style={menuAtivo === 'criar_acesso' ? styles.navItemAtivo : styles.navItem}>
-                        <UserPlus size={18} />Criar acesso
+                    <div onClick={() => setMenuAtivo('notificacoes')} style={menuAtivo === 'notificacoes' ? styles.navItemAtivo : styles.navItem}>
+                        <Bell size={18} />Notificações
                     </div>
                 </nav>
                 <button onClick={handleLogout} style={styles.btnSair}><LogOut size={18} /> Sair</button>
@@ -132,6 +128,7 @@ const styles = {
     header: { height: '60px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 30px', color: '#444', fontSize: '11px' },
     content: { padding: '25px', flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' },
     titulo: { color: '#FFD700', fontSize: '22px', margin: 0, borderLeft: '4px solid #FFD700', paddingLeft: '15px' },
+    // RESTAURANDO OS GRIDS E CARDS DO DASHBOARD:
     grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' },
     card: { backgroundColor: '#111', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
     cardInfo: { display: 'flex', flexDirection: 'column' },
