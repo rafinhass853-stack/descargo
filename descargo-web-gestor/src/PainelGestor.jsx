@@ -25,30 +25,27 @@ const PainelGestor = () => {
     const [menuAtivo, setMenuAtivo] = useState('dashboard');
 
     useEffect(() => {
-        // Monitoramento de quem está enviando sinal GPS (localizacao_realtime)
-        const q = query(collection(db, "localizacao_realtime"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
+        // 1. Monitoramento de quem está enviando sinal GPS (localizacao_realtime)
+        const qLoc = query(collection(db, "localizacao_realtime"));
+        const unsubscribeLoc = onSnapshot(qLoc, (snapshot) => {
             const lista = [];
             snapshot.forEach((doc) => {
                 lista.push({ id: doc.id, ...doc.data() });
             });
             setMotoristasOnline(lista);
         });
-        return () => unsubscribe();
-    }, []);
 
-    useEffect(() => {
-        // AJUSTE CRÍTICO: Busca na coleção 'motoristas' para o total de cadastrados
-        const q = query(collection(db, "motoristas"));
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            // Filtro para evitar documentos fantasmas/vazios
-            const validos = snapshot.docs.filter(doc => {
-                const data = doc.data();
-                return data.email || data.nome;
-            });
-            setTotalMotoristas(validos.length);
+        // 2. Monitoramento do Total de Cadastros (cadastro_motoristas)
+        // Isso garante que o (Número) no menu lateral atualize instantaneamente
+        const qCad = query(collection(db, "cadastro_motoristas"));
+        const unsubscribeCad = onSnapshot(qCad, (snapshot) => {
+            setTotalMotoristas(snapshot.size);
         });
-        return () => unsubscribe();
+
+        return () => {
+            unsubscribeLoc();
+            unsubscribeCad();
+        };
     }, []);
 
     const handleLogout = () => signOut(auth);
@@ -57,7 +54,6 @@ const PainelGestor = () => {
         switch (menuAtivo) {
             case 'dashboard':
                 return <DashboardGeral 
-                            // IMPORTANTE: Nome da prop deve bater com o que o DashboardGeral espera
                             totalCadastradosProp={totalMotoristas} 
                             motoristasOnlineProp={motoristasOnline} 
                             styles={styles} 
