@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, addDoc, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, doc } from "firebase/firestore";
 import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap } from 'react-leaflet';
 import { EditControl } from "react-leaflet-draw";
-import { LocateFixed, Save, Building2, Hash, Link, Search } from 'lucide-react';
+import { LocateFixed, Save, Building2, Hash, Search, Trash2, MapPin } from 'lucide-react';
 
 // CSS necessário para o Leaflet funcionar corretamente
 import 'leaflet/dist/leaflet.css';
@@ -14,7 +14,9 @@ const { BaseLayer } = LayersControl;
 // Componente para mover a câmera do mapa após a busca
 const ChangeView = ({ center }) => {
     const map = useMap();
-    map.setView(center, 16);
+    useEffect(() => {
+        map.setView(center, 16);
+    }, [center, map]);
     return null;
 };
 
@@ -24,8 +26,21 @@ const ClientesPontos = () => {
     const [geofence, setGeofence] = useState(null);
     const [searchQuery, setSearchQuery] = useState("");
     const [mapCenter, setMapCenter] = useState([-23.5505, -46.6333]);
+    const [clientesCadastrados, setClientesCadastrados] = useState([]);
 
-    // FUNÇÃO PARA BUSCAR ENDEREÇO
+    // BUSCA OS CLIENTES CADASTRADOS EM TEMPO REAL
+    useEffect(() => {
+        const q = query(collection(db, "cadastro_clientes_pontos"), orderBy("criadoEm", "desc"));
+        const unsubscribe = onSnapshot(q, (snapshot) => {
+            const lista = [];
+            snapshot.forEach((doc) => {
+                lista.push({ id: doc.id, ...doc.data() });
+            });
+            setClientesCadastrados(lista);
+        });
+        return () => unsubscribe();
+    }, []);
+
     const handleSearch = async (e) => {
         e.preventDefault();
         if (!searchQuery) return;
@@ -42,7 +57,6 @@ const ClientesPontos = () => {
         }
     };
 
-    // LIMPEZA DE DADOS PARA O FIREBASE (Evita erro de salvamento)
     const onCreated = (e) => {
         const { layerType, layer } = e;
         let areaData = { tipo: layerType };
@@ -51,14 +65,12 @@ const ClientesPontos = () => {
             areaData.centro = { lat: layer.getLatLng().lat, lng: layer.getLatLng().lng };
             areaData.raio = layer.getRadius();
         } else {
-            // Converte as coordenadas do Leaflet em objetos simples que o Firebase aceita
             const rawCoords = layer.getLatLngs()[0];
             areaData.coordenadas = rawCoords.map(c => ({ lat: c.lat, lng: c.lng }));
         }
         setGeofence(areaData);
     };
 
-    // SALVAMENTO NO FIREBASE
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!geofence) return alert("Por favor, desenhe a cerca no mapa antes de salvar!");
@@ -72,7 +84,7 @@ const ClientesPontos = () => {
                 cnpj: formData.cnpj,
                 linkGoogle: formData.linkGoogle,
                 codigo: novoCodigo,
-                geofence: geofence, // Dados limpos aqui
+                geofence: geofence,
                 criadoEm: serverTimestamp()
             });
             
@@ -81,10 +93,15 @@ const ClientesPontos = () => {
             setGeofence(null);
             setSearchQuery("");
         } catch (error) {
-            console.error("Erro ao salvar:", error);
             alert("Erro crítico ao salvar: " + error.message);
         }
         setLoading(false);
+    };
+
+    const handleDelete = async (id) => {
+        if(window.confirm("Deseja realmente excluir este cliente?")) {
+            await deleteDoc(doc(db, "cadastro_clientes_pontos", id));
+        }
     };
 
     return (
@@ -95,7 +112,6 @@ const ClientesPontos = () => {
             
             <form onSubmit={handleSubmit} style={styles.formGrid}>
                 <div style={styles.sidebar}>
-                    {/* CAMPO DE BUSCA NO MAPA */}
                     <div style={styles.field}>
                         <label style={styles.label}>LOCALIZAR ENDEREÇO</label>
                         <div style={{ display: 'flex', gap: '5px' }}>
@@ -126,6 +142,27 @@ const ClientesPontos = () => {
                     </button>
                     
                     {geofence && <p style={styles.statusOk}>✓ Cerca pronta para salvar</p>}
+
+                    {/* LISTA DE CLIENTES SALVOS */}
+                    <div style={styles.listaContainer}>
+                        <h3 style={styles.listaTitulo}>CLIENTES CADASTRADOS ({clientesCadastrados.length})</h3>
+                        <div style={styles.listaScroll}>
+                            {clientesCadastrados.map((item) => (
+                                <div key={item.id} style={styles.itemCliente}>
+                                    <div>
+                                        <div style={styles.itemNome}>{item.cliente.toUpperCase()}</div>
+                                        <div style={styles.itemCodigo}>{item.codigo} | {item.cnpj || 'S/ CNPJ'}</div>
+                                    </div>
+                                    <button 
+                                        onClick={() => handleDelete(item.id)}
+                                        style={styles.btnDelete}
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
 
                 <div style={styles.mapWrapper}>
@@ -163,15 +200,24 @@ const styles = {
     container: { backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '12px', border: '1px solid #222' },
     titulo: { color: '#FFD700', display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
     formGrid: { display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px' },
-    sidebar: { display: 'flex', flexDirection: 'column', gap: '15px' },
+    sidebar: { display: 'flex', flexDirection: 'column', gap: '15px', maxHeight: '700px' },
     field: { display: 'flex', flexDirection: 'column', gap: '5px' },
     label: { color: '#888', fontSize: '10px', fontWeight: 'bold' },
     input: { backgroundColor: '#111', border: '1px solid #333', padding: '12px', borderRadius: '8px', color: '#FFF', outline: 'none' },
     inputSearch: { flex: 1, backgroundColor: '#000', border: '1px solid #FFD700', padding: '10px', borderRadius: '8px', color: '#FFF', outline: 'none' },
     btnSearch: { backgroundColor: '#FFD700', border: 'none', borderRadius: '8px', padding: '0 15px', cursor: 'pointer' },
-    btn: { backgroundColor: '#FFD700', color: '#000', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginTop: '10px' },
+    btn: { backgroundColor: '#FFD700', color: '#000', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginTop: '5px' },
     statusOk: { color: '#2ecc71', fontSize: '12px', textAlign: 'center', fontWeight: 'bold', marginTop: '5px' },
-    mapWrapper: { height: '600px', borderRadius: '12px', overflow: 'hidden', border: '2px solid #333' }
+    mapWrapper: { height: '700px', borderRadius: '12px', overflow: 'hidden', border: '2px solid #333' },
+    
+    // ESTILOS DA LISTA
+    listaContainer: { marginTop: '20px', borderTop: '1px solid #222', paddingTop: '15px' },
+    listaTitulo: { color: '#666', fontSize: '10px', fontWeight: 'bold', marginBottom: '10px' },
+    listaScroll: { overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '5px' },
+    itemCliente: { backgroundColor: '#111', padding: '10px', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #222' },
+    itemNome: { fontSize: '12px', fontWeight: 'bold', color: '#FFD700' },
+    itemCodigo: { fontSize: '10px', color: '#666' },
+    btnDelete: { backgroundColor: 'transparent', border: 'none', color: '#ff4d4d', cursor: 'pointer', opacity: 0.6 }
 };
 
 export default ClientesPontos;

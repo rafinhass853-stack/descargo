@@ -4,7 +4,11 @@ import {
   query, orderBy, doc, updateDoc 
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getAuth, createUserWithEmailAndPassword } from "firebase/auth"; // Importação necessária
+import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
+import { 
+  User, Phone, MapPin, CreditCard, ShieldCheck, Mail, 
+  Key, Edit, Power, Eye, EyeOff, Fingerprint, Award 
+} from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -18,15 +22,16 @@ const firebaseConfig = {
 
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
-const auth = getAuth(app); // Inicializa o serviço de autenticação
+const auth = getAuth(app);
 
 export default function Motoristas() {
   const [motoristas, setMotoristas] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
   const [carregando, setCarregando] = useState(false);
+  const [verSenhas, setVerSenhas] = useState(false);
   const [novoMotorista, setNovoMotorista] = useState({
-    nome: '', cpf: '', cnh_cat: '', mopp: 'Não', venc_mopp: '',
-    cidade: '', nascimento: '', telefone: '', status: 'ATIVO',
+    nome: '', cpf: '', cnh_cat: '', mopp: 'Não',
+    cidade: '', telefone: '', status: 'ATIVO',
     email_app: '', senha_app: '' 
   });
 
@@ -42,50 +47,29 @@ export default function Motoristas() {
 
   const salvarMotorista = async () => {
     if (!novoMotorista.nome || !novoMotorista.cpf || !novoMotorista.email_app || !novoMotorista.senha_app) {
-      alert("Preencha Nome, CPF, E-mail e Senha para o App!");
+      alert("Erro: Preencha Nome, CPF, E-mail e Senha!");
       return;
     }
 
     setCarregando(true);
-
     try {
       if (editandoId) {
-        // MODO EDIÇÃO
         await updateDoc(doc(db, "cadastro_motoristas", editandoId), novoMotorista);
-        alert("Dados atualizados com sucesso!");
+        alert("Cadastro atualizado!");
         setEditandoId(null);
       } else {
-        // 1. CRIA O LOGIN NO AUTHENTICATION
-        const userCredential = await createUserWithEmailAndPassword(
-          auth, 
-          novoMotorista.email_app, 
-          novoMotorista.senha_app
-        );
+        const userCredential = await createUserWithEmailAndPassword(auth, novoMotorista.email_app, novoMotorista.senha_app);
         const uid = userCredential.user.uid;
-
-        // 2. SALVA NO FIRESTORE COM O UID VINCULADO
-        await addDoc(collection(db, "cadastro_motoristas"), {
-          ...novoMotorista,
-          uid: uid // Vincula o login ao cadastro
-        });
-
-        alert("Motorista e Login criados com sucesso!");
+        await addDoc(collection(db, "cadastro_motoristas"), { ...novoMotorista, uid: uid });
+        alert("Motorista cadastrado com sucesso!");
       }
-      
       setNovoMotorista({
-        nome: '', cpf: '', cnh_cat: '', mopp: 'Não', venc_mopp: '',
-        cidade: '', nascimento: '', telefone: '', status: 'ATIVO',
+        nome: '', cpf: '', cnh_cat: '', mopp: 'Não',
+        cidade: '', telefone: '', status: 'ATIVO',
         email_app: '', senha_app: ''
       });
     } catch (e) {
-      console.error("Erro:", e);
-      if (e.code === 'auth/email-already-in-use') {
-        alert("Este e-mail já está sendo usado por outro motorista!");
-      } else if (e.code === 'auth/weak-password') {
-        alert("A senha deve ter pelo menos 6 dígitos!");
-      } else {
-        alert("Erro ao criar acesso: " + e.message);
-      }
+      alert("Erro: " + e.message);
     } finally {
       setCarregando(false);
     }
@@ -97,15 +81,6 @@ export default function Motoristas() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const cancelarEdicao = () => {
-    setEditandoId(null);
-    setNovoMotorista({
-      nome: '', cpf: '', cnh_cat: '', mopp: 'Não', venc_mopp: '',
-      cidade: '', nascimento: '', telefone: '', status: 'ATIVO',
-      email_app: '', senha_app: ''
-    });
-  };
-
   const alternarStatus = async (id, statusAtual) => {
     const novoStatus = statusAtual === 'ATIVO' ? 'INATIVO' : 'ATIVO';
     await updateDoc(doc(db, "cadastro_motoristas", id), { status: novoStatus });
@@ -113,70 +88,86 @@ export default function Motoristas() {
 
   return (
     <div style={styles.container}>
-      <h2 style={styles.titulo}>
-        LOGÍSTICA OPERACIONAL - {editandoId ? 'EDITAR MOTORISTA' : 'CADASTRO DE MOTORISTAS'}
-      </h2>
+      <div style={styles.headerAcoes}>
+        <h2 style={styles.titulo}>LISTA DE MOTORISTAS CADASTRADOS</h2>
+        <button onClick={() => setVerSenhas(!verSenhas)} style={styles.btnRevelar}>
+          {verSenhas ? <EyeOff size={16}/> : <Eye size={16}/>} 
+          {verSenhas ? 'OCULTAR ACESSOS' : 'VER SENHAS'}
+        </button>
+      </div>
 
       <div style={styles.cardForm}>
         <div style={styles.gridForm}>
-          <div style={styles.campo}><label style={styles.label}>Nome do Motorista</label>
-            <input placeholder="Ex: Rafael Araujo" style={styles.input} value={novoMotorista.nome} onChange={e => setNovoMotorista({...novoMotorista, nome: e.target.value})} />
+          <div style={styles.campo}><label style={styles.label}><User size={12}/> Nome</label>
+            <input style={styles.input} placeholder="Nome completo" value={novoMotorista.nome} onChange={e => setNovoMotorista({...novoMotorista, nome: e.target.value})} />
           </div>
-          <div style={styles.campo}><label style={styles.label}>CPF</label>
-            <input placeholder="000.000.000-00" style={styles.input} value={novoMotorista.cpf} onChange={e => setNovoMotorista({...novoMotorista, cpf: e.target.value})} />
+          <div style={styles.campo}><label style={styles.label}><CreditCard size={12}/> CPF</label>
+            <input style={styles.input} placeholder="000.000.000-00" value={novoMotorista.cpf} onChange={e => setNovoMotorista({...novoMotorista, cpf: e.target.value})} />
           </div>
-          <div style={styles.campo}><label style={styles.label}>E-mail para o App</label>
-            <input placeholder="raabi@teste.com" style={{...styles.input, borderColor: '#FFD700'}} value={novoMotorista.email_app} onChange={e => setNovoMotorista({...novoMotorista, email_app: e.target.value})} />
+          <div style={styles.campo}><label style={styles.label}><Award size={12}/> CNH</label>
+            <input style={styles.input} placeholder="Cat. AE" value={novoMotorista.cnh_cat} onChange={e => setNovoMotorista({...novoMotorista, cnh_cat: e.target.value})} />
           </div>
-          <div style={styles.campo}><label style={styles.label}>Senha para o App</label>
-            <input placeholder="Mínimo 6 dígitos" type="password" style={{...styles.input, borderColor: '#FFD700'}} value={novoMotorista.senha_app} onChange={e => setNovoMotorista({...novoMotorista, senha_app: e.target.value})} />
-          </div>
-          <div style={styles.campo}><label style={styles.label}>Categoria CNH</label>
-            <input placeholder="Ex: AE" style={styles.input} value={novoMotorista.cnh_cat} onChange={e => setNovoMotorista({...novoMotorista, cnh_cat: e.target.value})} />
-          </div>
-          <div style={styles.campo}><label style={styles.label}>Cidade de Residência</label>
-            <input placeholder="Ex: Araraquara - SP" style={styles.input} value={novoMotorista.cidade} onChange={e => setNovoMotorista({...novoMotorista, cidade: e.target.value})} />
-          </div>
-          <div style={styles.campo}><label style={styles.label}>Telefone / WhatsApp</label>
-            <input placeholder="(00) 00000-0000" style={styles.input} value={novoMotorista.telefone} onChange={e => setNovoMotorista({...novoMotorista, telefone: e.target.value})} />
-          </div>
-          <div style={styles.campo}><label style={styles.label}>Possui MOPP?</label>
+          <div style={styles.campo}><label style={styles.label}><ShieldCheck size={12}/> MOPP</label>
             <select style={styles.input} value={novoMotorista.mopp} onChange={e => setNovoMotorista({...novoMotorista, mopp: e.target.value})}>
               <option value="Não">Não</option><option value="Sim">Sim</option>
             </select>
           </div>
+          <div style={styles.campo}><label style={styles.label}><MapPin size={12}/> Cidade</label>
+            <input style={styles.input} placeholder="Cidade/UF" value={novoMotorista.cidade} onChange={e => setNovoMotorista({...novoMotorista, cidade: e.target.value})} />
+          </div>
+          <div style={styles.campo}><label style={styles.label}><Phone size={12}/> WhatsApp</label>
+            <input style={styles.input} placeholder="(00) 00000-0000" value={novoMotorista.telefone} onChange={e => setNovoMotorista({...novoMotorista, telefone: e.target.value})} />
+          </div>
+          <div style={styles.campo}><label style={styles.label}><Mail size={12}/> E-mail App</label>
+            <input style={{...styles.input, borderColor: '#FFD700'}} placeholder="login@app.com" value={novoMotorista.email_app} onChange={e => setNovoMotorista({...novoMotorista, email_app: e.target.value})} />
+          </div>
+          <div style={styles.campo}><label style={styles.label}><Key size={12}/> Senha App</label>
+            <input style={{...styles.input, borderColor: '#FFD700'}} placeholder="Mínimo 6 caracteres" value={novoMotorista.senha_app} onChange={e => setNovoMotorista({...novoMotorista, senha_app: e.target.value})} />
+          </div>
         </div>
         
-        <div style={{display: 'flex', gap: '10px'}}>
-          <button onClick={salvarMotorista} disabled={carregando} style={{...styles.btnLancamento, backgroundColor: editandoId ? '#2ecc71' : '#FFD700'}}>
-            {carregando ? 'PROCESSANDO...' : (editandoId ? 'SALVAR ALTERAÇÕES' : 'CADASTRAR E CRIAR ACESSO')}
+        <div style={{display: 'flex', gap: '10px', marginTop: '15px'}}>
+          <button onClick={salvarMotorista} disabled={carregando} style={{...styles.btnSalvar, backgroundColor: editandoId ? '#2ecc71' : '#FFD700'}}>
+            {carregando ? 'PROCESSANDO...' : (editandoId ? 'SALVAR ALTERAÇÕES' : 'CADASTRAR MOTORISTA')}
           </button>
-          {editandoId && (
-            <button onClick={cancelarEdicao} style={{...styles.btnLancamento, backgroundColor: '#e74c3c', color: '#FFF'}}>CANCELAR</button>
-          )}
+          {editandoId && <button onClick={() => setEditandoId(null)} style={styles.btnCancelar}>CANCELAR</button>}
         </div>
       </div>
 
-      <div style={styles.containerTabela}>
+      <div style={styles.wrapperTabela}>
         <table style={styles.tabela}>
           <thead>
-            <tr style={styles.headerTabela}>
-              <th>STATUS</th><th>NOME</th><th>E-MAIL APP</th><th>CIDADE</th><th>AÇÕES</th>
+            <tr style={styles.headerTab}>
+              <th style={styles.th}>STATUS</th>
+              <th style={styles.th}>NOME</th>
+              <th style={styles.th}>CPF</th>
+              <th style={styles.th}>WHATSAPP</th>
+              <th style={styles.th}>CNH</th>
+              <th style={styles.th}>MOPP</th>
+              <th style={styles.th}>CIDADE</th>
+              <th style={styles.th}>E-MAIL</th>
+              <th style={styles.th}>SENHA</th>
+              <th style={styles.th}>UID</th>
+              <th style={styles.th}>AÇÕES</th>
             </tr>
           </thead>
           <tbody>
             {motoristas.map(m => (
-              <tr key={m.id} style={styles.linhaTabela}>
-                <td><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
-                <td>{m.nome}</td>
-                <td style={{color: '#FFD700'}}>{m.email_app}</td>
-                <td>{m.cidade}</td>
-                <td>
+              <tr key={m.id} style={styles.linha}>
+                <td style={styles.td}><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
+                <td style={{...styles.td, fontWeight: 'bold'}}>{m.nome.toUpperCase()}</td>
+                <td style={styles.td}>{m.cpf}</td>
+                <td style={styles.td}>{m.telefone}</td>
+                <td style={{...styles.td, color: '#FFD700', fontWeight: 'bold'}}>{m.cnh_cat}</td>
+                <td style={styles.td}>{m.mopp}</td>
+                <td style={styles.td}>{m.cidade}</td>
+                <td style={{...styles.td, color: '#FFD700'}}>{m.email_app}</td>
+                <td style={styles.td}>{verSenhas ? m.senha_app : '****'}</td>
+                <td style={{...styles.td, fontSize: '9px', opacity: 0.5}}>{m.uid || '---'}</td>
+                <td style={styles.td}>
                   <div style={{display: 'flex', gap: '5px'}}>
-                    <button onClick={() => prepararEdicao(m)} style={styles.btnAcao}>Editar</button>
-                    <button onClick={() => alternarStatus(m.id, m.status)} style={styles.btnAcao}>
-                      {m.status === 'ATIVO' ? 'Bloquear' : 'Ativar'}
-                    </button>
+                    <button onClick={() => prepararEdicao(m)} style={styles.btnIcon}><Edit size={14}/></button>
+                    <button onClick={() => alternarStatus(m.id, m.status)} style={{...styles.btnIcon, color: m.status === 'ATIVO' ? '#e74c3c' : '#2ecc71'}}><Power size={14}/></button>
                   </div>
                 </td>
               </tr>
@@ -190,17 +181,22 @@ export default function Motoristas() {
 
 const styles = {
   container: { padding: '20px', backgroundColor: '#000', minHeight: '100vh', color: '#FFF' },
-  titulo: { color: '#FFD700', fontSize: '18px', marginBottom: '20px', borderLeft: '4px solid #FFD700', paddingLeft: '10px' },
-  cardForm: { backgroundColor: '#111', padding: '20px', borderRadius: '8px', marginBottom: '30px' },
-  gridForm: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px', marginBottom: '10px' },
-  campo: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  label: { color: '#FFD700', fontSize: '11px', fontWeight: 'bold', textTransform: 'uppercase' },
-  input: { backgroundColor: '#1A1A1A', border: '1px solid #333', color: '#FFF', padding: '12px', borderRadius: '4px', fontSize: '14px' },
-  btnLancamento: { flex: 1, padding: '15px', border: 'none', borderRadius: '4px', fontWeight: 'bold', marginTop: '20px', cursor: 'pointer' },
-  containerTabela: { overflowX: 'auto' },
-  tabela: { width: '100%', borderCollapse: 'collapse', marginTop: '10px' },
-  headerTabela: { color: '#888', textAlign: 'left', fontSize: '11px', borderBottom: '1px solid #222' },
-  linhaTabela: { borderBottom: '1px solid #111', fontSize: '13px', height: '50px' },
-  badge: { padding: '4px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', color: '#000' },
-  btnAcao: { backgroundColor: '#222', color: '#FFF', border: '1px solid #444', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }
+  headerAcoes: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
+  titulo: { color: '#FFD700', fontSize: '16px', borderLeft: '4px solid #FFD700', paddingLeft: '10px' },
+  btnRevelar: { backgroundColor: '#111', color: '#FFD700', border: '1px solid #FFD700', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px' },
+  cardForm: { backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '12px', border: '1px solid #222', marginBottom: '25px' },
+  gridForm: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' },
+  campo: { display: 'flex', flexDirection: 'column', gap: '5px' },
+  label: { color: '#666', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '5px' },
+  input: { backgroundColor: '#111', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '6px', fontSize: '13px', outline: 'none' },
+  btnSalvar: { flex: 1, padding: '12px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', color: '#000' },
+  btnCancelar: { padding: '12px 20px', backgroundColor: '#e74c3c', border: 'none', borderRadius: '6px', color: '#FFF', cursor: 'pointer' },
+  wrapperTabela: { backgroundColor: '#0a0a0a', borderRadius: '12px', border: '1px solid #222', overflowX: 'auto' },
+  tabela: { width: '100%', borderCollapse: 'collapse', minWidth: '1200px' },
+  headerTab: { backgroundColor: '#111', textAlign: 'left' },
+  th: { padding: '15px', color: '#666', fontSize: '10px', fontWeight: 'bold' },
+  td: { padding: '12px 15px', fontSize: '12px', borderBottom: '1px solid #111' },
+  linha: { borderBottom: '1px solid #111' },
+  badge: { padding: '3px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', color: '#000' },
+  btnIcon: { backgroundColor: '#1a1a1a', border: '1px solid #333', color: '#FFF', padding: '6px', borderRadius: '4px', cursor: 'pointer' }
 };

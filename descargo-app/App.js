@@ -41,7 +41,7 @@ import {
   setDoc, 
   serverTimestamp,
   or,
-  and // Adicionado para corrigir o erro de InvalidQuery
+  and 
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -53,10 +53,16 @@ const firebaseConfig = {
   appId: "1:345718597496:web:97af37f598666e0a3bca8d"
 };
 
+// Inicialização segura - CORREÇÃO DO ERROR auth/already-initialized
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
-const auth = initializeAuth(app, {
-  persistence: getReactNativePersistence(ReactNativeAsyncStorage)
-});
+let auth;
+try {
+  auth = getAuth(app);
+} catch (e) {
+  auth = initializeAuth(app, {
+    persistence: getReactNativePersistence(ReactNativeAsyncStorage)
+  });
+}
 const db = getFirestore(app);
 
 const { width, height } = Dimensions.get('window');
@@ -73,6 +79,18 @@ export default function App() {
   const [cargaAtiva, setCargaAtiva] = useState(null);
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [statusJornada, setStatusJornada] = useState('fora da jornada');
+
+  // Função para abrir GPS baseada no Destino/Link
+  const abrirGPS = (destino) => {
+    if (!destino) return;
+    const url = destino.toString().startsWith('http') 
+      ? destino 
+      : Platform.select({
+          ios: `maps:0,0?q=${encodeURIComponent(destino)}`,
+          android: `geo:0,0?q=${encodeURIComponent(destino)}`
+        });
+    Linking.openURL(url);
+  };
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (authenticatedUser) => {
@@ -102,23 +120,17 @@ export default function App() {
         ...dadosExtra
       }, { merge: true });
     } catch (error) {
-      console.error("Erro ao sincronizar dados:", error);
+      console.error("Erro na sincronização:", error);
     }
   };
 
   useEffect(() => {
     if (isLoggedIn && user) {
       const emailFiltro = user.email.toLowerCase().trim(); 
-      const userId = user.uid;
-
-      // CORREÇÃO: Uso do and() para envolver o or() e o where() de status
       const q = query(
         collection(db, "notificacoes_cargas"),
         and(
-          or(
-            where("motoristaEmail", "==", emailFiltro),
-            where("motoristaId", "==", userId)
-          ),
+          or(where("motoristaEmail", "==", emailFiltro), where("motoristaId", "==", user.uid)),
           where("status", "in", ["pendente", "aceito"])
         )
       );
@@ -129,12 +141,20 @@ export default function App() {
           const id = change.doc.id;
 
           if (change.type === "added" && dados.status === "pendente") {
+            // Mapeamento exato baseado no print do sistema administrativo
+            const isVazio = dados.tipo === 'VAZIO' || dados.tipoViagem === 'VAZIO';
+            
             Alert.alert(
-              "🔔 NOVA VIAGEM",
-              `Tipo: ${dados.tipoViagem || "Não informado"}\n` +
-              `Destino: ${dados.destino || dados.clienteEntrega || "A definir"}\n` +
-              `Cliente: ${dados.clienteNome || "Rafael"}\n` +
-              `Horário: ${dados.dt || "Imediato"}`,
+              isVazio ? "⚪ LANÇAMENTO DE VAZIO" : "🔔 NOVA CARGA DISPONÍVEL",
+              isVazio 
+                ? `📍 DESTINO: ${dados.localEntrega || dados.entrega || "Não informado"}\n` +
+                  `🏙️ CIDADE: ${dados.cidadeEntrega || dados.cidade || "Não informada"}\n` +
+                  `🆔 DT: ${dados.dt || "---"}\n` +
+                  `📝 OBS: ${dados.observacoes || "Nenhuma"}`
+                : `📍 DESTINO: ${dados.localEntrega || "A definir"}\n` +
+                  `🚛 CARRETA: ${dados.carreta || "Não informada"}\n` +
+                  `⚖️ PESO: ${dados.peso || "0"}kg\n` +
+                  `📦 CLIENTE: ${dados.clienteEntrega || "Informado no local"}`,
               [
                 { 
                   text: "RECUSAR", 
@@ -142,7 +162,7 @@ export default function App() {
                   onPress: async () => await updateDoc(doc(db, "notificacoes_cargas", id), { status: "recusado" })
                 },
                 { 
-                  text: "ACEITAR", 
+                  text: "ACEITAR E INICIAR", 
                   onPress: () => confirmarCarga(id, dados) 
                 }
               ],
@@ -165,7 +185,7 @@ export default function App() {
   const confirmarCarga = async (docId, dados) => {
     try {
       const cargaRef = doc(db, "notificacoes_cargas", docId);
-      const novoStatusOp = dados.tipoViagem === 'MANUTENÇÃO' ? 'Manutenção' : 'Viagem carregado';
+      const novoStatusOp = dados.tipo || dados.tipoViagem || 'Viagem carregado';
 
       await updateDoc(cargaRef, {
         status: "aceito",
@@ -176,19 +196,9 @@ export default function App() {
       setStatusOperacional(novoStatusOp);
       sincronizarComFirestore({ statusOperacional: novoStatusOp });
 
-      // CORREÇÃO: Proteção contra links vazios ("") vindo do Firebase
-      const destinoFinal = dados.linkEntrega || dados.destino || dados.clienteEntrega;
-      if (destinoFinal && destinoFinal.toString().trim() !== "") {
-        if (destinoFinal.toString().startsWith('http')) {
-          Linking.openURL(destinoFinal);
-        } else {
-          const url = Platform.select({
-            ios: `maps:0,0?q=${destinoFinal}`,
-            android: `geo:0,0?q=${destinoFinal}`
-          });
-          Linking.openURL(url);
-        }
-      }
+      // Abre o GPS automaticamente com a melhor informação disponível
+      const destinoFinal = dados.linkEntrega || dados.linkMaps || dados.localEntrega || dados.entrega;
+      abrirGPS(destinoFinal);
 
     } catch (error) {
       Alert.alert("Erro", "Falha ao aceitar carga.");
@@ -316,10 +326,10 @@ export default function App() {
             </View>
 
             <View style={styles.socialContainer}>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}><FontAwesome name="linkedin-square" size={32} color="#0e76a8" style={styles.socialIcon}/></TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}><FontAwesome name="instagram" size={32} color="#c13584" style={styles.socialIcon}/></TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}><FontAwesome name="envelope" size={32} color="#f39c12" style={styles.socialIcon}/></TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('tel:16988318626')}><FontAwesome name="whatsapp" size={32} color="#25D366" style={styles.socialIcon}/></TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}><FontAwesome name="linkedin-square" size={32} color="#0e76a8" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}><FontAwesome name="instagram" size={32} color="#c13584" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}><FontAwesome name="envelope" size={32} color="#f39c12" /></TouchableOpacity>
+              <TouchableOpacity onPress={() => Linking.openURL('tel:16988318626')}><FontAwesome name="whatsapp" size={32} color="#25D366" /></TouchableOpacity>
             </View>
             <Text style={styles.signature}>Desenvolvido por Rafael Araujo</Text>
           </ScrollView>
@@ -333,7 +343,7 @@ export default function App() {
       <StatusBar barStyle="light-content" />
       <MapView ref={mapRef} provider={PROVIDER_GOOGLE} style={styles.map} mapType="hybrid" showsUserLocation
         initialRegion={{ latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
-        {location && ( <Marker coordinate={{latitude: location.latitude, longitude: location.longitude}} title="Sua Posição" /> )}
+        {location && ( <Marker coordinate={{latitude: location.latitude, longitude: location.longitude}} /> )}
       </MapView>
 
       <View style={styles.topStatusContainer}>
@@ -351,25 +361,21 @@ export default function App() {
         <View style={styles.activeRouteCard}>
           <View style={styles.routeHeader}>
             <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>{cargaAtiva.tipoViagem === 'MANUTENÇÃO' ? '🛠️ MANUTENÇÃO' : `🚛 DT: ${cargaAtiva.dt}`}</Text>
-              <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destino || cargaAtiva.clienteEntrega || 'Destino'}</Text>
+              <Text style={styles.routeLabel}>{cargaAtiva.tipo || cargaAtiva.tipoViagem || 'VIAGEM'}</Text>
+              <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.localEntrega || cargaAtiva.entrega}</Text>
+              <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.cidadeEntrega || cargaAtiva.cidade || ''}</Text>
             </View>
-            <TouchableOpacity onPress={finalizarViagem} style={{ marginLeft: 10 }}>
-              <Ionicons name="checkmark-done-circle" size={48} color="#2ecc71" />
+            <TouchableOpacity onPress={finalizarViagem}>
+              <Ionicons name="checkmark-done-circle" size={54} color="#2ecc71" />
             </TouchableOpacity>
           </View>
-          <View style={styles.routeActions}>
-            <TouchableOpacity 
-              onPress={() => (cargaAtiva.linkColeta && cargaAtiva.linkColeta.trim() !== "") ? Linking.openURL(cargaAtiva.linkColeta) : Alert.alert("Aviso", "Link de coleta não disponível")} 
-              style={[styles.routeBtn, {backgroundColor: '#D97706'}]}>
-              <FontAwesome name="map-marker" size={14} color="#000" /><Text style={styles.routeBtnText}>ROTA ORIGEM</Text>
-            </TouchableOpacity>
-            <TouchableOpacity 
-              onPress={() => (cargaAtiva.linkEntrega && cargaAtiva.linkEntrega.trim() !== "") ? Linking.openURL(cargaAtiva.linkEntrega) : Alert.alert("Aviso", "Link de entrega não disponível")} 
-              style={[styles.routeBtn, {backgroundColor: '#2563EB'}]}>
-              <MaterialIcons name="assistant-navigation" size={14} color="#FFF" /><Text style={[styles.routeBtnText, {color: '#FFF'}]}>ROTA DESTINO</Text>
-            </TouchableOpacity>
-          </View>
+          
+          <TouchableOpacity 
+            onPress={() => abrirGPS(cargaAtiva.linkEntrega || cargaAtiva.linkMaps || cargaAtiva.localEntrega || cargaAtiva.entrega)} 
+            style={styles.fullRouteBtn}>
+            <MaterialIcons name="assistant-navigation" size={20} color="#000" />
+            <Text style={styles.fullRouteBtnText}>ABRIR ROTA NO GOOGLE MAPS</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -400,21 +406,19 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#111', color: '#FFF', padding: 18, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#222', fontSize: 16 },
   button: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#000', fontWeight: '900', fontSize: 16 },
-  socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 30, marginTop: 40, width: '100%' },
-  socialIcon: { opacity: 0.8 },
+  socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 30, marginTop: 40 },
   signature: { color: '#444', fontSize: 11, textAlign: 'center', marginTop: 30, fontWeight: 'bold' },
   topStatusContainer: { position: 'absolute', top: Platform.OS === 'ios' ? 60 : 40, left: 15, right: 15, flexDirection: 'row', gap: 10 },
   statusBox: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: '#333', alignItems: 'center' },
   statusLabel: { color: '#666', fontSize: 8, fontWeight: '900', marginBottom: 4 },
   statusValue: { fontSize: 11, fontWeight: '900', color: '#FFD700' },
-  activeRouteCard: { position: 'absolute', bottom: 110, left: 15, right: 15, backgroundColor: 'rgba(7,7,7,0.95)', borderRadius: 20, padding: 20, borderWidth: 1, borderColor: '#FFD70033' },
-  routeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+  activeRouteCard: { position: 'absolute', bottom: 110, left: 15, right: 15, backgroundColor: 'rgba(7,7,7,0.98)', borderRadius: 25, padding: 20, borderWidth: 1, borderColor: '#FFD70044' },
+  routeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
   routeLabel: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', marginBottom: 5 },
-  routeInfo: { color: '#FFF', fontSize: 18, fontWeight: '900' },
-  routeActions: { flexDirection: 'row', gap: 12 },
-  routeBtn: { flex: 1, flexDirection: 'row', gap: 8, padding: 16, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
-  routeBtnText: { color: '#000', fontSize: 11, fontWeight: '900' },
-  gpsButton: { position: 'absolute', bottom: 120, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#333' },
+  routeInfo: { color: '#FFF', fontSize: 22, fontWeight: '900' },
+  fullRouteBtn: { backgroundColor: '#FFD700', flexDirection: 'row', gap: 10, padding: 18, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  fullRouteBtnText: { color: '#000', fontSize: 13, fontWeight: '900' },
+  gpsButton: { position: 'absolute', bottom: 280, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#333' },
   tabBar: { position: 'absolute', bottom: 0, width: '100%', flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 15, borderTopWidth: 1, borderTopColor: '#222', backgroundColor: '#000', paddingBottom: Platform.OS === 'ios' ? 35 : 20 },
   tabItem: { alignItems: 'center', justifyContent: 'center' },
   tabText: { color: '#888', fontSize: 10, marginTop: 6, fontWeight: 'bold' }

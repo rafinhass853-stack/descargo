@@ -30,7 +30,6 @@ const PainelCargas = () => {
     const handleSubmit = async (e) => {
         e.preventDefault();
         
-        // Gerador de DT automático baseado no tipo se estiver vazio
         let prefixo = tipoViagem === 'MANUTENÇÃO' ? 'MT' : tipoViagem === 'VAZIO' ? 'VZ' : 'DT';
         const dtFinal = novaCarga.dt.trim() === '' ? `${prefixo}${Date.now().toString().slice(-6)}` : novaCarga.dt;
 
@@ -139,7 +138,7 @@ const PainelCargas = () => {
                             {tipoViagem === 'CARREGADO' && (
                                 <>
                                     <input placeholder="Peso (ex: 32 Ton)" value={novaCarga.peso} onChange={e => setNovaCarga({...novaCarga, peso: e.target.value})} style={styles.input} required />
-                                    <input placeholder="Tipo de Veículo (Vanderleia, Sider...)" value={novaCarga.perfilVeiculo} onChange={e => setNovaCarga({...novaCarga, perfilVeiculo: e.target.value})} style={styles.input} required />
+                                    <input placeholder="Tipo de Veículo" value={novaCarga.perfilVeiculo} onChange={e => setNovaCarga({...novaCarga, perfilVeiculo: e.target.value})} style={styles.input} required />
                                 </>
                             )}
                             

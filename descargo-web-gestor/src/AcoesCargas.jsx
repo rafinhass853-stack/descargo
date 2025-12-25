@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, User, MapPin, CheckCircle2, Navigation } from 'lucide-react';
+import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2 } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, addDoc, serverTimestamp, 
@@ -59,7 +59,7 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   const enviarCargaAoMotorista = async (motorista) => {
     setProcessando(motorista.id);
     try {
-      const emailLimpo = motorista.email?.toLowerCase().trim() || "";
+      const emailLimpo = motorista.email_app?.toLowerCase().trim() || "";
 
       await addDoc(collection(db, "notificacoes_cargas"), {
         cargaId: cargaSelecionada?.id || "N/A",
@@ -84,7 +84,8 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
 
       if (onConfirmar) await onConfirmar({ id: motorista.id, nome: motorista.nome });
       onFechar();
-    } catch {
+    } catch (e) {
+      console.error(e);
       alert("Erro ao enviar carga.");
     } finally {
       setProcessando(null);
@@ -97,108 +98,129 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
 
   return (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={onFechar} />
+      {/* Backdrop mais denso para foco total */}
+      <div className="absolute inset-0 bg-black/90 backdrop-blur-sm" onClick={onFechar} />
 
-      <div className="relative w-full max-w-[460px] bg-[#0c0c0e] border border-white/10 rounded-[32px] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden">
+      <div className="relative w-full max-w-[480px] bg-[#111] border border-white/10 rounded-[24px] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden">
         
-        {/* HEADER */}
-        <div className="p-8 pb-4 flex flex-col items-center">
-          <div className="w-14 h-14 bg-yellow-500 rounded-2xl flex items-center justify-center mb-4 shadow-lg shadow-yellow-500/20">
-            <Navigation className="text-black" size={24} />
+        {/* HEADER ESTILIZADO */}
+        <div className="relative p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
+          <button 
+            onClick={onFechar}
+            className="absolute right-4 top-4 p-2 hover:bg-white/10 rounded-full text-zinc-500 transition-colors"
+          >
+            <X size={20} />
+          </button>
+          
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 bg-yellow-500 rounded-2xl flex items-center justify-center shadow-lg shadow-yellow-500/20">
+              <Bell className="text-black" size={24} />
+            </div>
+            <div>
+              <h2 className="text-white text-lg font-bold tracking-tight">Despachar Carga</h2>
+              <div className="flex items-center gap-2">
+                <span className="text-yellow-500 text-[11px] font-black uppercase tracking-wider">DT {cargaSelecionada?.dt}</span>
+                <span className="w-1 h-1 rounded-full bg-zinc-700"></span>
+                <span className="text-zinc-500 text-[11px] font-medium uppercase">{cargaSelecionada?.destino}</span>
+              </div>
+            </div>
           </div>
-          <h2 className="text-white text-xl font-black uppercase italic">Enviar para Motorista</h2>
-          <span className="mt-1 px-3 py-1 bg-white/5 border border-white/10 rounded-full text-[10px] text-zinc-400 font-bold uppercase">
-            DT: {cargaSelecionada?.dt}
-          </span>
         </div>
 
-        {/* BUSCA */}
-        <div className="px-8 py-4">
-          <div className="relative">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
+        {/* PESQUISA COM UI LIMPA */}
+        <div className="px-6 py-4">
+          <div className="relative group">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-yellow-500 transition-colors" size={18} />
             <input 
               type="text"
-              placeholder="Pesquisar motorista..."
-              className="w-full bg-white/[0.03] border border-white/5 rounded-2xl py-4 pl-12 pr-4 text-white text-xs focus:border-yellow-500/50 outline-none uppercase"
+              placeholder="Buscar por nome ou CPF..."
+              className="w-full bg-white/[0.03] border border-white/10 rounded-xl py-4 pl-12 pr-4 text-white text-sm focus:border-yellow-500/50 focus:bg-white/[0.05] outline-none transition-all"
               value={busca}
               onChange={(e) => setBusca(e.target.value)}
             />
           </div>
         </div>
 
-        {/* LISTA */}
-        <div className="flex-1 overflow-y-auto px-6 pb-6 custom-scrollbar">
+        {/* LISTA DE MOTORISTAS */}
+        <div className="flex-1 overflow-y-auto px-6 pb-4 space-y-3 custom-scrollbar">
           {carregando ? (
-            <div className="flex justify-center py-10">
-              <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+            <div className="flex flex-col items-center justify-center py-12 gap-3">
+              <div className="w-8 h-8 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-zinc-500 text-[10px] font-bold uppercase tracking-widest">Carregando Frota...</span>
             </div>
-          ) : (
-            <div className="space-y-2">
-              {filtrados.map((mot) => (
-                <button
-                  key={mot.id}
-                  onClick={() => enviarCargaAoMotorista(mot)}
-                  disabled={processando}
-                  className="w-full flex items-center justify-between p-4 bg-white/[0.03] hover:bg-yellow-500 rounded-2xl border border-white/5 hover:border-yellow-400 transition-all group active:scale-[0.97]"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-11 h-11 rounded-xl bg-zinc-900 flex items-center justify-center group-hover:bg-black">
-                      <User size={18} className="text-zinc-500 group-hover:text-yellow-400" />
-                    </div>
-                    <div className="text-left">
-                      <p className="text-zinc-100 font-bold text-xs uppercase group-hover:text-black">
-                        {mot.nome}
-                      </p>
-                      <div className="flex items-center gap-1 text-zinc-500 group-hover:text-black/70">
-                        <MapPin size={10} />
-                        <span className="text-[9px] font-bold uppercase">
-                          {mot.cidade || 'Base'}
-                        </span>
+          ) : filtrados.length > 0 ? (
+            filtrados.map((mot) => (
+              <button
+                key={mot.id}
+                onClick={() => enviarCargaAoMotorista(mot)}
+                disabled={processando}
+                className="w-full group flex items-center justify-between p-4 bg-white/[0.02] hover:bg-yellow-500 rounded-2xl border border-white/5 hover:border-yellow-400 transition-all active:scale-[0.98]"
+              >
+                <div className="flex items-center gap-4 text-left">
+                  <div className="w-12 h-12 rounded-full bg-zinc-900 border border-white/5 flex items-center justify-center group-hover:bg-black/20 transition-colors">
+                    <User size={20} className="text-zinc-400 group-hover:text-black" />
+                  </div>
+                  <div>
+                    <h4 className="text-zinc-100 font-bold text-sm uppercase group-hover:text-black transition-colors">
+                      {mot.nome}
+                    </h4>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <div className="flex items-center gap-1 text-zinc-500 group-hover:text-black/60 transition-colors">
+                        <MapPin size={12} />
+                        <span className="text-[10px] font-bold uppercase">{mot.cidade || 'Base'}</span>
                       </div>
+                      <span className="text-zinc-800 group-hover:text-black/20">|</span>
+                      <span className="text-[10px] text-zinc-500 group-hover:text-black/60 font-medium uppercase tracking-tighter">CNH {mot.cnh_cat}</span>
                     </div>
                   </div>
+                </div>
 
+                <div className="flex items-center justify-center">
                   {processando === mot.id ? (
-                    <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                    <div className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
                   ) : (
-                    <div className="px-4 py-2 bg-black text-yellow-400 text-[9px] font-black rounded-xl uppercase shadow-lg">
-                      Enviar
+                    <div className="w-10 h-10 rounded-full bg-black flex items-center justify-center text-yellow-500 group-hover:bg-white group-hover:text-yellow-600 shadow-xl opacity-0 group-hover:opacity-100 translate-x-4 group-hover:translate-x-0 transition-all">
+                      <ArrowRight size={20} />
                     </div>
                   )}
-                </button>
-              ))}
+                </div>
+              </button>
+            ))
+          ) : (
+            <div className="text-center py-10">
+              <p className="text-zinc-600 text-xs font-bold uppercase italic">Nenhum motorista ativo encontrado</p>
             </div>
           )}
         </div>
 
-        {/* FOOTER */}
-        <div className="p-6 bg-white/[0.02] border-t border-white/5">
-          {cargaSelecionada?.motoristaNome ? (
-            <div className="flex flex-col gap-3">
-              <p className="text-[10px] text-center text-red-400 font-bold uppercase">
-                Vinculado a: {cargaSelecionada.motoristaNome}
-              </p>
-              <button
-                onClick={desvincularCarga}
-                className="w-full py-3 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-xl text-[10px] font-black uppercase transition-all border border-red-500/20"
-              >
-                Remover Vínculo
-              </button>
+        {/* FOOTER - STATUS DE VÍNCULO */}
+        {cargaSelecionada?.motoristaNome && (
+          <div className="mx-6 mb-6 p-4 bg-red-500/5 border border-red-500/10 rounded-2xl flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-[9px] text-red-500/60 font-black uppercase tracking-widest">Já vinculado a:</span>
+              <span className="text-xs text-red-500 font-bold uppercase">{cargaSelecionada.motoristaNome}</span>
             </div>
-          ) : (
             <button
-              onClick={onFechar}
-              className="w-full py-3 bg-white/5 hover:bg-white/10 text-zinc-500 hover:text-white rounded-xl text-[10px] font-black uppercase transition-all"
+              onClick={desvincularCarga}
+              disabled={processando === 'desvincular'}
+              className="p-3 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors shadow-lg shadow-red-500/20"
+              title="Remover Vínculo"
             >
-              Fechar Janela
+              {processando === 'desvincular' ? (
+                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <Trash2 size={16} />
+              )}
             </button>
-          )}
-        </div>
+          </div>
+        )}
+
       </div>
 
       <style jsx>{`
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.05); border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #eab308; }
       `}</style>
     </div>

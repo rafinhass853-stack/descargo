@@ -4,7 +4,7 @@ import { auth, db } from "./firebase";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
   Truck, Users, LayoutDashboard, ClipboardList, 
-  LogOut, Fuel, Settings, UserCheck, Bell, Container, BarChart3,
+  LogOut, Fuel, Settings, UserCheck, Bell, Container,
   MapPin 
 } from 'lucide-react';
 
@@ -14,11 +14,10 @@ import Motoristas from './Motoristas';
 import Veiculos from './Veiculos';
 import Carretas from './Carretas';
 import Notificacoes from './Notificacoes';
-import ClientesPontos from './ClientesPontos'; // Importação ativada
+import ClientesPontos from './ClientesPontos';
 
-// Importação dos seus Dashboards
+// Importação do Dashboard Principal
 import DashboardGeral from './DashboardGeral';
-import Dashboard1 from './Dashboard1';
 
 const PainelGestor = () => {
     const [motoristasOnline, setMotoristasOnline] = useState([]);
@@ -56,14 +55,11 @@ const PainelGestor = () => {
                             styles={styles} 
                         />;
             
-            case 'dash_analitico':
-                return <Dashboard1 styles={styles} />;
-            
             case 'cargas': return <PainelCargas />;
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
-            case 'clientes_pontos': return <ClientesPontos />; // Componente agora é renderizado
+            case 'clientes_pontos': return <ClientesPontos />;
             case 'notificacoes': return <Notificacoes />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
         }
@@ -76,9 +72,6 @@ const PainelGestor = () => {
                 <nav style={styles.nav}>
                     <div onClick={() => setMenuAtivo('dashboard')} style={menuAtivo === 'dashboard' ? styles.navItemAtivo : styles.navItem}>
                         <LayoutDashboard size={18} /> Monitoramento
-                    </div>
-                    <div onClick={() => setMenuAtivo('dash_analitico')} style={menuAtivo === 'dash_analitico' ? styles.navItemAtivo : styles.navItem}>
-                        <BarChart3 size={18} /> Visibilidade Cargas
                     </div>
 
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
