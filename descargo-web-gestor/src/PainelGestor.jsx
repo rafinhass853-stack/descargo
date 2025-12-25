@@ -3,9 +3,9 @@ import { signOut } from "firebase/auth";
 import { auth, db } from "./firebase";
 import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
-  Truck, Users, LayoutDashboard, ClipboardList, 
-  LogOut, Fuel, Settings, UserCheck, Bell, Container,
-  MapPin 
+    Truck, Users, LayoutDashboard, ClipboardList, 
+    LogOut, Fuel, Settings, UserCheck, Bell, Container,
+    MapPin 
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -15,6 +15,7 @@ import Veiculos from './Veiculos';
 import Carretas from './Carretas';
 import Notificacoes from './Notificacoes';
 import ClientesPontos from './ClientesPontos';
+import Folgas from './Folgas'; // <-- Nova Importação
 
 // Importação do Dashboard Principal
 import DashboardGeral from './DashboardGeral';
@@ -36,7 +37,6 @@ const PainelGestor = () => {
         });
 
         // 2. Monitoramento do Total de Cadastros (cadastro_motoristas)
-        // Isso garante que o (Número) no menu lateral atualize instantaneamente
         const qCad = query(collection(db, "cadastro_motoristas"));
         const unsubscribeCad = onSnapshot(qCad, (snapshot) => {
             setTotalMotoristas(snapshot.size);
@@ -65,6 +65,7 @@ const PainelGestor = () => {
             case 'motoristas': return <Motoristas />;
             case 'clientes_pontos': return <ClientesPontos />;
             case 'notificacoes': return <Notificacoes />;
+            case 'folgas': return <Folgas />; // <-- Caso Adicionado
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
         }
     };
@@ -102,7 +103,11 @@ const PainelGestor = () => {
 
                     <div style={styles.navItem}><Fuel size={18} /> Dash Combustível</div>
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
-                    <div style={styles.navItem}><UserCheck size={18} />Folgas</div>
+                    
+                    {/* Botão de Folgas Ajustado */}
+                    <div onClick={() => setMenuAtivo('folgas')} style={menuAtivo === 'folgas' ? styles.navItemAtivo : styles.navItem}>
+                        <UserCheck size={18} />Folgas
+                    </div>
                     
                     <div onClick={() => setMenuAtivo('notificacoes')} style={menuAtivo === 'notificacoes' ? styles.navItemAtivo : styles.navItem}>
                         <Bell size={18} />Notificações

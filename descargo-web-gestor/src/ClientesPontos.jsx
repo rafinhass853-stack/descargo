@@ -1,19 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Circle, Popup } from 'react-leaflet';
 import { EditControl } from "react-leaflet-draw";
-import { LocateFixed, Save, Search, Trash2, MapPin, Edit3, XCircle } from 'lucide-react';
-import AsyncSelect from 'react-select/async'; // Importação do seletor inteligente
+import { LocateFixed, Save, Search, Trash2, MapPin, Edit3 } from 'lucide-react';
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
 
 const { BaseLayer } = LayersControl;
 
+// Componente para mudar o foco do mapa
 const ChangeView = ({ center }) => {
     const map = useMap();
     useEffect(() => { map.setView(center, 16); }, [center, map]);
+    return null;
+};
+
+// Componente para renderizar UMA geofence específica (usado para o preview e para a lista)
+const RenderGeofence = ({ data, color = '#FFD700', nomeCliente = "" }) => {
+    if (!data) return null;
+    if (data.tipo === 'circle' && data.centro) {
+        return (
+            <Circle center={[data.centro.lat, data.centro.lng]} radius={data.raio} pathOptions={{ color }}>
+                {nomeCliente && <Popup><strong>{nomeCliente}</strong></Popup>}
+            </Circle>
+        );
+    }
+    if ((data.tipo === 'polygon' || data.tipo === 'rectangle') && data.coordenadas) {
+        const positions = data.coordenadas.map(c => [c.lat, c.lng]);
+        return (
+            <Polygon positions={positions} pathOptions={{ color }}>
+                {nomeCliente && <Popup><strong>{nomeCliente}</strong></Popup>}
+            </Polygon>
+        );
+    }
     return null;
 };
 
@@ -25,6 +46,7 @@ const ClientesPontos = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [mapCenter, setMapCenter] = useState([-23.5505, -46.6333]);
     const [clientesCadastrados, setClientesCadastrados] = useState([]);
+    const [mapKey, setMapKey] = useState(Date.now()); // Para resetar o EditControl após salvar
 
     useEffect(() => {
         const q = query(collection(db, "cadastro_clientes_pontos"), orderBy("criadoEm", "desc"));
@@ -35,19 +57,6 @@ const ClientesPontos = () => {
         });
         return () => unsubscribe();
     }, []);
-
-    // FUNÇÃO QUE BUSCA CIDADES NO IBGE (AUTOCOMPLETE)
-    const promiseOptions = async (inputValue) => {
-        if (inputValue.length < 3) return [];
-        try {
-            const response = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/municipios?nome=${inputValue}`);
-            const data = await response.json();
-            return data.slice(0, 10).map(m => ({
-                label: `${m.nome.toUpperCase()} - ${m.microrregiao.mesorregiao.UF.sigla}`,
-                value: `${m.nome.toUpperCase()} / ${m.microrregiao.mesorregiao.UF.sigla}`
-            }));
-        } catch (e) { return []; }
-    };
 
     const handleSearch = async (e) => {
         e.preventDefault();
@@ -83,16 +92,19 @@ const ClientesPontos = () => {
             linkGoogle: item.linkGoogle || ''
         });
         setGeofence(item.geofence);
-        if (item.geofence?.centro) setMapCenter([item.geofence.centro.lat, item.geofence.centro.lng]);
-        else if (item.geofence?.coordenadas) setMapCenter([item.geofence.coordenadas[0].lat, item.geofence.coordenadas[0].lng]);
+        
+        if (item.geofence?.centro) {
+            setMapCenter([item.geofence.centro.lat, item.geofence.centro.lng]);
+        } else if (item.geofence?.coordenadas && item.geofence.coordenadas.length > 0) {
+            setMapCenter([item.geofence.coordenadas[0].lat, item.geofence.coordenadas[0].lng]);
+        }
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
         if (!geofence) return alert("Desenhe a cerca no mapa!");
-        if (!formData.cidade) return alert("Selecione a cidade!");
-
+        
         setLoading(true);
         try {
             const dados = { ...formData, geofence, atualizadoEm: serverTimestamp() };
@@ -101,9 +113,12 @@ const ClientesPontos = () => {
                 const novoCodigo = `CLI-${Math.floor(1000 + Math.random() * 9000)}`;
                 await addDoc(collection(db, "cadastro_clientes_pontos"), { ...dados, codigo: novoCodigo, criadoEm: serverTimestamp() });
             }
+            
+            // Limpa o formulário e reseta o componente de desenho
             setEditId(null);
             setFormData({ cliente: '', cnpj: '', cidade: '', linkGoogle: '' });
             setGeofence(null);
+            setMapKey(Date.now()); // Isso limpa o desenho temporário do Leaflet Draw
             alert("Sucesso!");
         } catch (error) { alert(error.message); }
         setLoading(false);
@@ -113,7 +128,19 @@ const ClientesPontos = () => {
         <div style={styles.container}>
             <header style={styles.header}>
                 <h2 style={styles.titulo}><LocateFixed color="#FFD700" /> {editId ? 'Editando Ponto' : 'Cadastro de Clientes'}</h2>
-                {editId && <button onClick={() => setEditId(null)} style={styles.btnCancelar}>CANCELAR</button>}
+                {editId && (
+                    <button 
+                        onClick={() => { 
+                            setEditId(null); 
+                            setGeofence(null); 
+                            setMapKey(Date.now());
+                            setFormData({ cliente: '', cnpj: '', cidade: '', linkGoogle: '' }); 
+                        }} 
+                        style={styles.btnCancelar}
+                    >
+                        CANCELAR EDIÇÃO
+                    </button>
+                )}
             </header>
             
             <form onSubmit={handleSubmit} style={styles.formGrid}>
@@ -131,19 +158,14 @@ const ClientesPontos = () => {
                         <input style={styles.input} value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} required />
                     </div>
 
-                    {/* CAMPO CIDADE COM AUTOCOMPLETE DO GOOGLE/IBGE STYLE */}
                     <div style={styles.field}>
-                        <label style={styles.label}>3. CIDADE / UF (DIGITE PARA BUSCAR)</label>
-                        <AsyncSelect
-                            cacheOptions
-                            defaultOptions
-                            loadOptions={promiseOptions}
-                            onChange={(opt) => setFormData({...formData, cidade: opt.value})}
-                            placeholder="Digite o nome da cidade..."
-                            loadingMessage={() => "Buscando..."}
-                            noOptionsMessage={() => "Nenhuma cidade encontrada"}
-                            styles={customSelectStyles}
-                            value={formData.cidade ? { label: formData.cidade, value: formData.cidade } : null}
+                        <label style={styles.label}>3. CIDADE / UF</label>
+                        <input 
+                            style={styles.input} 
+                            placeholder="Ex: SÃO PAULO / SP" 
+                            value={formData.cidade} 
+                            onChange={e => setFormData({...formData, cidade: e.target.value.toUpperCase()})} 
+                            required 
                         />
                     </div>
                     
@@ -157,7 +179,7 @@ const ClientesPontos = () => {
                     </button>
                     
                     <div style={styles.listaContainer}>
-                        <h3 style={styles.listaTitulo}>PONTOS SALVOS</h3>
+                        <h3 style={styles.listaTitulo}>PONTOS SALVOS ({clientesCadastrados.length})</h3>
                         <div style={styles.listaScroll}>
                             {clientesCadastrados.map((item) => (
                                 <div key={item.id} style={styles.itemCliente}>
@@ -167,7 +189,7 @@ const ClientesPontos = () => {
                                     </div>
                                     <div style={styles.itemActions}>
                                         <button type="button" onClick={() => handleEdit(item)} style={styles.btnIconEdit}><Edit3 size={14} /></button>
-                                        <button type="button" onClick={() => deleteDoc(doc(db, "cadastro_clientes_pontos", item.id))} style={styles.btnIconDelete}><Trash2 size={14} /></button>
+                                        <button type="button" onClick={() => { if(window.confirm("Excluir este ponto?")) deleteDoc(doc(db, "cadastro_clientes_pontos", item.id)) }} style={styles.btnIconDelete}><Trash2 size={14} /></button>
                                     </div>
                                 </div>
                             ))}
@@ -179,10 +201,38 @@ const ClientesPontos = () => {
                     <MapContainer center={mapCenter} zoom={15} style={{ height: '100%', width: '100%' }}>
                         <ChangeView center={mapCenter} />
                         <LayersControl position="topright">
-                            <BaseLayer checked name="Híbrido"><TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" /></BaseLayer>
+                            <BaseLayer checked name="Híbrido">
+                                <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" />
+                            </BaseLayer>
+                            <BaseLayer name="Padrão">
+                                <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                            </BaseLayer>
                         </LayersControl>
-                        <FeatureGroup>
-                            <EditControl position="topleft" onCreated={onCreated} draw={{ polyline: false, marker: false, circlemarker: false }} />
+                        
+                        {/* Camada das Cercas já Cadastradas (Ficam sempre visíveis) */}
+                        {clientesCadastrados.map(cliente => (
+                            <RenderGeofence 
+                                key={`saved-${cliente.id}`} 
+                                data={cliente.geofence} 
+                                color={editId === cliente.id ? "#2ecc71" : "#FFD700"} 
+                                nomeCliente={cliente.cliente}
+                            />
+                        ))}
+
+                        {/* Camada de Edição/Criação */}
+                        <FeatureGroup key={mapKey}>
+                            <EditControl 
+                                position="topleft" 
+                                onCreated={onCreated} 
+                                draw={{ 
+                                    polyline: false, 
+                                    marker: false, 
+                                    circlemarker: false,
+                                    polygon: { shapeOptions: { color: '#00BFFF' } },
+                                    rectangle: { shapeOptions: { color: '#00BFFF' } },
+                                    circle: { shapeOptions: { color: '#00BFFF' } }
+                                }} 
+                            />
                         </FeatureGroup>
                     </MapContainer>
                 </div>
@@ -191,32 +241,12 @@ const ClientesPontos = () => {
     );
 };
 
-// ESTILIZAÇÃO DO SELECT PARA FICAR IGUAL AO SEU DESIGN DARK
-const customSelectStyles = {
-    control: (base) => ({
-        ...base,
-        backgroundColor: '#111',
-        borderColor: '#FFD700',
-        color: '#FFF',
-        minHeight: '45px',
-    }),
-    menu: (base) => ({ ...base, backgroundColor: '#111', zIndex: 9999 }),
-    option: (base, state) => ({
-        ...base,
-        backgroundColor: state.isFocused ? '#FFD700' : '#111',
-        color: state.isFocused ? '#000' : '#FFF',
-        fontSize: '12px'
-    }),
-    singleValue: (base) => ({ ...base, color: '#FFF', fontSize: '13px' }),
-    input: (base) => ({ ...base, color: '#FFF' }),
-};
-
 const styles = {
     container: { backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '12px', border: '1px solid #222', minHeight: '100vh', fontFamily: 'sans-serif' },
     header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
     titulo: { color: '#FFD700', display: 'flex', alignItems: 'center', gap: '10px', fontSize: '18px' },
-    btnCancelar: { backgroundColor: '#331111', color: '#ff4444', border: 'none', padding: '5px 10px', borderRadius: '4px', cursor: 'pointer' },
-    formGrid: { display: 'grid', gridTemplateColumns: '320px 1fr', gap: '20px' },
+    btnCancelar: { backgroundColor: '#331111', color: '#ff4444', border: 'none', padding: '8px 15px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' },
+    formGrid: { display: 'grid', gridTemplateColumns: '340px 1fr', gap: '20px' },
     sidebar: { display: 'flex', flexDirection: 'column', gap: '12px' },
     field: { display: 'flex', flexDirection: 'column', gap: '4px' },
     label: { color: '#555', fontSize: '9px', fontWeight: 'bold' },
@@ -224,8 +254,7 @@ const styles = {
     inputSearch: { flex: 1, backgroundColor: '#000', border: '1px solid #444', padding: '10px', borderRadius: '6px', color: '#FFF' },
     btnSearch: { backgroundColor: '#FFD700', border: 'none', borderRadius: '6px', padding: '0 12px', cursor: 'pointer' },
     btn: { color: '#000', padding: '14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
-    statusOk: { color: '#2ecc71', fontSize: '11px', textAlign: 'center', fontWeight: 'bold' },
-    mapWrapper: { height: '750px', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' },
+    mapWrapper: { height: '80vh', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' },
     listaContainer: { marginTop: '10px', borderTop: '1px solid #222', paddingTop: '15px' },
     listaTitulo: { color: '#444', fontSize: '10px', fontWeight: 'bold', marginBottom: '10px' },
     listaScroll: { maxHeight: '350px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' },

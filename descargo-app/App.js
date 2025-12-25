@@ -20,6 +20,9 @@ import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { FontAwesome, MaterialCommunityIcons, Ionicons, MaterialIcons } from '@expo/vector-icons';
 
+// --- IMPORTAÇÃO DA NOVA TELA ---
+import Conta from './Conta'; 
+
 // --- FIREBASE SETUP ---
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
@@ -70,6 +73,7 @@ export default function App() {
   const mapRef = useRef(null);
 
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [activeTab, setActiveTab] = useState('painel'); 
   const [user, setUser] = useState(null); 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -79,34 +83,25 @@ export default function App() {
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [statusJornada, setStatusJornada] = useState('fora da jornada');
   
-  // ESTADOS DA ROTA INTERNA
   const [rotaCoords, setRotaCoords] = useState([]);
   const [destinoCoord, setDestinoCoord] = useState(null);
 
-  // FUNÇÃO PARA BUSCAR ROTA (OSRM - GRATUITO)
   const buscarRotaInterna = async (origem, destinoTexto) => {
     try {
       if (!origem || !destinoTexto) return;
-
       const geo = await Location.geocodeAsync(destinoTexto);
       if (geo.length === 0) return;
-
       const dest = { latitude: geo[0].latitude, longitude: geo[0].longitude };
       setDestinoCoord(dest);
-
       const url = `https://router.project-osrm.org/route/v1/driving/${origem.longitude},${origem.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson`;
-      
       const response = await fetch(url);
       const data = await response.json();
-
       if (data.routes && data.routes.length > 0) {
         const coords = data.routes[0].geometry.coordinates.map(c => ({
           latitude: c[1],
           longitude: c[0]
         }));
         setRotaCoords(coords);
-
-        // Zoom automático para ver a rota toda
         mapRef.current?.fitToCoordinates([origem, dest], {
           edgePadding: { top: 100, right: 50, bottom: 300, left: 50 },
           animated: true,
@@ -177,7 +172,6 @@ export default function App() {
               (dados.status === "AGUARDANDO PROGRAMAÇÃO" || dados.status === "PENDENTE ACEITE")) {
             
             Vibration.vibrate([0, 500, 500, 500], true); 
-
             const isVazio = dados.tipoViagem === 'VAZIO';
             
             Alert.alert(
@@ -338,64 +332,87 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" />
-      <MapView ref={mapRef} provider={PROVIDER_GOOGLE} style={styles.map} mapType="hybrid" showsUserLocation
-        initialRegion={{ latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
-        
-        {/* LINHA DA ROTA AMARELA */}
-        {rotaCoords.length > 0 && (
-          <Polyline coordinates={rotaCoords} strokeColor="#FFD700" strokeWidth={5} />
-        )}
+      
+      {activeTab === 'painel' ? (
+        <>
+          <MapView ref={mapRef} provider={PROVIDER_GOOGLE} style={styles.map} mapType="hybrid" showsUserLocation
+            initialRegion={{ latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
+            {rotaCoords.length > 0 && (
+              <Polyline coordinates={rotaCoords} strokeColor="#FFD700" strokeWidth={5} />
+            )}
+            {destinoCoord && (
+              <Marker coordinate={destinoCoord}>
+                <MaterialCommunityIcons name="map-marker-check" size={45} color="#FFD700" />
+              </Marker>
+            )}
+          </MapView>
 
-        {/* MARCADOR NO DESTINO */}
-        {destinoCoord && (
-          <Marker coordinate={destinoCoord}>
-            <MaterialCommunityIcons name="map-marker-check" size={45} color="#FFD700" />
-          </Marker>
-        )}
-      </MapView>
-
-      <View style={styles.topStatusContainer}>
-        <TouchableOpacity style={styles.statusBox} onPress={mudarStatusOperacional}>
-          <Text style={styles.statusLabel}>STATUS OPERACIONAL</Text>
-          <Text style={styles.statusValue}>{statusOperacional.toUpperCase()}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[styles.statusBox, { borderColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444' }]} onPress={alternarJornada}>
-          <Text style={styles.statusLabel}>JORNADA TRABALHO</Text>
-          <Text style={[styles.statusValue, { color: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#888' }]}>{statusJornada.toUpperCase()}</Text>
-        </TouchableOpacity>
-      </View>
-
-      {cargaAtiva && (
-        <View style={styles.activeRouteCard}>
-          <View style={styles.routeHeader}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.routeLabel}>{cargaAtiva.tipoViagem?.toUpperCase() || 'VIAGEM'} - DT {cargaAtiva.dt || '---'}</Text>
-              <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente}</Text>
-              <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.destinoCidade}</Text>
-            </View>
-            <TouchableOpacity onPress={finalizarViagem}>
-              <Ionicons name="checkmark-done-circle" size={60} color="#2ecc71" />
+          <View style={styles.topStatusContainer}>
+            <TouchableOpacity style={styles.statusBox} onPress={mudarStatusOperacional}>
+              <Text style={styles.statusLabel}>STATUS OPERACIONAL</Text>
+              <Text style={styles.statusValue}>{statusOperacional.toUpperCase()}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.statusBox, { borderColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444' }]} onPress={alternarJornada}>
+              <Text style={styles.statusLabel}>JORNADA TRABALHO</Text>
+              <Text style={[styles.statusValue, { color: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#888' }]}>{statusJornada.toUpperCase()}</Text>
             </TouchableOpacity>
           </View>
-          
-          {/* TEXTO DE ORIENTAÇÃO EM VEZ DO BOTÃO AMARELO */}
-          <View style={styles.instrContainer}>
-             <MaterialIcons name="navigation" size={18} color="#FFD700" />
-             <Text style={styles.instrText}>SIGA A ROTA AMARELA NO MAPA ACIMA</Text>
-          </View>
-        </View>
+
+          {cargaAtiva && (
+            <View style={styles.activeRouteCard}>
+              <View style={styles.routeHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.routeLabel}>{cargaAtiva.tipoViagem?.toUpperCase() || 'VIAGEM'} - DT {cargaAtiva.dt || '---'}</Text>
+                  <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente}</Text>
+                  <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.destinoCidade}</Text>
+                </View>
+                <TouchableOpacity onPress={finalizarViagem}>
+                  <Ionicons name="checkmark-done-circle" size={60} color="#2ecc71" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.instrContainer}>
+                 <MaterialIcons name="navigation" size={18} color="#FFD700" />
+                 <Text style={styles.instrText}>SIGA A ROTA AMARELA NO MAPA ACIMA</Text>
+              </View>
+            </View>
+          )}
+
+          <TouchableOpacity style={styles.gpsButton} onPress={centralizarMapa}>
+            <MaterialIcons name="my-location" size={28} color="#FFD700" />
+          </TouchableOpacity>
+        </>
+      ) : (
+        // AQUI ESTAVA O DETALHE: GARANTIR QUE EXIBA CONTA QUANDO ESTIVER NA ABA PERFIL
+        <Conta auth={auth} db={db} />
       )}
 
       <View style={styles.tabBar}>
-        <TouchableOpacity style={styles.tabItem}><Ionicons name="home" size={22} color="#FFD700" /><Text style={[styles.tabText, { color: '#FFD700' }]}>Painel</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}><MaterialCommunityIcons name="shield-account" size={22} color="#888" /><Text style={styles.tabText}>Perfil</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem}><FontAwesome name="briefcase" size={20} color="#888" /><Text style={styles.tabText}>Viagens</Text></TouchableOpacity>
-        <TouchableOpacity style={styles.tabItem} onPress={handleLogout}><Ionicons name="log-out" size={22} color="#ff4d4d" /><Text style={[styles.tabText, {color: '#ff4d4d'}]}>Sair</Text></TouchableOpacity>
-      </View>
+        <TouchableOpacity 
+          style={styles.tabItem} 
+          onPress={() => setActiveTab('painel')}
+        >
+          <Ionicons name="home" size={22} color={activeTab === 'painel' ? "#FFD700" : "#888"} />
+          <Text style={[styles.tabText, { color: activeTab === 'painel' ? '#FFD700' : '#888' }]}>Painel</Text>
+        </TouchableOpacity>
 
-      <TouchableOpacity style={styles.gpsButton} onPress={centralizarMapa}>
-        <MaterialIcons name="my-location" size={28} color="#FFD700" />
-      </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.tabItem} 
+          onPress={() => setActiveTab('perfil')} // MANTIDO 'perfil'
+        >
+          <MaterialCommunityIcons name="shield-account" size={22} color={activeTab === 'perfil' ? "#FFD700" : "#888"} />
+          <Text style={[styles.tabText, { color: activeTab === 'perfil' ? '#FFD700' : '#888' }]}>Perfil</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.tabItem}>
+          <FontAwesome name="briefcase" size={20} color="#888" />
+          <Text style={styles.tabText}>Viagens</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity style={styles.tabItem} onPress={handleLogout}>
+          <Ionicons name="log-out" size={22} color="#ff4d4d" />
+          <Text style={[styles.tabText, {color: '#ff4d4d'}]}>Sair</Text>
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
