@@ -53,7 +53,6 @@ const firebaseConfig = {
   appId: "1:345718597496:web:97af37f598666e0a3bca8d"
 };
 
-// Inicialização segura - CORREÇÃO DO ERROR auth/already-initialized
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 let auth;
 try {
@@ -80,7 +79,6 @@ export default function App() {
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [statusJornada, setStatusJornada] = useState('fora da jornada');
 
-  // Função para abrir GPS baseada no Destino/Link
   const abrirGPS = (destino) => {
     if (!destino) return;
     const url = destino.toString().startsWith('http') 
@@ -105,19 +103,23 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  // AJUSTE 1: Sincronização robusta usando o UID do usuário como ID do documento
   const sincronizarComFirestore = async (dadosExtra = {}) => {
-    if (!user) return;
+    const currentUser = auth.currentUser;
+    if (!currentUser) return; 
+
     try {
-      const motoristaRef = doc(db, "localizacao_realtime", user.uid);
+      // Usar o UID garante que Rafael e Raabi tenham documentos diferentes na coleção
+      const motoristaRef = doc(db, "localizacao_realtime", currentUser.uid);
+      
       await setDoc(motoristaRef, {
-        motoristaId: user.uid,
-        email: user.email,
-        latitude: location?.latitude || null,
-        longitude: location?.longitude || null,
-        statusOperacional,
-        statusJornada,
+        motoristaId: currentUser.uid,
+        email: currentUser.email,
+        latitude: dadosExtra.latitude || location?.latitude || null,
+        longitude: dadosExtra.longitude || location?.longitude || null,
+        statusOperacional: dadosExtra.statusOperacional || statusOperacional,
+        statusJornada: dadosExtra.statusJornada || statusJornada,
         ultimaAtualizacao: serverTimestamp(),
-        ...dadosExtra
       }, { merge: true });
     } catch (error) {
       console.error("Erro na sincronização:", error);
@@ -141,7 +143,6 @@ export default function App() {
           const id = change.doc.id;
 
           if (change.type === "added" && dados.status === "pendente") {
-            // Mapeamento exato baseado no print do sistema administrativo
             const isVazio = dados.tipo === 'VAZIO' || dados.tipoViagem === 'VAZIO';
             
             Alert.alert(
@@ -196,7 +197,6 @@ export default function App() {
       setStatusOperacional(novoStatusOp);
       sincronizarComFirestore({ statusOperacional: novoStatusOp });
 
-      // Abre o GPS automaticamente com a melhor informação disponível
       const destinoFinal = dados.linkEntrega || dados.linkMaps || dados.localEntrega || dados.entrega;
       abrirGPS(destinoFinal);
 
@@ -276,22 +276,30 @@ export default function App() {
     ]);
   };
 
+  // AJUSTE 2: Melhoria no watchPosition para envio em tempo real
   useEffect(() => {
+    let subscriber;
     if (isLoggedIn) {
       (async () => {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
 
-        Location.watchPositionAsync({
+        subscriber = await Location.watchPositionAsync({
           accuracy: Location.Accuracy.High,
-          timeInterval: 5000,
-          distanceInterval: 10
+          timeInterval: 10000, 
+          distanceInterval: 20
         }, (loc) => {
           setLocation(loc.coords);
-          sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
+          sincronizarComFirestore({ 
+            latitude: loc.coords.latitude, 
+            longitude: loc.coords.longitude 
+          });
         });
       })();
     }
+    return () => {
+        if (subscriber) subscriber.remove();
+    };
   }, [isLoggedIn]);
 
   const centralizarMapa = () => {
@@ -313,7 +321,7 @@ export default function App() {
           <ScrollView contentContainerStyle={styles.scrollContent}>
             <View style={styles.header}>
               <Text style={styles.logoText}>DESCARGO</Text>
-              <View style={styles.underline} />
+              <div style={styles.underline} />
               <Text style={styles.subtitle}>PAINEL DO MOTORISTA</Text>
             </View>
 

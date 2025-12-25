@@ -25,6 +25,7 @@ const PainelGestor = () => {
     const [menuAtivo, setMenuAtivo] = useState('dashboard');
 
     useEffect(() => {
+        // Monitoramento de quem está enviando sinal GPS (localizacao_realtime)
         const q = query(collection(db, "localizacao_realtime"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const lista = [];
@@ -37,9 +38,15 @@ const PainelGestor = () => {
     }, []);
 
     useEffect(() => {
-        const q = query(collection(db, "cadastro_motoristas"));
+        // AJUSTE CRÍTICO: Busca na coleção 'motoristas' para o total de cadastrados
+        const q = query(collection(db, "motoristas"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
-            setTotalMotoristas(snapshot.size);
+            // Filtro para evitar documentos fantasmas/vazios
+            const validos = snapshot.docs.filter(doc => {
+                const data = doc.data();
+                return data.email || data.nome;
+            });
+            setTotalMotoristas(validos.length);
         });
         return () => unsubscribe();
     }, []);
@@ -50,8 +57,9 @@ const PainelGestor = () => {
         switch (menuAtivo) {
             case 'dashboard':
                 return <DashboardGeral 
-                            totalMotoristas={totalMotoristas} 
-                            motoristasOnline={motoristasOnline} 
+                            // IMPORTANTE: Nome da prop deve bater com o que o DashboardGeral espera
+                            totalCadastradosProp={totalMotoristas} 
+                            motoristasOnlineProp={motoristasOnline} 
                             styles={styles} 
                         />;
             
@@ -91,7 +99,7 @@ const PainelGestor = () => {
                         <Container size={18} /> Carretas
                     </div>
                     <div onClick={() => setMenuAtivo('motoristas')} style={menuAtivo === 'motoristas' ? styles.navItemAtivo : styles.navItem}>
-                        <Users size={18} /> Motoristas
+                        <Users size={18} /> Motoristas ({totalMotoristas})
                     </div>
                     
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
@@ -136,7 +144,6 @@ const styles = {
     cardInfo: { display: 'flex', flexDirection: 'column' },
     cardLabel: { fontSize: '10px', color: '#666', fontWeight: 'bold', textTransform: 'uppercase' },
     cardValor: { fontSize: '24px', fontWeight: 'bold', marginTop: '5px', color: '#FFF' },
-    pontoOnline: { width: '10px', height: '10px', backgroundColor: '#2ecc71', borderRadius: '50%', boxShadow: '0 0 10px #2ecc71' },
     mapaContainer: { borderRadius: '15px', overflow: 'hidden', border: '1px solid #333', backgroundColor: '#111' },
     mapaHeader: { padding: '10px 15px', borderBottom: '1px solid #222', color: '#888', fontSize: '12px' }
 };
