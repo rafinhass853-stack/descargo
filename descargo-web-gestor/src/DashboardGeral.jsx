@@ -2,8 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polygon, Circle } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-markercluster';
 import { 
-    Users, AlertCircle, CheckCircle2, Clock, 
-    Eye, MessageCircle, Truck, Search, MapPin
+    Users, AlertCircle, Truck, Search, MapPin, Eye, MessageCircle
 } from 'lucide-react';
 import L from 'leaflet';
 import { db } from "./firebase";
@@ -29,7 +28,7 @@ const ChangeView = ({ center, zoom }) => {
     return null;
 };
 
-const DashboardGeral = ({ styles, totalCadastradosProp }) => {
+const DashboardGeral = () => {
     const [motoristasCadastrados, setMotoristasCadastrados] = useState([]);
     const [localizacoes, setLocalizacoes] = useState({});
     const [cercas, setCercas] = useState([]);
@@ -37,7 +36,7 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
     const [filtroGrid, setFiltroGrid] = useState("");
 
     useEffect(() => {
-        // 1. PUXA TODOS OS MOTORISTAS CADASTRADOS (PARA O GRID)
+        // 1. PUXA TODOS OS MOTORISTAS CADASTRADOS
         const unsubMot = onSnapshot(query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc")), (snapshot) => {
             const lista = [];
             snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
@@ -51,18 +50,21 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
             setCercas(lista);
         });
 
-        // 3. PUXA LOCALIZAÇÕES REALTIME (MAPEIA POR EMAIL PARA CRUZAR DADOS)
+        // 3. PUXA LOCALIZAÇÕES REALTIME (Ajustado para a nova estrutura de ID/UID)
         const unsubLoc = onSnapshot(collection(db, "localizacao_realtime"), (snapshot) => {
             const locs = {};
             snapshot.forEach(doc => {
                 const d = doc.data();
-                const chave = d.email?.toLowerCase() || d.nome?.toUpperCase();
+                // Agora usamos o motoristaId ou o email como chave primária de cruzamento
+                const chave = d.motoristaId || d.email?.toLowerCase();
+                
                 if (chave) {
                     locs[chave] = {
                         lat: parseFloat(d.latitude),
                         lng: parseFloat(d.longitude),
                         statusOp: d.statusOperacional || 'Sem programação',
                         statusJornada: d.statusJornada || 'fora da jornada',
+                        email: d.email,
                         ultima: d.ultimaAtualizacao?.toDate ? 
                                 d.ultimaAtualizacao.toDate().toLocaleTimeString('pt-BR') : "---"
                     };
@@ -80,9 +82,10 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    // Lógica de Contagem para os Cards
     const motoristasOnline = Object.keys(localizacoes).length;
-    const emViagem = Object.values(localizacoes).filter(l => l.statusOp.toLowerCase().includes('viagem')).length;
+    const emViagem = Object.values(localizacoes).filter(l => 
+        l.statusOp.toLowerCase().includes('viagem')
+    ).length;
 
     return (
         <div style={{ padding: '20px', backgroundColor: '#000', minHeight: '100vh' }}>
@@ -92,7 +95,7 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#111', padding: '5px 15px', borderRadius: '20px', border: '1px solid #222' }}>
                     <Search size={16} color="#444" />
                     <input 
-                        placeholder="Buscar no grid..." 
+                        placeholder="Buscar motorista..." 
                         style={{ background: 'none', border: 'none', color: '#fff', outline: 'none', fontSize: '13px', width: '200px' }}
                         onChange={(e) => setFiltroGrid(e.target.value)}
                     />
@@ -136,9 +139,16 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
                     <MarkerClusterGroup>
                         {Object.keys(localizacoes).map((key) => {
                             const loc = localizacoes[key];
+                            if (!loc.lat || !loc.lng) return null;
                             return (
                                 <Marker key={key} position={[loc.lat, loc.lng]} icon={caminhaoIcon}>
-                                    <Popup><strong>{key.toUpperCase()}</strong></Popup>
+                                    <Popup>
+                                        <div style={{color: '#000'}}>
+                                            <strong>{loc.email}</strong><br/>
+                                            Status: {loc.statusOp}<br/>
+                                            Jornada: {loc.statusJornada}
+                                        </div>
+                                    </Popup>
                                 </Marker>
                             );
                         })}
@@ -146,14 +156,14 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
                 </MapContainer>
             </div>
 
-            {/* GRID ORGANIZADO - TODOS OS CADASTRADOS */}
+            {/* GRID DE MOTORISTAS */}
             <div style={{ backgroundColor: '#0a0a0a', borderRadius: '12px', border: '1px solid #222', overflow: 'hidden' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', color: '#fff' }}>
                     <thead>
                         <tr style={{ borderBottom: '2px solid #111', backgroundColor: '#0f0f0f' }}>
                             <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>AÇÕES</th>
                             <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>MOTORISTA</th>
-                            <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>PLACA/CIDADE</th>
+                            <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>ID / CPF</th>
                             <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>GPS STATUS</th>
                             <th style={{ padding: '12px', textAlign: 'left', fontSize: '10px', color: '#666' }}>OPERACIONAL</th>
                         </tr>
@@ -162,8 +172,8 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
                         {motoristasCadastrados
                             .filter(m => m.nome.toUpperCase().includes(filtroGrid.toUpperCase()))
                             .map((m) => {
-                                // Cruza o motorista cadastrado com os dados de localização
-                                const gps = localizacoes[m.email_app?.toLowerCase()] || localizacoes[m.nome?.toUpperCase()];
+                                // Tenta cruzar pelo UID (id do doc de cadastro) ou pelo Email
+                                const gps = localizacoes[m.id] || localizacoes[m.email_app?.toLowerCase()];
                                 
                                 return (
                                     <tr key={m.id} style={{ borderBottom: '1px solid #111' }}>
@@ -185,10 +195,10 @@ const DashboardGeral = ({ styles, totalCadastradosProp }) => {
                                         </td>
                                         <td style={{ padding: '10px 12px' }}>
                                             <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{m.nome.toUpperCase()}</div>
-                                            <div style={{ fontSize: '10px', color: '#666' }}>{m.cpf}</div>
+                                            <div style={{ fontSize: '10px', color: '#666' }}>{m.email_app}</div>
                                         </td>
                                         <td style={{ padding: '10px 12px' }}>
-                                            <div style={{ fontSize: '12px' }}>{m.cnh_cat || '---'}</div>
+                                            <div style={{ fontSize: '12px' }}>{m.cpf}</div>
                                             <div style={{ fontSize: '10px', color: '#444' }}>{m.cidade}</div>
                                         </td>
                                         <td style={{ padding: '10px 12px' }}>

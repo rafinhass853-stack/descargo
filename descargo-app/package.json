@@ -16,6 +16,7 @@
     "expo-location": "~19.0.8",
     "expo-status-bar": "~3.0.9",
     "firebase": "^12.7.0",
+    "leaflet-routing-machine": "^3.2.12",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-maps": "1.20.1",

@@ -16,7 +16,7 @@ import {
   Linking,
   Vibration 
 } from 'react-native';
-import MapView, { PROVIDER_GOOGLE, Marker, Polyline } from 'react-native-maps';
+import MapView, { PROVIDER_GOOGLE, Marker, Polyline, Circle, Polygon } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { FontAwesome, MaterialCommunityIcons, Ionicons, MaterialIcons } from '@expo/vector-icons';
 
@@ -44,6 +44,7 @@ import {
   updateDoc, 
   setDoc, 
   serverTimestamp,
+  getDocs,
   and 
 } from 'firebase/firestore';
 
@@ -69,6 +70,21 @@ const db = getFirestore(app);
 
 const { width, height } = Dimensions.get('window');
 
+// Função auxiliar para calcular distância entre dois pontos (Haversine)
+const getDistance = (lat1, lon1, lat2, lon2) => {
+  if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
+  const R = 6371e3; 
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c; 
+};
+
 export default function App() {
   const mapRef = useRef(null);
 
@@ -80,12 +96,44 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
   const [cargaAtiva, setCargaAtiva] = useState(null);
+  const [geofenceAtiva, setGeofenceAtiva] = useState(null); 
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [statusJornada, setStatusJornada] = useState('fora da jornada');
   
   const [rotaCoords, setRotaCoords] = useState([]);
   const [destinoCoord, setDestinoCoord] = useState(null);
+  const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
+  // 1. BUSCAR A CERCA CADASTRADA (MELHORADO COM ONSNAPSHOT)
+  useEffect(() => {
+    const nomeCliente = cargaAtiva?.destinoCliente || cargaAtiva?.cliente_destino;
+    
+    if (cargaAtiva && nomeCliente) {
+      // Criamos uma query para buscar o cliente exato (Maiúsculo e sem espaços)
+      const q = query(
+        collection(db, "cadastro_clientes_pontos"), 
+        where("cliente", "==", nomeCliente.toUpperCase().trim())
+      );
+
+      // Usamos onSnapshot para que, se os amigos mudarem a cerca, mude no mapa do motorista na hora
+      const unsubscribeCerca = onSnapshot(q, (snap) => {
+        if (!snap.empty) {
+          const data = snap.docs[0].data();
+          if (data.geofence) {
+            setGeofenceAtiva(data.geofence);
+          }
+        } else {
+          setGeofenceAtiva(null);
+        }
+      }, (error) => console.error("Erro Snapshot Cerca:", error));
+
+      return () => unsubscribeCerca();
+    } else {
+      setGeofenceAtiva(null);
+    }
+  }, [cargaAtiva]);
+
+  // Função para traçar rota interna usando OSRM
   const buscarRotaInterna = async (origem, destinoTexto) => {
     try {
       if (!origem || !destinoTexto) return;
@@ -102,10 +150,6 @@ export default function App() {
           longitude: c[0]
         }));
         setRotaCoords(coords);
-        mapRef.current?.fitToCoordinates([origem, dest], {
-          edgePadding: { top: 100, right: 50, bottom: 300, left: 50 },
-          animated: true,
-        });
       }
     } catch (error) {
       console.error("Erro ao traçar rota interna:", error);
@@ -125,12 +169,49 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  // 2. MONITORAMENTO DE PROXIMIDADE (GEOFENCE)
+  useEffect(() => {
+    if (location) {
+      let estaDentro = false;
+
+      if (geofenceAtiva) {
+        if (geofenceAtiva.tipo === 'circle' && geofenceAtiva.centro) {
+          const dist = getDistance(
+            location.latitude, location.longitude, 
+            geofenceAtiva.centro.lat, geofenceAtiva.centro.lng
+          );
+          // Adicionado margem de erro de 20 metros
+          estaDentro = dist <= (parseFloat(geofenceAtiva.raio) + 20); 
+        } else if (geofenceAtiva.coordenadas) {
+          const dist = getDistance(
+            location.latitude, location.longitude, 
+            geofenceAtiva.coordenadas[0].lat, geofenceAtiva.coordenadas[0].lng
+          );
+          estaDentro = dist <= 250; 
+        }
+      } 
+      else if (destinoCoord) {
+        const dist = getDistance(location.latitude, location.longitude, destinoCoord.latitude, destinoCoord.longitude);
+        estaDentro = dist < 200;
+      }
+
+      if (estaDentro && !chegouAoDestino) {
+        Vibration.vibrate([500, 500, 500]); // Vibração mais perceptível
+        setChegouAoDestino(true);
+      } else if (!estaDentro && chegouAoDestino) {
+        setChegouAoDestino(false);
+      }
+    }
+  }, [location, geofenceAtiva, destinoCoord]);
+
   useEffect(() => {
     if (cargaAtiva && location) {
-      buscarRotaInterna(location, cargaAtiva.destinoLink || cargaAtiva.destinoCidade);
+      const destino = cargaAtiva.destinoLink || cargaAtiva.destinoCidade || cargaAtiva.cidade_destino;
+      buscarRotaInterna(location, destino);
     } else {
       setRotaCoords([]);
       setDestinoCoord(null);
+      setChegouAoDestino(false);
     }
   }, [cargaAtiva, location?.latitude]);
 
@@ -177,8 +258,8 @@ export default function App() {
             Alert.alert(
               isVazio ? "⚪ LANÇAMENTO DE VAZIO" : "🔔 NOVA CARGA DISPONÍVEL",
               isVazio 
-                ? `📍 DESTINO: ${dados.destinoCliente}\n🏙️ CIDADE: ${dados.destinoCidade}\n🆔 DT: ${dados.dt || "---"}`
-                : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente}\n🚛 CARRETA: ${dados.carreta || "---"}`,
+                ? `📍 DESTINO: ${dados.destinoCliente || dados.cliente_destino}\n🏙️ CIDADE: ${dados.destinoCidade || dados.cidade_destino}\n🆔 DT: ${dados.dt || "---"}`
+                : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente || dados.cliente_destino}\n🚛 CARRETA: ${dados.carreta || "---"}`,
               [
                 { text: "RECUSAR", style: "cancel", onPress: async () => { Vibration.cancel(); await updateDoc(doc(db, "ordens_servico", id), { status: "RECUSADO" }); } },
                 { text: "ACEITAR E INICIAR", onPress: () => { Vibration.cancel(); confirmarCarga(id, dados); } }
@@ -277,7 +358,7 @@ export default function App() {
         subscriber = await Location.watchPositionAsync({
           accuracy: Location.Accuracy.High,
           timeInterval: 10000, 
-          distanceInterval: 20
+          distanceInterval: 15
         }, (loc) => {
           setLocation(loc.coords);
           sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
@@ -337,10 +418,30 @@ export default function App() {
         <>
           <MapView ref={mapRef} provider={PROVIDER_GOOGLE} style={styles.map} mapType="hybrid" showsUserLocation
             initialRegion={{ latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
+            
+            {geofenceAtiva && geofenceAtiva.tipo === 'circle' && geofenceAtiva.centro && (
+              <Circle 
+                center={{ latitude: geofenceAtiva.centro.lat, longitude: geofenceAtiva.centro.lng }}
+                radius={parseFloat(geofenceAtiva.raio)}
+                fillColor="rgba(255, 215, 0, 0.3)"
+                strokeColor="#FFD700"
+                strokeWidth={2}
+              />
+            )}
+            {geofenceAtiva && (geofenceAtiva.tipo === 'polygon' || geofenceAtiva.tipo === 'rectangle') && geofenceAtiva.coordenadas && (
+              <Polygon 
+                coordinates={geofenceAtiva.coordenadas.map(c => ({ latitude: c.lat, longitude: c.lng }))}
+                fillColor="rgba(255, 215, 0, 0.3)"
+                strokeColor="#FFD700"
+                strokeWidth={2}
+              />
+            )}
+
             {rotaCoords.length > 0 && (
               <Polyline coordinates={rotaCoords} strokeColor="#FFD700" strokeWidth={5} />
             )}
-            {destinoCoord && (
+            
+            {destinoCoord && !geofenceAtiva && (
               <Marker coordinate={destinoCoord}>
                 <MaterialCommunityIcons name="map-marker-check" size={45} color="#FFD700" />
               </Marker>
@@ -359,20 +460,29 @@ export default function App() {
           </View>
 
           {cargaAtiva && (
-            <View style={styles.activeRouteCard}>
+            <View style={[styles.activeRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderWidth: 2, shadowColor: '#2ecc71', shadowOpacity: 0.5, elevation: 10}]}>
               <View style={styles.routeHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.routeLabel}>{cargaAtiva.tipoViagem?.toUpperCase() || 'VIAGEM'} - DT {cargaAtiva.dt || '---'}</Text>
-                  <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente}</Text>
-                  <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.destinoCidade}</Text>
+                  <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
+                  <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.destinoCidade || cargaAtiva.cidade_destino}</Text>
                 </View>
                 <TouchableOpacity onPress={finalizarViagem}>
-                  <Ionicons name="checkmark-done-circle" size={60} color="#2ecc71" />
+                  <Ionicons name="checkmark-done-circle" size={60} color={chegouAoDestino ? "#2ecc71" : "#444"} />
                 </TouchableOpacity>
               </View>
               <View style={styles.instrContainer}>
-                 <MaterialIcons name="navigation" size={18} color="#FFD700" />
-                 <Text style={styles.instrText}>SIGA A ROTA AMARELA NO MAPA ACIMA</Text>
+                 {chegouAoDestino ? (
+                   <>
+                    <MaterialIcons name="stars" size={20} color="#2ecc71" />
+                    <Text style={[styles.instrText, {color: '#2ecc71'}]}>DENTRO DA CERCA! FINALIZE A VIAGEM.</Text>
+                   </>
+                 ) : (
+                   <>
+                    <MaterialIcons name="navigation" size={18} color="#FFD700" />
+                    <Text style={styles.instrText}>{geofenceAtiva ? "SIGA A ROTA ATÉ A CERCA NO MAPA" : "SIGA PARA O DESTINO"}</Text>
+                   </>
+                 )}
               </View>
             </View>
           )}
@@ -382,30 +492,18 @@ export default function App() {
           </TouchableOpacity>
         </>
       ) : (
-        // AQUI ESTAVA O DETALHE: GARANTIR QUE EXIBA CONTA QUANDO ESTIVER NA ABA PERFIL
         <Conta auth={auth} db={db} />
       )}
 
       <View style={styles.tabBar}>
-        <TouchableOpacity 
-          style={styles.tabItem} 
-          onPress={() => setActiveTab('painel')}
-        >
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('painel')}>
           <Ionicons name="home" size={22} color={activeTab === 'painel' ? "#FFD700" : "#888"} />
           <Text style={[styles.tabText, { color: activeTab === 'painel' ? '#FFD700' : '#888' }]}>Painel</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={styles.tabItem} 
-          onPress={() => setActiveTab('perfil')} // MANTIDO 'perfil'
-        >
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('perfil')}>
           <MaterialCommunityIcons name="shield-account" size={22} color={activeTab === 'perfil' ? "#FFD700" : "#888"} />
           <Text style={[styles.tabText, { color: activeTab === 'perfil' ? '#FFD700' : '#888' }]}>Perfil</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.tabItem}>
-          <FontAwesome name="briefcase" size={20} color="#888" />
-          <Text style={styles.tabText}>Viagens</Text>
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.tabItem} onPress={handleLogout}>
