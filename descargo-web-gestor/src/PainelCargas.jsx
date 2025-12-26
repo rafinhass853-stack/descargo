@@ -70,15 +70,16 @@ const PainelCargas = () => {
         let prefixo = tipoViagem === 'MANUTENÇÃO' ? 'MT' : tipoViagem === 'VAZIO' ? 'VZ' : 'DT';
         const dtFinal = novaCarga.dt.trim() === '' ? `${prefixo}${Date.now().toString().slice(-6)}` : novaCarga.dt;
 
-        // Se for VAZIO, limpamos os dados de origem e peso antes de salvar
         const dadosParaSalvar = { ...novaCarga };
-        if (tipoViagem === 'VAZIO') {
-            dadosParaSalvar.origemCliente = 'DESLOCAMENTO VAZIO';
+        
+        // Lógica simplificada para VAZIO ou MANUTENÇÃO
+        if (tipoViagem === 'VAZIO' || tipoViagem === 'MANUTENÇÃO') {
+            dadosParaSalvar.origemCliente = tipoViagem === 'VAZIO' ? 'DESLOCAMENTO VAZIO' : 'SAÍDA PARA MANUTENÇÃO';
             dadosParaSalvar.origemCnpj = '';
             dadosParaSalvar.origemCidade = '';
-            dadosParaSalvar.origemData = '';
+            dadosParaSalvar.origemData = serverTimestamp(); // Data atual para saída
             dadosParaSalvar.peso = '0';
-            dadosParaSalvar.perfilVeiculo = 'VAZIO';
+            dadosParaSalvar.perfilVeiculo = tipoViagem;
         }
 
         try {
@@ -97,14 +98,17 @@ const PainelCargas = () => {
                 origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
                 destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
             });
-            alert(`Viagem lançada com sucesso!`);
+            alert(`Ordem de ${tipoViagem} lançada com sucesso!`);
         } catch (error) { console.error(error); }
     };
 
     const formatarData = (dataStr) => {
         if (!dataStr) return "";
-        const data = new Date(dataStr);
-        return data.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        try {
+            // Caso seja um Timestamp do Firebase (na visualização imediata)
+            const data = dataStr.seconds ? new Date(dataStr.seconds * 1000) : new Date(dataStr);
+            return data.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        } catch (e) { return ""; }
     };
 
     return (
@@ -117,7 +121,7 @@ const PainelCargas = () => {
 
             <header style={styles.header}>
                 <h2 style={styles.titulo}>LOGÍSTICA OPERACIONAL</h2>
-                <div style={styles.statsBadge}>{cargas.length} Viagens Ativas</div>
+                <div style={styles.statsBadge}>{cargas.length} Registros Ativos</div>
             </header>
 
             <div style={styles.tipoViagemSelector}>
@@ -146,11 +150,11 @@ const PainelCargas = () => {
                 <form onSubmit={handleSubmit} style={{ opacity: modalAberto ? 0 : 1, pointerEvents: modalAberto ? 'none' : 'auto' }}>
                     <div style={{
                         ...styles.gridForm, 
-                        gridTemplateColumns: tipoViagem === 'VAZIO' ? '1fr' : 'repeat(3, 1fr)' 
+                        gridTemplateColumns: (tipoViagem === 'VAZIO' || tipoViagem === 'MANUTENÇÃO') ? '1fr' : 'repeat(3, 1fr)' 
                     }}>
                         
-                        {/* COLUNA GERAL E ORIGEM SÓ APARECEM SE NÃO FOR VAZIO */}
-                        {tipoViagem !== 'VAZIO' && (
+                        {/* CAMPOS GERAIS E ORIGEM SÓ APARECEM SE FOR CARREGADO */}
+                        {tipoViagem === 'CARREGADO' && (
                             <>
                                 <div style={styles.formColumn}>
                                     <h4 style={styles.columnTitle}><Weight size={14}/> GERAL</h4>
@@ -169,17 +173,22 @@ const PainelCargas = () => {
                             </>
                         )}
 
-                        {/* COLUNA DESTINO SEMPRE APARECE */}
+                        {/* COLUNA DESTINO / LOCAL DE MANUTENÇÃO */}
                         <div style={styles.formColumn}>
-                            <h4 style={styles.columnTitle}><MapPin size={14} color="#3498db"/> DESTINO {tipoViagem === 'VAZIO' && '(VIAGEM VAZIO)'}</h4>
-                            <input list="lista-clientes" placeholder="Nome do Local / Cliente" value={novaCarga.destinoCliente} onChange={e => handleAutoPreencher(e.target.value, 'destino')} style={styles.inputDestaqueDestino} required />
+                            <h4 style={styles.columnTitle}>
+                                <MapPin size={14} color={tipoViagem === 'MANUTENÇÃO' ? '#e74c3c' : '#3498db'}/> 
+                                {tipoViagem === 'CARREGADO' ? 'DESTINO' : tipoViagem === 'VAZIO' ? 'DESTINO (VAZIO)' : 'LOCAL DA MANUTENÇÃO'}
+                            </h4>
+                            <input list="lista-clientes" placeholder={tipoViagem === 'MANUTENÇÃO' ? "Oficina / Pátio" : "Nome do Local / Cliente"} value={novaCarga.destinoCliente} onChange={e => handleAutoPreencher(e.target.value, 'destino')} style={tipoViagem === 'MANUTENÇÃO' ? styles.inputDestaqueManutencao : styles.inputDestaqueDestino} required />
                             <input placeholder="CNPJ Automático" value={novaCarga.destinoCnpj} readOnly style={styles.inputReadOnly} />
                             <input placeholder="Cidade/UF Automática" value={novaCarga.destinoCidade} readOnly style={styles.inputReadOnly} />
                             <input type="datetime-local" value={novaCarga.destinoData} onChange={e => setNovaCarga({...novaCarga, destinoData: e.target.value})} style={styles.inputDate} required />
                         </div>
                     </div>
-                    <textarea placeholder="Observações e Requisitos da viagem..." value={novaCarga.observacao} onChange={e => setNovaCarga({...novaCarga, observacao: e.target.value})} style={styles.textarea} />
-                    <button type="submit" style={styles.btnSalvar}>LANÇAR ORDEM DE SERVIÇO</button>
+                    <textarea placeholder={tipoViagem === 'MANUTENÇÃO' ? "Descreva os problemas ou serviços a serem feitos..." : "Observações e Requisitos da viagem..."} value={novaCarga.observacao} onChange={e => setNovaCarga({...novaCarga, observacao: e.target.value})} style={styles.textarea} />
+                    <button type="submit" style={{...styles.btnSalvar, backgroundColor: tipoViagem === 'MANUTENÇÃO' ? '#e74c3c' : '#FFD700', color: tipoViagem === 'MANUTENÇÃO' ? '#fff' : '#000'}}>
+                        {tipoViagem === 'MANUTENÇÃO' ? 'REGISTRAR ENTRADA EM MANUTENÇÃO' : 'LANÇAR ORDEM DE SERVIÇO'}
+                    </button>
                 </form>
             </section>
 
@@ -189,8 +198,8 @@ const PainelCargas = () => {
                         <thead>
                             <tr>
                                 <th style={styles.th}>STATUS / DT</th>
-                                <th style={styles.th}>DETALHES DA CARGA</th>
-                                <th style={styles.th}>LOGÍSTICA (ORIGEM ➔ DESTINO)</th>
+                                <th style={styles.th}>TIPO / CARGA</th>
+                                <th style={styles.th}>LOGÍSTICA / LOCAL</th>
                                 <th style={styles.th}>RESPONSÁVEL</th>
                                 <th style={styles.th}>AÇÕES</th>
                             </tr>
@@ -208,20 +217,30 @@ const PainelCargas = () => {
                                     </td>
                                     <td style={styles.td}>
                                         <div style={styles.infoCol}>
-                                            <span style={styles.textIcon}><Weight size={12}/> {item.peso}</span>
+                                            <span style={{...styles.textIcon, color: item.tipoViagem === 'MANUTENÇÃO' ? '#e74c3c' : '#ccc'}}>
+                                                {item.tipoViagem === 'MANUTENÇÃO' ? <SettingsIcon size={12}/> : <Weight size={12}/>} 
+                                                {item.tipoViagem === 'CARREGADO' ? item.peso : item.tipoViagem}
+                                            </span>
                                             <span style={styles.textIcon}><Truck size={12}/> {item.perfilVeiculo}</span>
                                         </div>
                                     </td>
                                     <td style={styles.td}>
                                         <div style={styles.logisticaContainer}>
+                                            {item.tipoViagem === 'CARREGADO' ? (
+                                                <>
+                                                    <div style={styles.pontoInfo}>
+                                                        <span style={styles.localName}><MapPin size={10} color="#FFD700"/> {item.origemCliente}</span>
+                                                        <span style={styles.subDetail}>{item.origemCidade}</span>
+                                                    </div>
+                                                    <div style={styles.seta}>➔</div>
+                                                </>
+                                            ) : (
+                                                <div style={styles.pontoInfo}>
+                                                    <span style={{...styles.localName, color: '#888'}}>{item.origemCliente}</span>
+                                                </div>
+                                            )}
                                             <div style={styles.pontoInfo}>
-                                                <span style={styles.localName}><MapPin size={10} color="#FFD700"/> {item.origemCliente}</span>
-                                                <span style={styles.subDetail}>{item.origemCidade}</span>
-                                                <span style={styles.dataDetail}><Clock size={10}/> {formatarData(item.origemData)}</span>
-                                            </div>
-                                            <div style={styles.seta}>➔</div>
-                                            <div style={styles.pontoInfo}>
-                                                <span style={styles.localName}><MapPin size={10} color="#3498db"/> {item.destinoCliente}</span>
+                                                <span style={styles.localName}><MapPin size={10} color={item.tipoViagem === 'MANUTENÇÃO' ? '#e74c3c' : '#3498db'}/> {item.destinoCliente}</span>
                                                 <span style={styles.subDetail}>{item.destinoCidade}</span>
                                                 <span style={styles.dataDetail}><Clock size={10}/> {formatarData(item.destinoData)}</span>
                                             </div>
@@ -262,10 +281,11 @@ const styles = {
     input: { backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px' },
     inputDestaqueOrigem: { backgroundColor: '#000', border: '1px solid #FFD700', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px' },
     inputDestaqueDestino: { backgroundColor: '#000', border: '1px solid #3498db', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px' },
+    inputDestaqueManutencao: { backgroundColor: '#000', border: '1px solid #e74c3c', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px' },
     inputReadOnly: { backgroundColor: '#080808', border: '1px solid #222', color: '#777', padding: '10px', borderRadius: '4px', fontSize: '12px' },
     inputDate: { backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '4px', fontSize: '13px', colorScheme: 'dark' },
     textarea: { width: '100%', backgroundColor: '#000', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '4px', marginTop: '10px', minHeight: '60px' },
-    btnSalvar: { width: '100%', backgroundColor: '#FFD700', border: 'none', padding: '15px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px', marginTop: '10px' },
+    btnSalvar: { width: '100%', backgroundColor: '#FFD700', border: 'none', padding: '15px', fontWeight: 'bold', cursor: 'pointer', borderRadius: '4px', marginTop: '10px', transition: '0.3s' },
     cardLista: { backgroundColor: '#111', borderRadius: '8px', border: '1px solid #222', overflow: 'hidden' },
     table: { width: '100%', borderCollapse: 'collapse' },
     th: { padding: '15px', fontSize: '10px', color: '#555', borderBottom: '2px solid #222', textAlign: 'left' },
