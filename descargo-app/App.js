@@ -44,7 +44,6 @@ import {
   updateDoc, 
   setDoc, 
   serverTimestamp,
-  getDocs,
   and 
 } from 'firebase/firestore';
 
@@ -70,7 +69,6 @@ const db = getFirestore(app);
 
 const { width, height } = Dimensions.get('window');
 
-// Função auxiliar para calcular distância entre dois pontos (Haversine)
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
   const R = 6371e3; 
@@ -96,52 +94,53 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
   const [cargaAtiva, setCargaAtiva] = useState(null);
+  
+  // Lista de todas as cercas do sistema
+  const [todasAsCercas, setTodasAsCercas] = useState([]);
   const [geofenceAtiva, setGeofenceAtiva] = useState(null); 
+
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [statusJornada, setStatusJornada] = useState('fora da jornada');
-  
   const [rotaCoords, setRotaCoords] = useState([]);
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
-  // 1. BUSCAR A CERCA CADASTRADA (MELHORADO COM ONSNAPSHOT)
+  // 1. CARREGAR TODAS AS CERCAS DO FIREBASE
   useEffect(() => {
-    const nomeCliente = cargaAtiva?.destinoCliente || cargaAtiva?.cliente_destino;
-    
-    if (cargaAtiva && nomeCliente) {
-      // Criamos uma query para buscar o cliente exato (Maiúsculo e sem espaços)
-      const q = query(
-        collection(db, "cadastro_clientes_pontos"), 
-        where("cliente", "==", nomeCliente.toUpperCase().trim())
-      );
+    if (isLoggedIn) {
+      const q = query(collection(db, "cadastro_clientes_pontos"));
+      const unsubscribeCercas = onSnapshot(q, (snap) => {
+        const cercasData = [];
+        snap.forEach((doc) => {
+          cercasData.push({ id: doc.id, ...doc.data() });
+        });
+        setTodasAsCercas(cercasData);
+      });
+      return () => unsubscribeCercas();
+    }
+  }, [isLoggedIn]);
 
-      // Usamos onSnapshot para que, se os amigos mudarem a cerca, mude no mapa do motorista na hora
-      const unsubscribeCerca = onSnapshot(q, (snap) => {
-        if (!snap.empty) {
-          const data = snap.docs[0].data();
-          if (data.geofence) {
-            setGeofenceAtiva(data.geofence);
-          }
-        } else {
-          setGeofenceAtiva(null);
+  // 2. IDENTIFICAR QUAL CERCA É A "ATIVA" (DO MEU DESTINO) PARA A ROTA
+  useEffect(() => {
+    if (cargaAtiva && todasAsCercas.length > 0) {
+      const nomeClienteRaw = cargaAtiva?.destinoCliente || cargaAtiva?.cliente_destino;
+      if (nomeClienteRaw) {
+        const nomeLimpo = nomeClienteRaw.toString().toUpperCase().trim();
+        const encontrada = todasAsCercas.find(c => c.cliente?.toUpperCase().trim() === nomeLimpo);
+        if (encontrada && encontrada.geofence) {
+          setGeofenceAtiva(encontrada.geofence);
         }
-      }, (error) => console.error("Erro Snapshot Cerca:", error));
-
-      return () => unsubscribeCerca();
+      }
     } else {
       setGeofenceAtiva(null);
     }
-  }, [cargaAtiva]);
+  }, [cargaAtiva, todasAsCercas]);
 
-  // Função para traçar rota interna usando OSRM
-  const buscarRotaInterna = async (origem, destinoTexto) => {
+  // Função OSRM
+  const buscarRotaOSRM = async (origem, latDest, lngDest) => {
+    if (!origem || !latDest || !lngDest) return;
     try {
-      if (!origem || !destinoTexto) return;
-      const geo = await Location.geocodeAsync(destinoTexto);
-      if (geo.length === 0) return;
-      const dest = { latitude: geo[0].latitude, longitude: geo[0].longitude };
-      setDestinoCoord(dest);
-      const url = `https://router.project-osrm.org/route/v1/driving/${origem.longitude},${origem.latitude};${dest.longitude},${dest.latitude}?overview=full&geometries=geojson`;
+      const url = `https://router.project-osrm.org/route/v1/driving/${origem.longitude},${origem.latitude};${lngDest},${latDest}?overview=full&geometries=geojson`;
       const response = await fetch(url);
       const data = await response.json();
       if (data.routes && data.routes.length > 0) {
@@ -152,10 +151,70 @@ export default function App() {
         setRotaCoords(coords);
       }
     } catch (error) {
-      console.error("Erro ao traçar rota interna:", error);
+      console.error("Erro OSRM:", error);
     }
   };
 
+  // 3. LÓGICA DE ROTA (VAI PARA A CERCA DO DESTINO)
+  useEffect(() => {
+    if (location && (geofenceAtiva || cargaAtiva)) {
+      if (geofenceAtiva?.centro?.lat) {
+        const dLat = geofenceAtiva.centro.lat;
+        const dLng = geofenceAtiva.centro.lng;
+        setDestinoCoord({ latitude: dLat, longitude: dLng });
+        buscarRotaOSRM(location, dLat, dLng);
+      } 
+      else if (geofenceAtiva?.coordenadas && geofenceAtiva.coordenadas.length > 0) {
+        const dLat = geofenceAtiva.coordenadas[0].lat;
+        const dLng = geofenceAtiva.coordenadas[0].lng;
+        setDestinoCoord({ latitude: dLat, longitude: dLng });
+        buscarRotaOSRM(location, dLat, dLng);
+      }
+      else if (cargaAtiva) {
+        const cidade = cargaAtiva.destinoCidade || cargaAtiva.cidade_destino;
+        if (cidade) {
+           Location.geocodeAsync(cidade).then(geo => {
+             if (geo.length > 0) {
+               setDestinoCoord({ latitude: geo[0].latitude, longitude: geo[0].longitude });
+               buscarRotaOSRM(location, geo[0].latitude, geo[0].longitude);
+             }
+           });
+        }
+      }
+    } else {
+      setRotaCoords([]);
+      setDestinoCoord(null);
+    }
+  }, [location?.latitude, geofenceAtiva, cargaAtiva]);
+
+  // MONITORAMENTO DE CHEGADA
+  useEffect(() => {
+    if (location && (geofenceAtiva || destinoCoord)) {
+      let estaDentro = false;
+      const latMotorista = location.latitude;
+      const lngMotorista = location.longitude;
+
+      if (geofenceAtiva?.tipo === 'circle' && geofenceAtiva.centro) {
+        const dist = getDistance(latMotorista, lngMotorista, geofenceAtiva.centro.lat, geofenceAtiva.centro.lng);
+        estaDentro = dist <= (parseFloat(geofenceAtiva.raio) + 30); 
+      } else if (geofenceAtiva?.coordenadas) {
+        const dist = getDistance(latMotorista, lngMotorista, geofenceAtiva.coordenadas[0].lat, geofenceAtiva.coordenadas[0].lng);
+        estaDentro = dist <= 250;
+      } else if (destinoCoord) {
+        const dist = getDistance(latMotorista, lngMotorista, destinoCoord.latitude, destinoCoord.longitude);
+        estaDentro = dist <= 300;
+      }
+
+      if (estaDentro && !chegouAoDestino) {
+        Vibration.vibrate([500, 500, 500]);
+        setChegouAoDestino(true);
+      } else if (!estaDentro && chegouAoDestino) {
+        setChegouAoDestino(false);
+      }
+    }
+  }, [location, geofenceAtiva, destinoCoord]);
+
+  // Auth e Sincronização
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (authenticatedUser) => {
       if (authenticatedUser) {
@@ -168,52 +227,6 @@ export default function App() {
     });
     return () => unsubscribeAuth();
   }, []);
-
-  // 2. MONITORAMENTO DE PROXIMIDADE (GEOFENCE)
-  useEffect(() => {
-    if (location) {
-      let estaDentro = false;
-
-      if (geofenceAtiva) {
-        if (geofenceAtiva.tipo === 'circle' && geofenceAtiva.centro) {
-          const dist = getDistance(
-            location.latitude, location.longitude, 
-            geofenceAtiva.centro.lat, geofenceAtiva.centro.lng
-          );
-          // Adicionado margem de erro de 20 metros
-          estaDentro = dist <= (parseFloat(geofenceAtiva.raio) + 20); 
-        } else if (geofenceAtiva.coordenadas) {
-          const dist = getDistance(
-            location.latitude, location.longitude, 
-            geofenceAtiva.coordenadas[0].lat, geofenceAtiva.coordenadas[0].lng
-          );
-          estaDentro = dist <= 250; 
-        }
-      } 
-      else if (destinoCoord) {
-        const dist = getDistance(location.latitude, location.longitude, destinoCoord.latitude, destinoCoord.longitude);
-        estaDentro = dist < 200;
-      }
-
-      if (estaDentro && !chegouAoDestino) {
-        Vibration.vibrate([500, 500, 500]); // Vibração mais perceptível
-        setChegouAoDestino(true);
-      } else if (!estaDentro && chegouAoDestino) {
-        setChegouAoDestino(false);
-      }
-    }
-  }, [location, geofenceAtiva, destinoCoord]);
-
-  useEffect(() => {
-    if (cargaAtiva && location) {
-      const destino = cargaAtiva.destinoLink || cargaAtiva.destinoCidade || cargaAtiva.cidade_destino;
-      buscarRotaInterna(location, destino);
-    } else {
-      setRotaCoords([]);
-      setDestinoCoord(null);
-      setChegouAoDestino(false);
-    }
-  }, [cargaAtiva, location?.latitude]);
 
   const sincronizarComFirestore = async (dadosExtra = {}) => {
     const currentUser = auth.currentUser;
@@ -229,9 +242,7 @@ export default function App() {
         statusJornada: dadosExtra.statusJornada || statusJornada,
         ultimaAtualizacao: serverTimestamp(),
       }, { merge: true });
-    } catch (error) {
-      console.error("Erro na sincronização:", error);
-    }
+    } catch (error) { console.error(error); }
   };
 
   useEffect(() => {
@@ -258,8 +269,8 @@ export default function App() {
             Alert.alert(
               isVazio ? "⚪ LANÇAMENTO DE VAZIO" : "🔔 NOVA CARGA DISPONÍVEL",
               isVazio 
-                ? `📍 DESTINO: ${dados.destinoCliente || dados.cliente_destino}\n🏙️ CIDADE: ${dados.destinoCidade || dados.cidade_destino}\n🆔 DT: ${dados.dt || "---"}`
-                : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente || dados.cliente_destino}\n🚛 CARRETA: ${dados.carreta || "---"}`,
+                ? `📍 DESTINO: ${dados.destinoCliente || dados.cliente_destino}\n🏙️ CIDADE: ${dados.destinoCidade || dados.cidade_destino}`
+                : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente || dados.cliente_destino}`,
               [
                 { text: "RECUSAR", style: "cancel", onPress: async () => { Vibration.cancel(); await updateDoc(doc(db, "ordens_servico", id), { status: "RECUSADO" }); } },
                 { text: "ACEITAR E INICIAR", onPress: () => { Vibration.cancel(); confirmarCarga(id, dados); } }
@@ -283,9 +294,7 @@ export default function App() {
       setCargaAtiva({ id: docId, ...dados });
       setStatusOperacional(novoStatusOp);
       sincronizarComFirestore({ statusOperacional: novoStatusOp });
-    } catch (error) {
-      Alert.alert("Erro", "Falha ao aceitar carga.");
-    }
+    } catch (error) { Alert.alert("Erro", "Falha ao aceitar carga."); }
   };
 
   const finalizarViagem = async () => {
@@ -419,29 +428,46 @@ export default function App() {
           <MapView ref={mapRef} provider={PROVIDER_GOOGLE} style={styles.map} mapType="hybrid" showsUserLocation
             initialRegion={{ latitude: -23.5505, longitude: -46.6333, latitudeDelta: 0.05, longitudeDelta: 0.05 }}>
             
-            {geofenceAtiva && geofenceAtiva.tipo === 'circle' && geofenceAtiva.centro && (
-              <Circle 
-                center={{ latitude: geofenceAtiva.centro.lat, longitude: geofenceAtiva.centro.lng }}
-                radius={parseFloat(geofenceAtiva.raio)}
-                fillColor="rgba(255, 215, 0, 0.3)"
-                strokeColor="#FFD700"
-                strokeWidth={2}
-              />
-            )}
-            {geofenceAtiva && (geofenceAtiva.tipo === 'polygon' || geofenceAtiva.tipo === 'rectangle') && geofenceAtiva.coordenadas && (
-              <Polygon 
-                coordinates={geofenceAtiva.coordenadas.map(c => ({ latitude: c.lat, longitude: c.lng }))}
-                fillColor="rgba(255, 215, 0, 0.3)"
-                strokeColor="#FFD700"
-                strokeWidth={2}
-              />
-            )}
+            {/* RENDERIZA TODAS AS CERCAS DO BANCO DE DADOS */}
+            {todasAsCercas.map((item) => {
+              if (!item.geofence) return null;
+              
+              // Se for o destino atual, usamos amarelo vibrante. Outras ficam com cinza/transparente.
+              const isDestino = item.cliente?.toUpperCase().trim() === (cargaAtiva?.destinoCliente || cargaAtiva?.cliente_destino)?.toUpperCase().trim();
+              const fillColor = isDestino ? "rgba(255, 215, 0, 0.4)" : "rgba(255, 255, 255, 0.2)";
+              const strokeColor = isDestino ? "#FFD700" : "#AAA";
+
+              if (item.geofence.tipo === 'circle' && item.geofence.centro) {
+                return (
+                  <Circle 
+                    key={item.id}
+                    center={{ latitude: item.geofence.centro.lat, longitude: item.geofence.centro.lng }}
+                    radius={parseFloat(item.geofence.raio)}
+                    fillColor={fillColor}
+                    strokeColor={strokeColor}
+                    strokeWidth={2}
+                  />
+                );
+              }
+              if ((item.geofence.tipo === 'polygon' || item.geofence.tipo === 'rectangle') && item.geofence.coordenadas) {
+                return (
+                  <Polygon 
+                    key={item.id}
+                    coordinates={item.geofence.coordenadas.map(c => ({ latitude: c.lat, longitude: c.lng }))}
+                    fillColor={fillColor}
+                    strokeColor={strokeColor}
+                    strokeWidth={2}
+                  />
+                );
+              }
+              return null;
+            })}
 
             {rotaCoords.length > 0 && (
               <Polyline coordinates={rotaCoords} strokeColor="#FFD700" strokeWidth={5} />
             )}
             
-            {destinoCoord && !geofenceAtiva && (
+            {destinoCoord && (
               <Marker coordinate={destinoCoord}>
                 <MaterialCommunityIcons name="map-marker-check" size={45} color="#FFD700" />
               </Marker>
@@ -460,29 +486,16 @@ export default function App() {
           </View>
 
           {cargaAtiva && (
-            <View style={[styles.activeRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderWidth: 2, shadowColor: '#2ecc71', shadowOpacity: 0.5, elevation: 10}]}>
+            <View style={[styles.activeRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderWidth: 2}]}>
               <View style={styles.routeHeader}>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.routeLabel}>{cargaAtiva.tipoViagem?.toUpperCase() || 'VIAGEM'} - DT {cargaAtiva.dt || '---'}</Text>
                   <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
-                  <Text style={{color: '#888', fontSize: 11, fontWeight: 'bold'}}>{cargaAtiva.destinoCidade || cargaAtiva.cidade_destino}</Text>
+                  <Text style={{color: '#888', fontSize: 11}}>{cargaAtiva.destinoCidade || cargaAtiva.cidade_destino}</Text>
                 </View>
                 <TouchableOpacity onPress={finalizarViagem}>
                   <Ionicons name="checkmark-done-circle" size={60} color={chegouAoDestino ? "#2ecc71" : "#444"} />
                 </TouchableOpacity>
-              </View>
-              <View style={styles.instrContainer}>
-                 {chegouAoDestino ? (
-                   <>
-                    <MaterialIcons name="stars" size={20} color="#2ecc71" />
-                    <Text style={[styles.instrText, {color: '#2ecc71'}]}>DENTRO DA CERCA! FINALIZE A VIAGEM.</Text>
-                   </>
-                 ) : (
-                   <>
-                    <MaterialIcons name="navigation" size={18} color="#FFD700" />
-                    <Text style={styles.instrText}>{geofenceAtiva ? "SIGA A ROTA ATÉ A CERCA NO MAPA" : "SIGA PARA O DESTINO"}</Text>
-                   </>
-                 )}
               </View>
             </View>
           )}
@@ -500,12 +513,10 @@ export default function App() {
           <Ionicons name="home" size={22} color={activeTab === 'painel' ? "#FFD700" : "#888"} />
           <Text style={[styles.tabText, { color: activeTab === 'painel' ? '#FFD700' : '#888' }]}>Painel</Text>
         </TouchableOpacity>
-
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('perfil')}>
           <MaterialCommunityIcons name="shield-account" size={22} color={activeTab === 'perfil' ? "#FFD700" : "#888"} />
           <Text style={[styles.tabText, { color: activeTab === 'perfil' ? '#FFD700' : '#888' }]}>Perfil</Text>
         </TouchableOpacity>
-
         <TouchableOpacity style={styles.tabItem} onPress={handleLogout}>
           <Ionicons name="log-out" size={22} color="#ff4d4d" />
           <Text style={[styles.tabText, {color: '#ff4d4d'}]}>Sair</Text>
@@ -535,11 +546,9 @@ const styles = StyleSheet.create({
   statusLabel: { color: '#666', fontSize: 8, fontWeight: '900', marginBottom: 4 },
   statusValue: { fontSize: 11, fontWeight: '900', color: '#FFD700' },
   activeRouteCard: { position: 'absolute', bottom: 110, left: 15, right: 15, backgroundColor: 'rgba(7,7,7,0.98)', borderRadius: 25, padding: 20, borderWidth: 1, borderColor: '#FFD70044' },
-  routeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  routeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   routeLabel: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', marginBottom: 5 },
   routeInfo: { color: '#FFF', fontSize: 22, fontWeight: '900' },
-  instrContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 10, borderTopWidth: 1, borderTopColor: '#222', paddingTop: 10 },
-  instrText: { color: '#FFD700', fontSize: 12, fontWeight: 'bold' },
   gpsButton: { position: 'absolute', bottom: 250, right: 20, backgroundColor: 'rgba(0,0,0,0.8)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#333' },
   tabBar: { position: 'absolute', bottom: 0, width: '100%', flexDirection: 'row', justifyContent: 'space-around', paddingVertical: 15, borderTopWidth: 1, borderTopColor: '#222', backgroundColor: '#000', paddingBottom: Platform.OS === 'ios' ? 35 : 20 },
   tabItem: { alignItems: 'center', justifyContent: 'center' },

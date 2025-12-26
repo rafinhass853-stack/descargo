@@ -50,12 +50,11 @@ const DashboardGeral = () => {
             setCercas(lista);
         });
 
-        // 3. PUXA LOCALIZAÇÕES REALTIME (Ajustado para a nova estrutura de ID/UID)
+        // 3. PUXA LOCALIZAÇÕES REALTIME
         const unsubLoc = onSnapshot(collection(db, "localizacao_realtime"), (snapshot) => {
             const locs = {};
             snapshot.forEach(doc => {
                 const d = doc.data();
-                // Agora usamos o motoristaId ou o email como chave primária de cruzamento
                 const chave = d.motoristaId || d.email?.toLowerCase();
                 
                 if (chave) {
@@ -82,8 +81,16 @@ const DashboardGeral = () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    const motoristasOnline = Object.keys(localizacoes).length;
-    const emViagem = Object.values(localizacoes).filter(l => 
+    // --- LÓGICA DE FILTRAGEM PARA CORRIGIR OS CONTADORES ---
+    
+    // Criamos uma lista de localizações que pertencem APENAS aos motoristas cadastrados
+    const localizacoesValidadas = motoristasCadastrados.map(m => {
+        return localizacoes[m.id] || localizacoes[m.email_app?.toLowerCase()];
+    }).filter(loc => loc !== undefined);
+
+    const motoristasOnlineCount = localizacoesValidadas.length;
+    
+    const emViagemCount = localizacoesValidadas.filter(l => 
         l.statusOp.toLowerCase().includes('viagem')
     ).length;
 
@@ -109,11 +116,13 @@ const DashboardGeral = () => {
                     <Users size={20} color="#FFD700" opacity={0.5}/>
                 </div>
                 <div style={{ backgroundColor: '#0a0a0a', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between' }}>
-                    <div><small style={{color: '#666', fontSize: '10px'}}>GPS ATIVO</small><br/><b style={{fontSize: '20px', color: '#2ecc71'}}>{motoristasOnline}</b></div>
+                    {/* CORREÇÃO: Agora usa a contagem validada */}
+                    <div><small style={{color: '#666', fontSize: '10px'}}>GPS ATIVO</small><br/><b style={{fontSize: '20px', color: '#2ecc71'}}>{motoristasOnlineCount}</b></div>
                     <MapPin size={20} color="#2ecc71" opacity={0.5}/>
                 </div>
                 <div style={{ backgroundColor: '#0a0a0a', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between' }}>
-                    <div><small style={{color: '#666', fontSize: '10px'}}>EM VIAGEM</small><br/><b style={{fontSize: '20px', color: '#FFD700'}}>{emViagem}</b></div>
+                    {/* CORREÇÃO: Agora usa a contagem em viagem validada */}
+                    <div><small style={{color: '#666', fontSize: '10px'}}>EM VIAGEM</small><br/><b style={{fontSize: '20px', color: '#FFD700'}}>{emViagemCount}</b></div>
                     <Truck size={20} color="#FFD700" opacity={0.5}/>
                 </div>
                 <div style={{ backgroundColor: '#0a0a0a', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between' }}>
@@ -137,14 +146,15 @@ const DashboardGeral = () => {
                     ))}
 
                     <MarkerClusterGroup>
-                        {Object.keys(localizacoes).map((key) => {
-                            const loc = localizacoes[key];
-                            if (!loc.lat || !loc.lng) return null;
+                        {/* MAPEAR APENAS MOTORISTAS QUE ESTÃO NO CADASTRO E TÊM GPS */}
+                        {motoristasCadastrados.map((m) => {
+                            const loc = localizacoes[m.id] || localizacoes[m.email_app?.toLowerCase()];
+                            if (!loc || !loc.lat || !loc.lng) return null;
                             return (
-                                <Marker key={key} position={[loc.lat, loc.lng]} icon={caminhaoIcon}>
+                                <Marker key={m.id} position={[loc.lat, loc.lng]} icon={caminhaoIcon}>
                                     <Popup>
                                         <div style={{color: '#000'}}>
-                                            <strong>{loc.email}</strong><br/>
+                                            <strong>{m.nome.toUpperCase()}</strong><br/>
                                             Status: {loc.statusOp}<br/>
                                             Jornada: {loc.statusJornada}
                                         </div>
@@ -172,7 +182,6 @@ const DashboardGeral = () => {
                         {motoristasCadastrados
                             .filter(m => m.nome.toUpperCase().includes(filtroGrid.toUpperCase()))
                             .map((m) => {
-                                // Tenta cruzar pelo UID (id do doc de cadastro) ou pelo Email
                                 const gps = localizacoes[m.id] || localizacoes[m.email_app?.toLowerCase()];
                                 
                                 return (

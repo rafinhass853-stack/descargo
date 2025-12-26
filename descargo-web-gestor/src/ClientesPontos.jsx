@@ -3,7 +3,7 @@ import { db } from "./firebase";
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Circle, Popup } from 'react-leaflet';
 import { EditControl } from "react-leaflet-draw";
-import { LocateFixed, Save, Search, Trash2, MapPin, Edit3 } from 'lucide-react';
+import { LocateFixed, Save, Search, Trash2, MapPin, Edit3, Link2, Navigation } from 'lucide-react';
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
@@ -13,11 +13,13 @@ const { BaseLayer } = LayersControl;
 // Componente para mudar o foco do mapa
 const ChangeView = ({ center }) => {
     const map = useMap();
-    useEffect(() => { map.setView(center, 16); }, [center, map]);
+    useEffect(() => { 
+        if (center) map.setView(center, 16); 
+    }, [center, map]);
     return null;
 };
 
-// Componente para renderizar UMA geofence específica (usado para o preview e para a lista)
+// Componente para renderizar UMA geofence específica
 const RenderGeofence = ({ data, color = '#FFD700', nomeCliente = "" }) => {
     if (!data) return null;
     if (data.tipo === 'circle' && data.centro) {
@@ -46,7 +48,7 @@ const ClientesPontos = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [mapCenter, setMapCenter] = useState([-23.5505, -46.6333]);
     const [clientesCadastrados, setClientesCadastrados] = useState([]);
-    const [mapKey, setMapKey] = useState(Date.now()); // Para resetar o EditControl após salvar
+    const [mapKey, setMapKey] = useState(Date.now());
 
     useEffect(() => {
         const q = query(collection(db, "cadastro_clientes_pontos"), orderBy("criadoEm", "desc"));
@@ -58,16 +60,54 @@ const ClientesPontos = () => {
         return () => unsubscribe();
     }, []);
 
-    const handleSearch = async (e) => {
-        e.preventDefault();
-        if (!searchQuery) return;
+    // FUNÇÃO PARA EXTRAIR COORDENADAS DO LINK DO GOOGLE MAPS
+    const handleExtractLink = async () => {
+        const url = formData.linkGoogle;
+        if (!url) return alert("Insira um link do Google Maps primeiro.");
+
         try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(searchQuery)}`);
+            // Caso 1: Link longo com @lat,lng
+            const regexLong = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
+            const matchLong = url.match(regexLong);
+
+            if (matchLong) {
+                const lat = parseFloat(matchLong[1]);
+                const lng = parseFloat(matchLong[2]);
+                setMapCenter([lat, lng]);
+                return;
+            }
+
+            // Caso 2: Link curto (goo.gl) ou busca por nome no link
+            // Nota: Para links curtos goo.gl, o navegador precisaria resolver o redirecionamento.
+            // Como fallback e melhor experiência, tentamos buscar o texto após o /place/
+            const regexPlace = /place\/([^\/]+)/;
+            const matchPlace = url.match(regexPlace);
+            if (matchPlace) {
+                const placeName = decodeURIComponent(matchPlace[1].replace(/\+/g, ' '));
+                setSearchQuery(placeName);
+                fetchCoords(placeName);
+            } else {
+                alert("Não foi possível extrair coordenadas automáticas. Tente usar a busca por endereço.");
+            }
+        } catch (error) {
+            console.error("Erro ao processar link:", error);
+        }
+    };
+
+    const fetchCoords = async (query) => {
+        try {
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
             const data = await response.json();
             if (data.length > 0) {
                 setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
-            } else { alert("Endereço não encontrado."); }
+            } else { alert("Local não encontrado."); }
         } catch (error) { console.error("Erro na busca:", error); }
+    };
+
+    const handleSearch = (e) => {
+        e.preventDefault();
+        if (!searchQuery) return;
+        fetchCoords(searchQuery);
     };
 
     const onCreated = (e) => {
@@ -114,11 +154,10 @@ const ClientesPontos = () => {
                 await addDoc(collection(db, "cadastro_clientes_pontos"), { ...dados, codigo: novoCodigo, criadoEm: serverTimestamp() });
             }
             
-            // Limpa o formulário e reseta o componente de desenho
             setEditId(null);
             setFormData({ cliente: '', cnpj: '', cidade: '', linkGoogle: '' });
             setGeofence(null);
-            setMapKey(Date.now()); // Isso limpa o desenho temporário do Leaflet Draw
+            setMapKey(Date.now());
             alert("Sucesso!");
         } catch (error) { alert(error.message); }
         setLoading(false);
@@ -145,8 +184,28 @@ const ClientesPontos = () => {
             
             <form onSubmit={handleSubmit} style={styles.formGrid}>
                 <div style={styles.sidebar}>
+                    
+                    {/* NOVO CAMPO: LINK DO GOOGLE MAPS */}
                     <div style={styles.field}>
-                        <label style={styles.label}>1. BUSCAR LOCAL NO MAPA</label>
+                        <label style={styles.label}>1. LINK GOOGLE MAPS (PARA LOCALIZAR)</label>
+                        <div style={{ display: 'flex', gap: '5px' }}>
+                            <div style={{ position: 'relative', flex: 1 }}>
+                                <Link2 size={14} style={{ position: 'absolute', left: '10px', top: '12px', color: '#666' }} />
+                                <input 
+                                    style={{ ...styles.input, paddingLeft: '30px' }} 
+                                    placeholder="Cole o link aqui..." 
+                                    value={formData.linkGoogle} 
+                                    onChange={(e) => setFormData({...formData, linkGoogle: e.target.value})} 
+                                />
+                            </div>
+                            <button onClick={handleExtractLink} type="button" style={styles.btnLink} title="Extrair local do link">
+                                <Navigation size={16} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style={styles.field}>
+                        <label style={styles.label}>OU BUSCA MANUAL</label>
                         <div style={{ display: 'flex', gap: '5px' }}>
                             <input style={styles.inputSearch} placeholder="Rua, Número..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
                             <button onClick={handleSearch} type="button" style={styles.btnSearch}><Search size={16} /></button>
@@ -209,7 +268,6 @@ const ClientesPontos = () => {
                             </BaseLayer>
                         </LayersControl>
                         
-                        {/* Camada das Cercas já Cadastradas (Ficam sempre visíveis) */}
                         {clientesCadastrados.map(cliente => (
                             <RenderGeofence 
                                 key={`saved-${cliente.id}`} 
@@ -219,7 +277,6 @@ const ClientesPontos = () => {
                             />
                         ))}
 
-                        {/* Camada de Edição/Criação */}
                         <FeatureGroup key={mapKey}>
                             <EditControl 
                                 position="topleft" 
@@ -250,9 +307,10 @@ const styles = {
     sidebar: { display: 'flex', flexDirection: 'column', gap: '12px' },
     field: { display: 'flex', flexDirection: 'column', gap: '4px' },
     label: { color: '#555', fontSize: '9px', fontWeight: 'bold' },
-    input: { backgroundColor: '#111', border: '1px solid #222', padding: '10px', borderRadius: '6px', color: '#FFF', outline: 'none' },
+    input: { backgroundColor: '#111', border: '1px solid #222', padding: '10px', borderRadius: '6px', color: '#FFF', outline: 'none', width: '100%', boxSizing: 'border-box' },
     inputSearch: { flex: 1, backgroundColor: '#000', border: '1px solid #444', padding: '10px', borderRadius: '6px', color: '#FFF' },
     btnSearch: { backgroundColor: '#FFD700', border: 'none', borderRadius: '6px', padding: '0 12px', cursor: 'pointer' },
+    btnLink: { backgroundColor: '#3498db', border: 'none', borderRadius: '6px', padding: '0 12px', cursor: 'pointer', color: '#FFF' },
     btn: { color: '#000', padding: '14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
     mapWrapper: { height: '80vh', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' },
     listaContainer: { marginTop: '10px', borderTop: '1px solid #222', paddingTop: '15px' },
