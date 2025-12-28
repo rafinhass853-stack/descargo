@@ -19,20 +19,31 @@ const ChangeView = ({ center }) => {
     return null;
 };
 
-// Componente para renderizar UMA geofence específica
+// Componente para renderizar UMA geofence específica (Círculo ou Polígono)
 const RenderGeofence = ({ data, color = '#FFD700', nomeCliente = "" }) => {
     if (!data) return null;
+
+    // Caso seja Círculo
     if (data.tipo === 'circle' && data.centro) {
         return (
-            <Circle center={[data.centro.lat, data.centro.lng]} radius={data.raio} pathOptions={{ color }}>
+            <Circle 
+                center={[data.centro.lat, data.centro.lng]} 
+                radius={data.raio} 
+                pathOptions={{ color, fillColor: color, fillOpacity: 0.2 }}
+            >
                 {nomeCliente && <Popup><strong>{nomeCliente}</strong></Popup>}
             </Circle>
         );
     }
+
+    // Caso seja Polígono ou Retângulo
     if ((data.tipo === 'polygon' || data.tipo === 'rectangle') && data.coordenadas) {
         const positions = data.coordenadas.map(c => [c.lat, c.lng]);
         return (
-            <Polygon positions={positions} pathOptions={{ color }}>
+            <Polygon 
+                positions={positions} 
+                pathOptions={{ color, fillColor: color, fillOpacity: 0.2 }}
+            >
                 {nomeCliente && <Popup><strong>{nomeCliente}</strong></Popup>}
             </Polygon>
         );
@@ -50,23 +61,24 @@ const ClientesPontos = () => {
     const [clientesCadastrados, setClientesCadastrados] = useState([]);
     const [mapKey, setMapKey] = useState(Date.now());
 
+    // BUSCA EM TEMPO REAL NO FIRESTORE
     useEffect(() => {
         const q = query(collection(db, "cadastro_clientes_pontos"), orderBy("criadoEm", "desc"));
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const lista = [];
-            snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+            snapshot.forEach((doc) => {
+                lista.push({ id: doc.id, ...doc.data() });
+            });
             setClientesCadastrados(lista);
         });
         return () => unsubscribe();
     }, []);
 
-    // FUNÇÃO PARA EXTRAIR COORDENADAS DO LINK DO GOOGLE MAPS
     const handleExtractLink = async () => {
         const url = formData.linkGoogle;
         if (!url) return alert("Insira um link do Google Maps primeiro.");
 
         try {
-            // Caso 1: Link longo com @lat,lng
             const regexLong = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
             const matchLong = url.match(regexLong);
 
@@ -77,9 +89,6 @@ const ClientesPontos = () => {
                 return;
             }
 
-            // Caso 2: Link curto (goo.gl) ou busca por nome no link
-            // Nota: Para links curtos goo.gl, o navegador precisaria resolver o redirecionamento.
-            // Como fallback e melhor experiência, tentamos buscar o texto após o /place/
             const regexPlace = /place\/([^\/]+)/;
             const matchPlace = url.match(regexPlace);
             if (matchPlace) {
@@ -87,7 +96,7 @@ const ClientesPontos = () => {
                 setSearchQuery(placeName);
                 fetchCoords(placeName);
             } else {
-                alert("Não foi possível extrair coordenadas automáticas. Tente usar a busca por endereço.");
+                alert("Não foi possível extrair coordenadas automáticas. Use a busca manual.");
             }
         } catch (error) {
             console.error("Erro ao processar link:", error);
@@ -147,19 +156,31 @@ const ClientesPontos = () => {
         
         setLoading(true);
         try {
-            const dados = { ...formData, geofence, atualizadoEm: serverTimestamp() };
-            if (editId) await updateDoc(doc(db, "cadastro_clientes_pontos", editId), dados);
-            else {
+            const dados = { 
+                ...formData, 
+                geofence, 
+                atualizadoEm: serverTimestamp() 
+            };
+
+            if (editId) {
+                await updateDoc(doc(db, "cadastro_clientes_pontos", editId), dados);
+            } else {
                 const novoCodigo = `CLI-${Math.floor(1000 + Math.random() * 9000)}`;
-                await addDoc(collection(db, "cadastro_clientes_pontos"), { ...dados, codigo: novoCodigo, criadoEm: serverTimestamp() });
+                await addDoc(collection(db, "cadastro_clientes_pontos"), { 
+                    ...dados, 
+                    codigo: novoCodigo, 
+                    criadoEm: serverTimestamp() 
+                });
             }
             
             setEditId(null);
             setFormData({ cliente: '', cnpj: '', cidade: '', linkGoogle: '' });
             setGeofence(null);
             setMapKey(Date.now());
-            alert("Sucesso!");
-        } catch (error) { alert(error.message); }
+            alert("Ponto salvo com sucesso!");
+        } catch (error) { 
+            alert("Erro ao salvar: " + error.message); 
+        }
         setLoading(false);
     };
 
@@ -185,7 +206,6 @@ const ClientesPontos = () => {
             <form onSubmit={handleSubmit} style={styles.formGrid}>
                 <div style={styles.sidebar}>
                     
-                    {/* NOVO CAMPO: LINK DO GOOGLE MAPS */}
                     <div style={styles.field}>
                         <label style={styles.label}>1. LINK GOOGLE MAPS (PARA LOCALIZAR)</label>
                         <div style={{ display: 'flex', gap: '5px' }}>
@@ -198,7 +218,7 @@ const ClientesPontos = () => {
                                     onChange={(e) => setFormData({...formData, linkGoogle: e.target.value})} 
                                 />
                             </div>
-                            <button onClick={handleExtractLink} type="button" style={styles.btnLink} title="Extrair local do link">
+                            <button onClick={handleExtractLink} type="button" style={styles.btnLink} title="Extrair local">
                                 <Navigation size={16} />
                             </button>
                         </div>
@@ -268,6 +288,7 @@ const ClientesPontos = () => {
                             </BaseLayer>
                         </LayersControl>
                         
+                        {/* Renderiza todos os pontos do banco no mapa */}
                         {clientesCadastrados.map(cliente => (
                             <RenderGeofence 
                                 key={`saved-${cliente.id}`} 
