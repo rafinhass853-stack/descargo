@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "345718597496",
+    "project_id": "descargo-4090a",
+    "storage_bucket": "descargo-4090a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:345718597496:android:fd1b81db2c11ea523bca8d",
+        "android_client_info": {
+          "package_name": "com.rafaelaraujo2025.descargoapp"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "345718597496-4o3dolsrq8e1t2l6a87jjthtc5m2sg4k.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "345718597496-4o3dolsrq8e1t2l6a87jjthtc5m2sg4k.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

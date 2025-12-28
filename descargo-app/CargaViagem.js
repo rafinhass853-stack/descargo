@@ -1,29 +1,58 @@
-import React, { useEffect, useState } from 'react';
-import { MapContainer, TileLayer, Circle, Polygon, Marker, Popup, useMap } from 'react-leaflet';
+import React, { useEffect, useState, useMemo, memo } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
+import MapView, { Circle, Polygon, PROVIDER_GOOGLE } from 'react-native-maps';
 import { db } from "./firebase";
 import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { Navigation, MapPin, Package, AlertTriangle } from 'lucide-react';
-import L from 'leaflet';
+import { Navigation, MapPin, Package, AlertTriangle } from 'lucide-react-native';
 
-// Ajuste do ícone padrão do Leaflet
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-let DefaultIcon = L.icon({ iconUrl: icon, shadowUrl: iconShadow, iconSize: [25, 41], iconAnchor: [12, 41] });
-L.Marker.prototype.options.icon = DefaultIcon;
+// Otimização: Componente de Geofence separado para evitar re-render do mapa todo
+const GeofenceLayer = memo(({ cerca }) => {
+    if (!cerca || !cerca.geofence) return null;
 
-const ChangeMapView = ({ center }) => {
-    const map = useMap();
-    useEffect(() => { if (center) map.setView(center, 15); }, [center]);
-    return null;
-};
+    if (cerca.geofence.tipo === 'circle') {
+        return (
+            <Circle
+                center={{
+                    latitude: cerca.geofence.centro.lat,
+                    longitude: cerca.geofence.centro.lng
+                }}
+                radius={cerca.geofence.raio}
+                strokeColor="#FFD700"
+                fillColor="rgba(255, 215, 0, 0.2)"
+                zIndex={2}
+            />
+        );
+    }
+
+    const coords = cerca.geofence.coordenadas.map(c => ({
+        latitude: c.lat,
+        longitude: c.lng
+    }));
+
+    return (
+        <Polygon
+            coordinates={coords}
+            strokeColor="#FFD700"
+            fillColor="rgba(255, 215, 0, 0.2)"
+            zIndex={2}
+        />
+    );
+});
 
 const CargaViagem = ({ motoristaEmail }) => {
     const [viagemAtiva, setViagemAtiva] = useState(null);
     const [cercaDestino, setCercaDestino] = useState(null);
     const [loading, setLoading] = useState(true);
+    
+    // Posição inicial fixa para carregar o mapa rápido
+    const [region, setRegion] = useState({
+        latitude: -21.78,
+        longitude: -48.17,
+        latitudeDelta: 0.0922,
+        longitudeDelta: 0.0421,
+    });
 
     useEffect(() => {
-        // 1. BUSCA A ORDEM DE SERVIÇO ATIVA DO MOTORISTA
         const q = query(
             collection(db, "ordens_servico"),
             where("motorista_email", "==", motoristaEmail),
@@ -34,7 +63,6 @@ const CargaViagem = ({ motoristaEmail }) => {
             if (!snapshot.empty) {
                 const dados = snapshot.docs[0].data();
                 setViagemAtiva(dados);
-                // 2. BUSCA A CERCA BASEADA NO NOME DO CLIENTE DA OS
                 buscarCercaNoMapa(dados.cliente_destino);
             } else {
                 setViagemAtiva(null);
@@ -48,111 +76,109 @@ const CargaViagem = ({ motoristaEmail }) => {
 
     const buscarCercaNoMapa = (nomeCliente) => {
         if (!nomeCliente) return;
-
-        // Padronizamos para maiúsculo para garantir o cruzamento dos dados
-        const nomeBusca = nomeCliente.toUpperCase();
-        
         const qCerca = query(
             collection(db, "cadastro_clientes_pontos"),
-            where("cliente", "==", nomeBusca)
+            where("cliente", "==", nomeCliente.toUpperCase())
         );
 
         onSnapshot(qCerca, (snapshot) => {
             if (!snapshot.empty) {
-                setCercaDestino(snapshot.docs[0].data());
-            } else {
-                setCercaDestino(null);
+                const dadosCerca = snapshot.docs[0].data();
+                setCercaDestino(dadosCerca);
+                
+                // Atualiza a região apenas uma vez ao encontrar a cerca
+                const lat = dadosCerca.geofence.tipo === 'circle' 
+                    ? dadosCerca.geofence.centro.lat 
+                    : dadosCerca.geofence.coordenadas[0].lat;
+                const lng = dadosCerca.geofence.tipo === 'circle' 
+                    ? dadosCerca.geofence.centro.lng 
+                    : dadosCerca.geofence.coordenadas[0].lng;
+
+                setRegion(prev => ({
+                    ...prev,
+                    latitude: lat,
+                    longitude: lng,
+                }));
             }
         });
     };
 
-    if (loading) return <div style={{color: '#fff', padding: '20px'}}>Carregando Viagem...</div>;
+    // Abre o Waze ou Google Maps externo (muito mais leve que navegar dentro do app)
+    const abrirNavegacao = () => {
+        const url = Platform.select({
+            ios: `maps:0,0?q=${viagemAtiva.cliente_destino}`,
+            android: `geo:0,0?q=${viagemAtiva.cliente_destino}`,
+        });
+        Linking.openURL(url);
+    };
+
+    if (loading) return <ActivityIndicator size="large" color="#FFD700" style={{flex:1, backgroundColor:'#000'}}/>;
 
     return (
-        <div style={{ backgroundColor: '#000', minHeight: '100vh', color: '#fff', fontFamily: 'sans-serif' }}>
-            
-            {/* CABEÇALHO DA VIAGEM */}
-            <div style={{ padding: '20px', borderBottom: '1px solid #222' }}>
-                <h2 style={{ color: '#FFD700', margin: 0, fontSize: '18px' }}>VIAGEM EM ANDAMENTO</h2>
-                {viagemAtiva ? (
-                    <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <Package size={18} color="#666" />
-                        <span>Carga: <strong>{viagemAtiva.produto}</strong></span>
-                    </div>
-                ) : (
-                    <p style={{ color: '#666' }}>Nenhuma carga ativa no momento.</p>
+        <View style={styles.container}>
+            <View style={styles.header}>
+                <Text style={styles.headerTitle}>VIAGEM EM ANDAMENTO</Text>
+                {viagemAtiva && (
+                    <View style={styles.infoRow}>
+                        <Package size={16} color="#666" />
+                        <Text style={styles.text}>Carga: {viagemAtiva.produto}</Text>
+                    </View>
                 )}
-            </div>
+            </View>
 
-            {/* MAPA COM A CERCA */}
-            <div style={{ height: '400px', width: '100%', position: 'relative' }}>
-                <MapContainer center={[-21.78, -48.17]} zoom={13} style={{ height: '100%', width: '100%' }}>
-                    <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" />
-                    
-                    {cercaDestino && cercaDestino.geofence && (
-                        <>
-                            {cercaDestino.geofence.tipo === 'circle' ? (
-                                <Circle 
-                                    center={[cercaDestino.geofence.centro.lat, cercaDestino.geofence.centro.lng]}
-                                    radius={cercaDestino.geofence.raio}
-                                    pathOptions={{ color: '#FFD700', fillColor: '#FFD700', fillOpacity: 0.3 }}
-                                />
-                            ) : (
-                                <Polygon 
-                                    positions={cercaDestino.geofence.coordenadas.map(c => [c.lat, c.lng])}
-                                    pathOptions={{ color: '#FFD700', fillColor: '#FFD700', fillOpacity: 0.3 }}
-                                />
-                            )}
-                            <ChangeMapView center={
-                                cercaDestino.geofence.tipo === 'circle' 
-                                ? [cercaDestino.geofence.centro.lat, cercaDestino.geofence.centro.lng]
-                                : [cercaDestino.geofence.coordenadas[0].lat, cercaDestino.geofence.coordenadas[0].lng]
-                            } />
-                        </>
-                    )}
-                </MapContainer>
+            <View style={styles.mapWrapper}>
+                <MapView
+                    provider={PROVIDER_GOOGLE}
+                    style={styles.map}
+                    initialRegion={region}
+                    showsUserLocation={true}
+                    followsUserLocation={false} // IMPORTANTE: true causa lentidão em aparelhos simples
+                    loadingEnabled={true}
+                    moveOnMarkerPress={false}
+                    pitchEnabled={false} // Desativa inclinação 3D para ganhar performance
+                    mapType="standard" // 'hybrid' é bem mais pesado, use 'standard' se estiver travando muito
+                >
+                    <GeofenceLayer cerca={cercaDestino} />
+                </MapView>
+            </View>
 
-                {/* ALERTA DE CERCA NÃO ENCONTRADA */}
-                {viagemAtiva && !cercaDestino && (
-                    <div style={{
-                        position: 'absolute', top: 10, left: 10, right: 10, zIndex: 1000,
-                        backgroundColor: 'rgba(231, 76, 60, 0.9)', padding: '10px', borderRadius: '5px',
-                        display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12px'
-                    }}>
-                        <AlertTriangle size={16} />
-                        <span>Atenção: Cerca de destino não cadastrada para {viagemAtiva.cliente_destino}</span>
-                    </div>
-                )}
-            </div>
-
-            {/* DETALHES DO DESTINO */}
             {viagemAtiva && (
-                <div style={{ padding: '20px' }}>
-                    <div style={{ backgroundColor: '#111', padding: '15px', borderRadius: '10px', border: '1px solid #222' }}>
-                        <div style={{ color: '#666', fontSize: '11px', marginBottom: '5px' }}>DESTINO FINAL</div>
-                        <div style={{ fontSize: '16px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <View style={styles.footer}>
+                    <View style={styles.destCard}>
+                        <Text style={styles.destLabel}>DESTINO FINAL</Text>
+                        <View style={styles.infoRow}>
                             <MapPin size={18} color="#FFD700" />
-                            {viagemAtiva.cliente_destino.toUpperCase()}
-                        </div>
-                        <div style={{ color: '#aaa', fontSize: '13px', marginTop: '5px' }}>
-                            {viagemAtiva.cidade_destino}
-                        </div>
-                    </div>
+                            <Text style={styles.destName}>{viagemAtiva.cliente_destino.toUpperCase()}</Text>
+                        </View>
+                    </View>
 
-                    <button 
-                        onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&destination=${viagemAtiva.cliente_destino}`)}
-                        style={{
-                            width: '100%', marginTop: '20px', padding: '15px', borderRadius: '10px',
-                            backgroundColor: '#FFD700', border: 'none', fontWeight: 'bold',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px'
-                        }}
-                    >
-                        <Navigation size={20} /> INICIAR NAVEGAÇÃO GPS
-                    </button>
-                </div>
+                    <TouchableOpacity style={styles.navButton} onPress={abrirNavegacao}>
+                        <Navigation size={20} color="#000" />
+                        <Text style={styles.navButtonText}>ABRIR NO GPS EXTERNO</Text>
+                    </TouchableOpacity>
+                </View>
             )}
-        </div>
+        </View>
     );
 };
+
+const styles = StyleSheet.create({
+    container: { flex: 1, backgroundColor: '#000' },
+    header: { padding: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+    headerTitle: { color: '#FFD700', fontSize: 16, fontWeight: 'bold' },
+    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 },
+    text: { color: '#fff', fontSize: 14 },
+    mapWrapper: { flex: 1, position: 'relative' }, // O mapa agora ocupa o espaço disponível
+    map: { ...StyleSheet.absoluteFillObject },
+    footer: { padding: 20, backgroundColor: '#000' },
+    destCard: { backgroundColor: '#111', padding: 15, borderRadius: 10 },
+    destLabel: { color: '#666', fontSize: 10 },
+    destName: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+    navButton: {
+        backgroundColor: '#FFD700', marginTop: 15, padding: 15,
+        borderRadius: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10
+    },
+    navButtonText: { fontWeight: 'bold', color: '#000' }
+});
 
 export default CargaViagem;
