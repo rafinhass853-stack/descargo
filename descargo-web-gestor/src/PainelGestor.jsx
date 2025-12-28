@@ -5,7 +5,7 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
     Truck, Users, LayoutDashboard, ClipboardList, 
     LogOut, Fuel, Settings, UserCheck, Bell, Container,
-    MapPin 
+    MapPin, FileText 
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -15,10 +15,11 @@ import Veiculos from './Veiculos';
 import Carretas from './Carretas';
 import Notificacoes from './Notificacoes';
 import ClientesPontos from './ClientesPontos';
-import Folgas from './Folgas'; // <-- Nova Importação
+import Folgas from './Folgas';
 
-// Importação do Dashboard Principal
+// Importação dos Dashboards
 import DashboardGeral from './DashboardGeral';
+import DashboardCargas from './DashboardCargas'; // <-- Novo Dashboard Relatório
 
 const PainelGestor = () => {
     const [motoristasOnline, setMotoristasOnline] = useState([]);
@@ -26,7 +27,6 @@ const PainelGestor = () => {
     const [menuAtivo, setMenuAtivo] = useState('dashboard');
 
     useEffect(() => {
-        // 1. Monitoramento de quem está enviando sinal GPS (localizacao_realtime)
         const qLoc = query(collection(db, "localizacao_realtime"));
         const unsubscribeLoc = onSnapshot(qLoc, (snapshot) => {
             const lista = [];
@@ -36,7 +36,6 @@ const PainelGestor = () => {
             setMotoristasOnline(lista);
         });
 
-        // 2. Monitoramento do Total de Cadastros (cadastro_motoristas)
         const qCad = query(collection(db, "cadastro_motoristas"));
         const unsubscribeCad = onSnapshot(qCad, (snapshot) => {
             setTotalMotoristas(snapshot.size);
@@ -59,13 +58,16 @@ const PainelGestor = () => {
                             styles={styles} 
                         />;
             
+            case 'relatorio_viagens': // <-- Novo Caso
+                return <DashboardCargas />;
+            
             case 'cargas': return <PainelCargas />;
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
             case 'clientes_pontos': return <ClientesPontos />;
             case 'notificacoes': return <Notificacoes />;
-            case 'folgas': return <Folgas />; // <-- Caso Adicionado
+            case 'folgas': return <Folgas />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
         }
     };
@@ -77,6 +79,11 @@ const PainelGestor = () => {
                 <nav style={styles.nav}>
                     <div onClick={() => setMenuAtivo('dashboard')} style={menuAtivo === 'dashboard' ? styles.navItemAtivo : styles.navItem}>
                         <LayoutDashboard size={18} /> Monitoramento
+                    </div>
+
+                    {/* Novo Botão de Relatório de Viagens */}
+                    <div onClick={() => setMenuAtivo('relatorio_viagens')} style={menuAtivo === 'relatorio_viagens' ? styles.navItemAtivo : styles.navItem}>
+                        <FileText size={18} /> Relatório de Viagens
                     </div>
 
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
@@ -104,7 +111,6 @@ const PainelGestor = () => {
                     <div style={styles.navItem}><Fuel size={18} /> Dash Combustível</div>
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
                     
-                    {/* Botão de Folgas Ajustado */}
                     <div onClick={() => setMenuAtivo('folgas')} style={menuAtivo === 'folgas' ? styles.navItemAtivo : styles.navItem}>
                         <UserCheck size={18} />Folgas
                     </div>

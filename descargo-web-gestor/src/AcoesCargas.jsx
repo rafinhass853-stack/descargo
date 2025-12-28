@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2 } from 'lucide-react';
+import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2, Truck, Container } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, addDoc, serverTimestamp, 
@@ -21,24 +21,52 @@ const db = getFirestore(app);
 
 const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   const [motoristas, setMotoristas] = useState([]);
+  const [veiculos, setVeiculos] = useState([]); // Novo estado para cavalos
+  const [carretas, setCarretas] = useState([]); // Novo estado para carretas
   const [busca, setBusca] = useState('');
   const [processando, setProcessando] = useState(null);
   const [carregando, setCarregando] = useState(true);
 
   useEffect(() => {
-    const q = query(
+    // Listener Motoristas
+    const qMot = query(
       collection(db, "cadastro_motoristas"), 
       where("status", "==", "ATIVO"), 
       orderBy("nome", "asc")
     );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsubMot = onSnapshot(qMot, (snapshot) => {
       setMotoristas(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
       setCarregando(false);
     }, () => setCarregando(false));
 
-    return () => unsubscribe();
+    // Listener Veículos (Cavalos)
+    const unsubVeic = onSnapshot(collection(db, "cadastro_veiculos"), (snapshot) => {
+      setVeiculos(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    // Listener Carretas
+    const unsubCarr = onSnapshot(collection(db, "carretas"), (snapshot) => {
+      setCarretas(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    });
+
+    return () => {
+      unsubMot();
+      unsubVeic();
+      unsubCarr();
+    };
   }, []);
+
+  // Função para buscar o conjunto de placas do motorista
+  const getConjuntoMotorista = (motoristaId) => {
+    if (!motoristaId) return null;
+    const cavalo = veiculos.find(v => v.motorista_id === motoristaId);
+    const carreta = carretas.find(c => c.motorista_id === motoristaId);
+    return {
+      cavalo: cavalo ? cavalo.placa : '---',
+      carreta: carreta ? carreta.placa : '---'
+    };
+  };
 
   const desvincularCarga = async () => {
     if (!window.confirm(`Deseja remover o vínculo da DT ${cargaSelecionada?.dt}?`)) return;
@@ -71,19 +99,19 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
     try {
       const emailLimpo = motorista.email_app?.toLowerCase().trim() || "";
       const cargaId = cargaSelecionada?.id;
-      
-      // IMPORTANTE: O App filtra pelo UID do motorista. 
-      // Se no seu cadastro o campo for 'uid', usamos ele. Se for o id do doc, usamos motorista.id.
       const motoristaUID = motorista.uid || motorista.id;
 
-      // 1. Criar registro em notificacoes_cargas
+      // Pegar placas atuais para enviar na notificação
+      const conjunto = getConjuntoMotorista(motorista.id);
+
       await addDoc(collection(db, "notificacoes_cargas"), {
         cargaId: cargaId || "N/A",
         motoristaId: motoristaUID,
         motoristaEmail: emailLimpo,
         motoristaNome: motorista.nome,
         dt: cargaSelecionada?.dt || "S/DT",
-        carreta: cargaSelecionada?.carreta || "Não Informada",
+        cavalo: conjunto?.cavalo || "---", // Enviando placa do cavalo
+        carreta: conjunto?.carreta || "---", // Enviando placa da carreta
         peso: cargaSelecionada?.peso || "0",
         origem: cargaSelecionada?.origemCidade || "",
         destino: cargaSelecionada?.destinoCidade || "",
@@ -98,12 +126,11 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
         timestamp: serverTimestamp()
       });
 
-      // 2. Atualizar a Ordem de Serviço (Isso é o que o App escuta!)
       const cargaRef = doc(db, "ordens_servico", cargaId);
       await updateDoc(cargaRef, {
-        motoristaId: motoristaUID, // O ID que o motorista usa para logar no App
+        motoristaId: motoristaUID,
         motoristaNome: motorista.nome,
-        status: "PENDENTE ACEITE", // O App agora reconhece este status
+        status: "PENDENTE ACEITE",
         atribuidoEm: serverTimestamp()
       });
 
@@ -161,26 +188,41 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
           <div className="col-span-2 flex justify-center py-10">
             <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
           </div>
-        ) : filtrados.map((mot) => (
-          <button
-            key={mot.id}
-            onClick={() => enviarCargaAoMotorista(mot)}
-            disabled={processando}
-            className="flex items-center justify-between p-3 bg-white/[0.02] hover:bg-yellow-500 group rounded-xl border border-white/5 transition-all"
-          >
-            <div className="text-left overflow-hidden">
-              <h4 className="text-zinc-100 font-bold text-[11px] uppercase truncate group-hover:text-black">{mot.nome}</h4>
-              <div className="flex items-center gap-1 text-[9px] text-zinc-500 group-hover:text-black/70 font-medium">
-                <MapPin size={10} /> {mot.cidade || 'Base'}
+        ) : filtrados.map((mot) => {
+          const conjunto = getConjuntoMotorista(mot.id);
+          return (
+            <button
+              key={mot.id}
+              onClick={() => enviarCargaAoMotorista(mot)}
+              disabled={processando}
+              className="flex items-center justify-between p-3 bg-white/[0.02] hover:bg-yellow-500 group rounded-xl border border-white/5 transition-all"
+            >
+              <div className="text-left overflow-hidden flex-1">
+                <h4 className="text-zinc-100 font-bold text-[11px] uppercase truncate group-hover:text-black">{mot.nome}</h4>
+                <div className="flex flex-col mt-1 gap-1">
+                  <div className="flex items-center gap-1 text-[9px] text-zinc-500 group-hover:text-black/70 font-medium">
+                    <MapPin size={10} /> {mot.cidade || 'Base'}
+                  </div>
+                  {conjunto && (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 text-[8px] text-yellow-500/70 group-hover:text-black/80 font-bold">
+                        <Truck size={10} /> {conjunto.cavalo}
+                      </span>
+                      <span className="flex items-center gap-1 text-[8px] text-blue-400/70 group-hover:text-black/80 font-bold">
+                        <Container size={10} /> {conjunto.carreta}
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-            {processando === mot.id ? (
-               <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
-            ) : (
-               <ArrowRight size={14} className="text-yellow-500 group-hover:text-black" />
-            )}
-          </button>
-        ))}
+              {processando === mot.id ? (
+                 <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
+              ) : (
+                 <ArrowRight size={14} className="text-yellow-500 group-hover:text-black" />
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {cargaSelecionada?.motoristaNome && (

@@ -4,7 +4,10 @@ import {
   query, orderBy, doc, updateDoc, deleteDoc 
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { Truck, Plus, Trash2, Gauge, Box, Edit3, CheckCircle } from 'lucide-react';
+import { 
+  Truck, Plus, Trash2, Gauge, Box, Edit3, 
+  CheckCircle, UserPlus, XCircle 
+} from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -21,23 +24,39 @@ const db = getFirestore(app);
 
 export default function Veiculos() {
   const [veiculos, setVeiculos] = useState([]);
+  const [motoristas, setMotoristas] = useState([]); // Lista para o dropdown
   const [editandoId, setEditandoId] = useState(null);
   const [novoVeiculo, setNovoVeiculo] = useState({
     placa: '',
     tipo: 'Truck',
     capacidade_tanque: '',
     modelo: '',
-    status: 'DISPONÍVEL'
+    status: 'DISPONÍVEL',
+    motorista_id: '',
+    motorista_nome: 'SEM MOTORISTA'
   });
 
   useEffect(() => {
-    const q = query(collection(db, "cadastro_veiculos"), orderBy("placa", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // 1. Monitoramento de Veículos
+    const qV = query(collection(db, "cadastro_veiculos"), orderBy("placa", "asc"));
+    const unsubscribeV = onSnapshot(qV, (snapshot) => {
       const lista = [];
       snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
       setVeiculos(lista);
     });
-    return () => unsubscribe();
+
+    // 2. Monitoramento de Motoristas (para o Select)
+    const qM = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
+    const unsubscribeM = onSnapshot(qM, (snapshot) => {
+      const lista = [];
+      snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+      setMotoristas(lista);
+    });
+
+    return () => {
+      unsubscribeV();
+      unsubscribeM();
+    };
   }, []);
 
   const salvarVeiculo = async (e) => {
@@ -54,7 +73,15 @@ export default function Veiculos() {
       } else {
         await addDoc(collection(db, "cadastro_veiculos"), novoVeiculo);
       }
-      setNovoVeiculo({ placa: '', tipo: 'Truck', capacidade_tanque: '', modelo: '', status: 'DISPONÍVEL' });
+      setNovoVeiculo({ 
+        placa: '', 
+        tipo: 'Truck', 
+        capacidade_tanque: '', 
+        modelo: '', 
+        status: 'DISPONÍVEL',
+        motorista_id: '',
+        motorista_nome: 'SEM MOTORISTA'
+      });
     } catch (e) {
       console.error("Erro:", e);
     }
@@ -72,11 +99,25 @@ export default function Veiculos() {
     }
   };
 
+  const handleSelectMotorista = (e) => {
+    const id = e.target.value;
+    if (!id) {
+      setNovoVeiculo({ ...novoVeiculo, motorista_id: '', motorista_nome: 'SEM MOTORISTA' });
+    } else {
+      const mot = motoristas.find(m => m.id === id);
+      setNovoVeiculo({ 
+        ...novoVeiculo, 
+        motorista_id: id, 
+        motorista_nome: mot.nome 
+      });
+    }
+  };
+
   return (
     <div style={styles.container}>
       <h2 style={styles.titulo}>Gestão de Veículos (Cavalos)</h2>
 
-      {/* Formulário de Cadastro (Layout igual ao Carretas) */}
+      {/* Formulário de Cadastro */}
       <form onSubmit={salvarVeiculo} style={styles.form}>
         <div style={styles.inputGroup}>
           <label style={styles.label}>Placa</label>
@@ -90,11 +131,30 @@ export default function Veiculos() {
 
         <div style={styles.inputGroup}>
           <label style={styles.label}>Tipo</label>
-          <select style={styles.input} value={novoVeiculo.tipo} onChange={e => setNovoVeiculo({...novoVeiculo, tipo: e.target.value})}>
+          <select 
+            style={styles.input} 
+            value={novoVeiculo.tipo} 
+            onChange={e => setNovoVeiculo({...novoVeiculo, tipo: e.target.value})}
+          >
             <option value="Toco">Toco</option>
             <option value="Trucado">Trucado</option>
             <option value="Truck">Truck</option>
             <option value="Carreta">Carreta/Cavalo</option>
+          </select>
+        </div>
+
+        {/* CAMPO DE ASSOCIAÇÃO DE MOTORISTA */}
+        <div style={styles.inputGroup}>
+          <label style={styles.label}>Associar Motorista</label>
+          <select 
+            style={{...styles.input, color: novoVeiculo.motorista_id ? '#FFD700' : '#888'}} 
+            value={novoVeiculo.motorista_id} 
+            onChange={handleSelectMotorista}
+          >
+            <option value="">-- Sem Motorista --</option>
+            {motoristas.map(m => (
+              <option key={m.id} value={m.id}>{m.nome}</option>
+            ))}
           </select>
         </div>
 
@@ -125,7 +185,17 @@ export default function Veiculos() {
                 {editandoId ? 'Atualizar' : 'Cadastrar'}
             </button>
             {editandoId && (
-                <button type="button" onClick={() => {setEditandoId(null); setNovoVeiculo({placa: '', tipo: 'Truck', capacidade_tanque: '', modelo: '', status: 'DISPONÍVEL'})}} style={{...styles.btnAdicionar, backgroundColor: '#e74c3c'}}>
+                <button 
+                  type="button" 
+                  onClick={() => {
+                    setEditandoId(null); 
+                    setNovoVeiculo({
+                      placa: '', tipo: 'Truck', capacidade_tanque: '', 
+                      modelo: '', status: 'DISPONÍVEL', motorista_id: '', motorista_nome: 'SEM MOTORISTA'
+                    })
+                  }} 
+                  style={{...styles.btnAdicionar, backgroundColor: '#e74c3c'}}
+                >
                     Cancelar
                 </button>
             )}
@@ -135,7 +205,7 @@ export default function Veiculos() {
       {/* Lista de Veículos em Cards */}
       <div style={styles.grid}>
         {veiculos.map((v) => (
-          <div key={v.id} style={styles.card}>
+          <div key={v.id} style={{...styles.card, borderLeft: v.motorista_id ? '4px solid #3498db' : '4px solid #FFD700'}}>
             <div style={styles.cardHeader}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <Truck size={24} color="#FFD700" />
@@ -151,6 +221,18 @@ export default function Veiculos() {
                 <div style={{...styles.badge, backgroundColor: v.status === 'DISPONÍVEL' ? '#2ecc71' : '#f1c40f'}}>
                     {v.status}
                 </div>
+
+                {/* VISUALIZAÇÃO DO MOTORISTA NO CARD */}
+                <div style={styles.motoristaBox}>
+                  <UserPlus size={14} color={v.motorista_id ? "#3498db" : "#666"} />
+                  <div style={{display: 'flex', flexDirection: 'column'}}>
+                    <span style={{fontSize: '10px', color: '#666', fontWeight: 'bold'}}>MOTORISTA:</span>
+                    <span style={{fontSize: '13px', color: v.motorista_id ? '#3498db' : '#888', fontWeight: 'bold'}}>
+                      {v.motorista_nome || 'SEM MOTORISTA'}
+                    </span>
+                  </div>
+                </div>
+
                 <p style={styles.info}><Box size={14} /> <strong>Tipo:</strong> {v.tipo}</p>
                 <p style={styles.info}><Gauge size={14} /> <strong>Tanque:</strong> {v.capacidade_tanque} L</p>
                 <p style={styles.info}><Truck size={14} /> <strong>Modelo:</strong> {v.modelo}</p>
@@ -206,7 +288,6 @@ const styles = {
     backgroundColor: '#111', 
     borderRadius: '12px', 
     padding: '18px', 
-    borderLeft: '4px solid #FFD700',
     border: '1px solid #222'
   },
   cardHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' },
@@ -214,6 +295,16 @@ const styles = {
   btnIconEdit: { background: 'none', border: 'none', color: '#3498db', cursor: 'pointer' },
   btnIconDelete: { background: 'none', border: 'none', color: '#ff4d4d', cursor: 'pointer' },
   cardBody: { display: 'flex', flexDirection: 'column', gap: '10px' },
+  motoristaBox: {
+    backgroundColor: '#0a0a0a',
+    padding: '10px',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    border: '1px dashed #333',
+    marginBottom: '5px'
+  },
   info: { margin: 0, fontSize: '14px', color: '#ccc', display: 'flex', alignItems: 'center', gap: '8px' },
   badge: { 
     alignSelf: 'flex-start',

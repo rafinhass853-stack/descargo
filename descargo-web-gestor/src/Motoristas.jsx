@@ -7,7 +7,7 @@ import { initializeApp, getApps, getApp } from "firebase/app";
 import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { 
   User, Phone, MapPin, CreditCard, ShieldCheck, Mail, 
-  Key, Edit, Power, Eye, EyeOff, Fingerprint, Award 
+  Key, Edit, Power, Eye, EyeOff, Award, Truck, Container 
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -26,6 +26,8 @@ const auth = getAuth(app);
 
 export default function Motoristas() {
   const [motoristas, setMotoristas] = useState([]);
+  const [veiculos, setVeiculos] = useState([]);
+  const [carretas, setCarretas] = useState([]);
   const [editandoId, setEditandoId] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [verSenhas, setVerSenhas] = useState(false);
@@ -36,14 +38,42 @@ export default function Motoristas() {
   });
 
   useEffect(() => {
-    const q = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    // 1. Monitorar Motoristas
+    const qM = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
+    const unsubM = onSnapshot(qM, (snapshot) => {
       const lista = [];
       snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
       setMotoristas(lista);
     });
-    return () => unsubscribe();
+
+    // 2. Monitorar Veículos para identificar associações
+    const qV = query(collection(db, "cadastro_veiculos"));
+    const unsubV = onSnapshot(qV, (snapshot) => {
+      const lista = [];
+      snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+      setVeiculos(lista);
+    });
+
+    // 3. Monitorar Carretas para identificar associações
+    const qC = query(collection(db, "carretas"));
+    const unsubC = onSnapshot(qC, (snapshot) => {
+      const lista = [];
+      snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+      setCarretas(lista);
+    });
+
+    return () => { unsubM(); unsubV(); unsubC(); };
   }, []);
+
+  // Função para encontrar a placa associada ao motorista nas outras coleções
+  const getPlacasAssociadas = (motoristaId) => {
+    const veiculo = veiculos.find(v => v.motorista_id === motoristaId);
+    const carreta = carretas.find(c => c.motorista_id === motoristaId);
+    return {
+      cavalo: veiculo ? veiculo.placa : '---',
+      carreta: carreta ? carreta.placa : '---'
+    };
+  };
 
   const salvarMotorista = async () => {
     if (!novoMotorista.nome || !novoMotorista.cpf || !novoMotorista.email_app || !novoMotorista.senha_app) {
@@ -140,38 +170,48 @@ export default function Motoristas() {
             <tr style={styles.headerTab}>
               <th style={styles.th}>STATUS</th>
               <th style={styles.th}>NOME</th>
+              <th style={styles.th}>CONJUNTO (PLACA)</th>
               <th style={styles.th}>CPF</th>
               <th style={styles.th}>WHATSAPP</th>
               <th style={styles.th}>CNH</th>
-              <th style={styles.th}>MOPP</th>
               <th style={styles.th}>CIDADE</th>
               <th style={styles.th}>E-MAIL</th>
               <th style={styles.th}>SENHA</th>
-              <th style={styles.th}>UID</th>
               <th style={styles.th}>AÇÕES</th>
             </tr>
           </thead>
           <tbody>
-            {motoristas.map(m => (
-              <tr key={m.id} style={styles.linha}>
-                <td style={styles.td}><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
-                <td style={{...styles.td, fontWeight: 'bold'}}>{m.nome.toUpperCase()}</td>
-                <td style={styles.td}>{m.cpf}</td>
-                <td style={styles.td}>{m.telefone}</td>
-                <td style={{...styles.td, color: '#FFD700', fontWeight: 'bold'}}>{m.cnh_cat}</td>
-                <td style={styles.td}>{m.mopp}</td>
-                <td style={styles.td}>{m.cidade}</td>
-                <td style={{...styles.td, color: '#FFD700'}}>{m.email_app}</td>
-                <td style={styles.td}>{verSenhas ? m.senha_app : '****'}</td>
-                <td style={{...styles.td, fontSize: '9px', opacity: 0.5}}>{m.uid || '---'}</td>
-                <td style={styles.td}>
-                  <div style={{display: 'flex', gap: '5px'}}>
-                    <button onClick={() => prepararEdicao(m)} style={styles.btnIcon}><Edit size={14}/></button>
-                    <button onClick={() => alternarStatus(m.id, m.status)} style={{...styles.btnIcon, color: m.status === 'ATIVO' ? '#e74c3c' : '#2ecc71'}}><Power size={14}/></button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {motoristas.map(m => {
+              const conjunto = getPlacasAssociadas(m.id);
+              return (
+                <tr key={m.id} style={styles.linha}>
+                  <td style={styles.td}><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
+                  <td style={{...styles.td, fontWeight: 'bold'}}>{m.nome.toUpperCase()}</td>
+                  <td style={styles.td}>
+                    <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
+                      <span style={{fontSize: '10px', color: '#FFD700', display: 'flex', alignItems: 'center', gap: '4px'}}>
+                        <Truck size={10}/> {conjunto.cavalo}
+                      </span>
+                      <span style={{fontSize: '10px', color: '#3498db', display: 'flex', alignItems: 'center', gap: '4px'}}>
+                        <Container size={10}/> {conjunto.carreta}
+                      </span>
+                    </div>
+                  </td>
+                  <td style={styles.td}>{m.cpf}</td>
+                  <td style={styles.td}>{m.telefone}</td>
+                  <td style={{...styles.td, color: '#FFD700', fontWeight: 'bold'}}>{m.cnh_cat}</td>
+                  <td style={styles.td}>{m.cidade}</td>
+                  <td style={{...styles.td, color: '#FFD700'}}>{m.email_app}</td>
+                  <td style={styles.td}>{verSenhas ? m.senha_app : '****'}</td>
+                  <td style={styles.td}>
+                    <div style={{display: 'flex', gap: '5px'}}>
+                      <button onClick={() => prepararEdicao(m)} style={styles.btnIcon}><Edit size={14}/></button>
+                      <button onClick={() => alternarStatus(m.id, m.status)} style={{...styles.btnIcon, color: m.status === 'ATIVO' ? '#e74c3c' : '#2ecc71'}}><Power size={14}/></button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -185,7 +225,7 @@ const styles = {
   titulo: { color: '#FFD700', fontSize: '16px', borderLeft: '4px solid #FFD700', paddingLeft: '10px' },
   btnRevelar: { backgroundColor: '#111', color: '#FFD700', border: '1px solid #FFD700', padding: '8px 15px', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '8px' },
   cardForm: { backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '12px', border: '1px solid #222', marginBottom: '25px' },
-  gridForm: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px' },
+  gridForm: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' },
   campo: { display: 'flex', flexDirection: 'column', gap: '5px' },
   label: { color: '#666', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '5px' },
   input: { backgroundColor: '#111', border: '1px solid #333', color: '#FFF', padding: '10px', borderRadius: '6px', fontSize: '13px', outline: 'none' },
