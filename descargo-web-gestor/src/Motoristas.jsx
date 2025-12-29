@@ -8,7 +8,7 @@ import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { 
   User, Phone, MapPin, CreditCard, ShieldCheck, Mail, 
   Key, Edit, Power, Eye, EyeOff, Award, Truck, Container 
-} from 'lucide-react'; // CORRIGIDO: de lucide-center para lucide-react
+} from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -86,7 +86,6 @@ export default function Motoristas() {
         alert("Cadastro atualizado!");
         setEditandoId(null);
       } else {
-        // Criar acesso no Firebase Auth
         const userCredential = await createUserWithEmailAndPassword(
           auth, 
           novoMotorista.email_app, 
@@ -94,7 +93,6 @@ export default function Motoristas() {
         );
         const uid = userCredential.user.uid;
 
-        // Salvar no Firestore com o UID vinculado
         await addDoc(collection(db, "cadastro_motoristas"), { 
           ...novoMotorista, 
           uid: uid 
@@ -178,10 +176,9 @@ export default function Motoristas() {
             <tr style={styles.headerTab}>
               <th style={styles.th}>STATUS</th>
               <th style={styles.th}>NOME</th>
-              <th style={styles.th}>IDENTIFICADORES (ID / UID)</th>
               <th style={styles.th}>CONJUNTO (PLACA)</th>
               <th style={styles.th}>CPF</th>
-              <th style={styles.th}>E-MAIL</th>
+              <th style={styles.th}>E-MAIL / SENHA</th>
               <th style={styles.th}>AÇÕES</th>
             </tr>
           </thead>
@@ -193,10 +190,6 @@ export default function Motoristas() {
                   <td style={styles.td}><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
                   <td style={{...styles.td, fontWeight: 'bold'}}>{m.nome.toUpperCase()}</td>
                   <td style={styles.td}>
-                    <div style={{fontSize: '9px', color: '#666'}}>DOC ID: {m.id}</div>
-                    <div style={{fontSize: '9px', color: '#FFD700'}}>AUTH UID: {m.uid || '---'}</div>
-                  </td>
-                  <td style={styles.td}>
                     <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
                       <span style={{fontSize: '10px', color: '#FFD700', display: 'flex', alignItems: 'center', gap: '4px'}}>
                         <Truck size={10}/> {conjunto.cavalo}
@@ -207,7 +200,10 @@ export default function Motoristas() {
                     </div>
                   </td>
                   <td style={styles.td}>{m.cpf}</td>
-                  <td style={{...styles.td, color: '#FFD700'}}>{m.email_app}</td>
+                  <td style={{...styles.td, color: '#FFD700'}}>
+                    <div>{m.email_app}</div>
+                    {verSenhas && <div style={{fontSize: '10px', color: '#FFF', marginTop: '4px'}}>Senha: {m.senha_app}</div>}
+                  </td>
                   <td style={styles.td}>
                     <div style={{display: 'flex', gap: '5px'}}>
                       <button onClick={() => prepararEdicao(m)} style={styles.btnIcon}><Edit size={14}/></button>

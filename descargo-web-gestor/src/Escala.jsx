@@ -6,10 +6,10 @@ import {
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   Save, User, ChevronLeft, ChevronRight, 
-  AlertCircle, MessageSquare, Bell 
+  Trash2 
 } from 'lucide-react';
 
-// --- CONFIGURAÇÃO FIREBASE (Exatamente igual ao seu Veiculos.jsx) ---
+// --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -27,34 +27,39 @@ export default function Escala() {
   const [escalaAtual, setEscalaAtual] = useState({});
   const [dataFiltro, setDataFiltro] = useState(new Date());
   
-  // Estado unificado para facilitar o controle
   const [form, setForm] = useState({
-    motorista_id: '',
+    motorista_id: '', // Este agora será o UID do Auth
     motorista_nome: '',
     status: 'P',
     obs: '',
     diaPendente: null
   });
 
-  // 1. Carrega Motoristas
+  // 1. Carrega Motoristas (Garante que pegamos o campo 'uid' do documento)
   useEffect(() => {
     const q = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
     const unsub = onSnapshot(q, (snapshot) => {
       const lista = [];
-      snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+      snapshot.forEach((doc) => {
+        const dados = doc.data();
+        // PRIORIDADE: Usar o campo 'uid' salvo dentro do documento
+        lista.push({ 
+          id: dados.uid || doc.id, 
+          ...dados 
+        });
+      });
       setMotoristas(lista);
     });
     return () => unsub();
   }, []);
 
-  // 2. Monitora Escala quando o motorista é alterado
+  // 2. Monitora Escala em tempo real
   useEffect(() => {
     if (!form.motorista_id) {
       setEscalaAtual({});
       return;
     }
 
-    // Acessando a sub-coleção 'escala' dentro do motorista
     const caminhoEscala = collection(db, "cadastro_motoristas", form.motorista_id, "escala");
     const unsubEscala = onSnapshot(caminhoEscala, (snapshot) => {
       const dados = {};
@@ -67,26 +72,39 @@ export default function Escala() {
     return () => unsubEscala();
   }, [form.motorista_id]);
 
-  // Função para selecionar motorista (Lógica dos Veículos)
+  // Alteração do Select para usar o UID (Conforme imagem enviada)
   const handleSelectMotorista = (e) => {
-    const id = e.target.value;
-    if (!id) {
+    const uidSelecionado = e.target.value;
+    if (!uidSelecionado) {
       setForm({ ...form, motorista_id: '', motorista_nome: '', diaPendente: null });
     } else {
-      const mot = motoristas.find(m => m.id === id);
-      setForm({ ...form, motorista_id: id, motorista_nome: mot.nome, diaPendente: null });
+      const mot = motoristas.find(m => m.uid === uidSelecionado || m.id === uidSelecionado);
+      setForm({ 
+        ...form, 
+        motorista_id: uidSelecionado, 
+        motorista_nome: mot?.nome || '', 
+        diaPendente: null 
+      });
     }
   };
 
-  // FUNÇÃO DE SALVAMENTO REVISADA
+  // Botão Limpar (Solicitado na imagem)
+  const limparFormulario = () => {
+    setForm({
+      ...form,
+      status: 'P',
+      obs: '',
+      diaPendente: null
+    });
+  };
+
   const salvarEscala = async () => {
     if (!form.motorista_id || !form.diaPendente) {
-      alert("Selecione um motorista e clique em um dia no calendário!");
+      alert("Selecione um motorista e um dia!");
       return;
     }
 
     try {
-      // Definindo as cores e legendas com base no status selecionado
       const opcoesStatus = {
         'P': { label: 'Trabalhado', color: '#2ecc71' },
         'DS': { label: 'Descanso', color: '#ff85a2' },
@@ -98,12 +116,9 @@ export default function Escala() {
       };
 
       const infoStatus = opcoesStatus[form.status];
-
-      // REFERÊNCIA DIRETA AO DOCUMENTO
-      // Exemplo: cadastro_motoristas / gnN76... / escala / 2025-12-29
       const escalaDocRef = doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente);
 
-      const dadosParaGravar = {
+      await setDoc(escalaDocRef, {
         motoristaId: form.motorista_id,
         motoristaNome: form.motorista_nome,
         status: form.status,
@@ -111,20 +126,16 @@ export default function Escala() {
         legenda: infoStatus.label,
         obs: form.obs,
         dataReferencia: form.diaPendente,
-        dataRegistro: new Date().toISOString()
-      };
+        dataRegistro: new Date().toISOString(),
+        ajustePendente: false // Limpa pendência ao salvar
+      }, { merge: true });
 
-      // Comando de gravação
-      await setDoc(escalaDocRef, dadosParaGravar);
-
-      alert(`Sucesso! Escala de ${form.motorista_nome} gravada.`);
-      
-      // Limpa campos após salvar
+      alert(`Escala de ${form.motorista_nome} atualizada!`);
       setForm({ ...form, diaPendente: null, obs: '' });
 
     } catch (error) {
-      console.error("Erro crítico ao salvar:", error);
-      alert("Erro ao gravar no Firebase. Verifique o console.");
+      console.error("Erro ao salvar:", error);
+      alert("Erro ao gravar. Verifique se o ID do motorista está correto.");
     }
   };
 
@@ -150,7 +161,9 @@ export default function Escala() {
         <label style={styles.label}>Motorista</label>
         <select style={styles.input} value={form.motorista_id} onChange={handleSelectMotorista}>
           <option value="">Selecione...</option>
-          {motoristas.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+          {motoristas.map(m => (
+            <option key={m.id} value={m.uid || m.id}>{m.nome}</option>
+          ))}
         </select>
 
         {form.motorista_id && (
@@ -176,9 +189,14 @@ export default function Escala() {
               onChange={e => setForm({...form, obs: e.target.value})} 
             />
 
-            <button onClick={salvarEscala} style={styles.saveBtn}>
-              <Save size={18} /> GRAVAR NO BANCO
-            </button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button onClick={salvarEscala} style={styles.saveBtn}>
+                <Save size={18} /> GRAVAR
+              </button>
+              <button onClick={limparFormulario} style={styles.clearBtn}>
+                <Trash2 size={18} />
+              </button>
+            </div>
           </>
         )}
       </div>
@@ -203,11 +221,12 @@ export default function Escala() {
                   ...styles.dayBox,
                   backgroundColor: dado ? dado.color : '#0a0a0a',
                   opacity: item ? 1 : 0,
-                  border: selecionado ? '2px solid #FFD700' : '1px solid #1a1a1a'
+                  border: selecionado ? '2px solid #FFD700' : (dado?.ajustePendente ? '2px dashed #FFD700' : '1px solid #1a1a1a')
                 }}
               >
                 <span style={{color: dado ? '#000' : '#444', fontWeight: 'bold'}}>{item?.dia}</span>
-                {dado && <span style={styles.statusTag}>{dado.status}</span>}
+                {dado?.status && <span style={styles.statusTag}>{dado.status}</span>}
+                {dado?.ajustePendente && <span style={{fontSize: '8px', color: '#000'}}>SOLICITADO</span>}
               </div>
             );
           })}
@@ -227,7 +246,8 @@ const styles = {
   statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', marginBottom: '15px' },
   statusBtn: { padding: '8px 0', border: '1px solid #333', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' },
   textarea: { width: '100%', height: '60px', backgroundColor: '#000', border: '1px solid #333', color: '#fff', borderRadius: '6px', padding: '10px', marginBottom: '15px' },
-  saveBtn: { width: '100%', backgroundColor: '#FFD700', color: '#000', padding: '12px', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' },
+  saveBtn: { flex: 1, backgroundColor: '#FFD700', color: '#000', padding: '12px', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' },
+  clearBtn: { width: '50px', backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '8px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' },
   calHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   navBtn: { backgroundColor: '#111', border: '1px solid #222', color: '#fff', padding: '5px 10px', borderRadius: '6px', cursor: 'pointer' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' },

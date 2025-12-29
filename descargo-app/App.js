@@ -254,18 +254,29 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
+  // AJUSTE: Sincronização robusta para evitar "Sem Sinal"
   const sincronizarComFirestore = async (extra = {}) => {
-    const cur = auth.currentUser; if (!cur) return;
+    const cur = auth.currentUser; 
+    if (!cur) return;
     try {
-      await setDoc(doc(db, "localizacao_realtime", cur.uid), {
-        motoristaId: cur.uid, email: cur.email,
-        latitude: extra.latitude || location?.latitude || null,
-        longitude: extra.longitude || location?.longitude || null,
-        statusOperacional: extra.statusOperacional || statusOperacional,
-        statusJornada: extra.statusJornada || statusJornada,
+      const dados = {
+        motoristaId: cur.uid,
+        email: cur.email,
         ultimaAtualizacao: serverTimestamp(),
-      }, { merge: true });
-    } catch (e) { console.error(e); }
+      };
+
+      // Só atualiza os campos se eles existirem (evita null no Firestore)
+      if (extra.latitude || location?.latitude) {
+        dados.latitude = extra.latitude || location.latitude;
+        dados.longitude = extra.longitude || location.longitude;
+      }
+
+      // Garante que o status nunca vá vazio ou nulo
+      dados.statusOperacional = extra.statusOperacional || statusOperacional || "Sem programação";
+      dados.statusJornada = extra.statusJornada || statusJornada || "fora da jornada";
+
+      await setDoc(doc(db, "localizacao_realtime", cur.uid), dados, { merge: true });
+    } catch (e) { console.error("Erro sincronia:", e); }
   };
 
   useEffect(() => {
@@ -281,7 +292,9 @@ export default function App() {
               { text: "ACEITAR", onPress: () => { Vibration.cancel(); confirmarCarga(id, d); }}
             ]);
           }
-          if (d.status === "ACEITO") setCargaAtiva({ id, ...d });
+          if (d.status === "ACEITO") {
+            setCargaAtiva({ id, ...d });
+          }
         });
         if (snap.empty) setCargaAtiva(null);
       });
@@ -292,7 +305,11 @@ export default function App() {
   const confirmarCarga = async (id, d) => {
     const op = d.tipoViagem === 'VAZIO' ? 'Viagem vazio' : 'Viagem carregado';
     await updateDoc(doc(db, "ordens_servico", id), { status: "ACEITO", aceitoEm: serverTimestamp() });
-    setCargaAtiva({ id, ...d }); setStatusOperacional(op); sincronizarComFirestore({ statusOperacional: op });
+    
+    // Sincroniza status operacional imediatamente ao aceitar
+    setStatusOperacional(op);
+    setCargaAtiva({ id, ...d }); 
+    sincronizarComFirestore({ statusOperacional: op });
   };
 
   const finalizarViagem = async () => {
@@ -301,8 +318,11 @@ export default function App() {
       { text: "Não", style: "cancel" },
       { text: "Sim", onPress: async () => {
           await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), { status: "CONCLUÍDO", concluidoEm: serverTimestamp() });
-          setCargaAtiva(null); setRotaCoords([]); setDestinoCoord(null); setStatusOperacional("Sem programação");
-          sincronizarComFirestore({ statusOperacional: "Sem programação" });
+          setCargaAtiva(null); setRotaCoords([]); setDestinoCoord(null); 
+          
+          const statusReset = "Sem programação";
+          setStatusOperacional(statusReset);
+          sincronizarComFirestore({ statusOperacional: statusReset });
       }}
     ]);
   };
@@ -330,7 +350,10 @@ export default function App() {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
         sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, timeInterval: 15000, distanceInterval: 20 }, (loc) => {
-          if (loc.coords) { setLocation(loc.coords); sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }); }
+          if (loc.coords) { 
+            setLocation(loc.coords); 
+            sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }); 
+          }
         });
       })();
     }
@@ -389,7 +412,7 @@ export default function App() {
           </View>
         );
       case 'viagens': return <MinhasViagens auth={auth} db={db} />;
-      case 'escala': return <Escala auth={auth} db={db} />;
+      case 'escala': return <Escala auth={auth} db={db} />; 
       case 'jornada': return <Jornada auth={auth} db={db} />;
       case 'perfil': return <Conta auth={auth} db={db} />;
       default: return null;
@@ -415,7 +438,6 @@ export default function App() {
               </TouchableOpacity>
             </View>
 
-            {/* SEÇÃO DE REDES SOCIAIS COM OS LINKS CORRETOS */}
             <View style={styles.socialContainer}>
               <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
                 <FontAwesome name="linkedin-square" size={32} color="#0e76a8" />
