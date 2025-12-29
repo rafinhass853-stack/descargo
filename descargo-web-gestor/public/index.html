@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DESCARGO - Painel Gestor</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        body { margin: 0; padding: 0; background: #0a0a0a; font-family: 'Segoe UI', Roboto, sans-serif; color: white; overflow: hidden; }
+        .container { display: flex; height: 100vh; width: 100vw; }
+        
+        /* Barra Lateral */
+        #sidebar { width: 300px; background: #111; border-right: 1px solid #222; display: flex; flex-direction: column; z-index: 10; }
+        .header { padding: 20px; border-bottom: 1px solid #222; text-align: center; }
+        .header h1 { color: #FFD700; margin: 0; font-size: 24px; letter-spacing: 2px; }
+        .header p { font-size: 10px; color: #666; text-transform: uppercase; margin-top: 5px; }
+
+        /* Lista de Motoristas */
+        .driver-list { flex: 1; overflow-y: auto; padding: 10px; }
+        .driver-card { background: #1a1a1a; padding: 12px; border-radius: 8px; margin-bottom: 10px; border: 1px solid #333; cursor: pointer; transition: 0.3s; }
+        .driver-card:hover { border-color: #FFD700; }
+        .driver-name { font-weight: bold; font-size: 14px; color: #fff; display: block; }
+        .driver-status { font-size: 11px; margin-top: 4px; display: flex; align-items: center; }
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+
+        /* Mapa */
+        #map { flex: 1; background: #000; }
+
+        /* Custom Popup Leaflet */
+        .leaflet-popup-content-wrapper { background: #111; color: #fff; border: 1px solid #FFD700; }
+        .leaflet-popup-tip { background: #FFD700; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div id="sidebar">
+            <div class="header">
+                <h1>DESCARGO</h1>
+                <p>Gestão de Frota em Tempo Real</p>
+            </div>
+            <div class="driver-list" id="driver-list">
+                <p style="text-align:center; color:#444; font-size:12px; margin-top:20px;">Aguardando motoristas online...</p>
+            </div>
+        </div>
+
+        <div id="map"></div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4",
+            authDomain: "descargo-4090a.firebaseapp.com",
+            projectId: "descargo-4090a",
+            storageBucket: "descargo-4090a.firebasestorage.app",
+            messagingSenderId: "345718597496",
+            appId: "1:345718597496:android:fd1b81db2c11ea523bca8d"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        // Inicializa o mapa
+        var map = L.map('map', { zoomControl: false }).setView([-15.78, -47.92], 4);
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // CONFIGURAÇÃO DO MAPA SATÉLITE HÍBRIDO (Google Maps)
+        // 'y' = Satélite/Híbrido com nomes de ruas e estradas
+        L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains:['mt0','mt1','mt2','mt3'],
+            attribution: '© Google Maps'
+        }).addTo(map);
+
+        const driverMarkers = {};
+        const driverListDiv = document.getElementById('driver-list');
+
+        // Ícone customizado para o motorista no mapa (Círculo Amarelo)
+        const motoristaIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: `<div style="background-color:#FFD700; width:15px; height:15px; border-radius:50%; border:2px solid #fff; box-shadow: 0 0 5px rgba(0,0,0,0.5);"></div>`,
+            iconSize: [15, 15],
+            iconAnchor: [7, 7]
+        });
+
+        // ESCUTA O FIRESTORE EM TEMPO REAL
+        onSnapshot(collection(db, "localizacao_realtime"), (snapshot) => {
+            driverListDiv.innerHTML = ''; 
+
+            snapshot.forEach((doc) => {
+                const data = doc.data();
+                const id = doc.id;
+
+                if (data.latitude && data.longitude) {
+                    const pos = [data.latitude, data.longitude];
+                    const isOnline = data.statusJornada === 'dentro da jornada';
+
+                    // 1. Atualizar ou Criar Marcador no Mapa
+                    if (driverMarkers[id]) {
+                        driverMarkers[id].setLatLng(pos);
+                    } else {
+                        driverMarkers[id] = L.marker(pos, { icon: motoristaIcon }).addTo(map)
+                            .bindPopup(`<b>${data.email}</b><br>Status: ${data.statusOperacional}`);
+                    }
+
+                    // 2. Criar Card na Barra Lateral
+                    const card = document.createElement('div');
+                    card.className = 'driver-card';
+                    card.onclick = () => map.flyTo(pos, 16); // Zoom maior ao clicar no card
+                    card.innerHTML = `
+                        <span class="driver-name">${data.email.split('@')[0].toUpperCase()}</span>
+                        <div class="driver-status">
+                            <div class="status-dot" style="background: ${isOnline ? '#2ecc71' : '#444'}"></div>
+                            <span style="color: #888">${data.statusOperacional}</span>
+                        </div>
+                    `;
+                    driverListDiv.appendChild(card);
+                }
+            });
+
+            if (snapshot.empty) {
+                driverListDiv.innerHTML = '<p style="text-align:center; color:#444; font-size:12px; margin-top:20px;">Nenhum motorista ativo.</p>';
+            }
+        });
+    </script>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</body>
+</html>

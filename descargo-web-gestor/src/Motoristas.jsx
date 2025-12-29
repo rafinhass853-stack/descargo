@@ -8,7 +8,7 @@ import { getAuth, createUserWithEmailAndPassword } from "firebase/auth";
 import { 
   User, Phone, MapPin, CreditCard, ShieldCheck, Mail, 
   Key, Edit, Power, Eye, EyeOff, Award, Truck, Container 
-} from 'lucide-react';
+} from 'lucide-react'; // CORRIGIDO: de lucide-center para lucide-react
 
 // --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
@@ -38,15 +38,15 @@ export default function Motoristas() {
   });
 
   useEffect(() => {
-    // 1. Monitorar Motoristas
     const qM = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
     const unsubM = onSnapshot(qM, (snapshot) => {
       const lista = [];
-      snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+      snapshot.forEach((doc) => {
+        lista.push({ id: doc.id, ...doc.data() });
+      });
       setMotoristas(lista);
     });
 
-    // 2. Monitorar Veículos para identificar associações
     const qV = query(collection(db, "cadastro_veiculos"));
     const unsubV = onSnapshot(qV, (snapshot) => {
       const lista = [];
@@ -54,7 +54,6 @@ export default function Motoristas() {
       setVeiculos(lista);
     });
 
-    // 3. Monitorar Carretas para identificar associações
     const qC = query(collection(db, "carretas"));
     const unsubC = onSnapshot(qC, (snapshot) => {
       const lista = [];
@@ -65,7 +64,6 @@ export default function Motoristas() {
     return () => { unsubM(); unsubV(); unsubC(); };
   }, []);
 
-  // Função para encontrar a placa associada ao motorista nas outras coleções
   const getPlacasAssociadas = (motoristaId) => {
     const veiculo = veiculos.find(v => v.motorista_id === motoristaId);
     const carreta = carretas.find(c => c.motorista_id === motoristaId);
@@ -88,9 +86,19 @@ export default function Motoristas() {
         alert("Cadastro atualizado!");
         setEditandoId(null);
       } else {
-        const userCredential = await createUserWithEmailAndPassword(auth, novoMotorista.email_app, novoMotorista.senha_app);
+        // Criar acesso no Firebase Auth
+        const userCredential = await createUserWithEmailAndPassword(
+          auth, 
+          novoMotorista.email_app, 
+          novoMotorista.senha_app
+        );
         const uid = userCredential.user.uid;
-        await addDoc(collection(db, "cadastro_motoristas"), { ...novoMotorista, uid: uid });
+
+        // Salvar no Firestore com o UID vinculado
+        await addDoc(collection(db, "cadastro_motoristas"), { 
+          ...novoMotorista, 
+          uid: uid 
+        });
         alert("Motorista cadastrado com sucesso!");
       }
       setNovoMotorista({
@@ -170,13 +178,10 @@ export default function Motoristas() {
             <tr style={styles.headerTab}>
               <th style={styles.th}>STATUS</th>
               <th style={styles.th}>NOME</th>
+              <th style={styles.th}>IDENTIFICADORES (ID / UID)</th>
               <th style={styles.th}>CONJUNTO (PLACA)</th>
               <th style={styles.th}>CPF</th>
-              <th style={styles.th}>WHATSAPP</th>
-              <th style={styles.th}>CNH</th>
-              <th style={styles.th}>CIDADE</th>
               <th style={styles.th}>E-MAIL</th>
-              <th style={styles.th}>SENHA</th>
               <th style={styles.th}>AÇÕES</th>
             </tr>
           </thead>
@@ -188,6 +193,10 @@ export default function Motoristas() {
                   <td style={styles.td}><span style={{...styles.badge, backgroundColor: m.status === 'ATIVO' ? '#2ecc71' : '#e74c3c'}}>{m.status}</span></td>
                   <td style={{...styles.td, fontWeight: 'bold'}}>{m.nome.toUpperCase()}</td>
                   <td style={styles.td}>
+                    <div style={{fontSize: '9px', color: '#666'}}>DOC ID: {m.id}</div>
+                    <div style={{fontSize: '9px', color: '#FFD700'}}>AUTH UID: {m.uid || '---'}</div>
+                  </td>
+                  <td style={styles.td}>
                     <div style={{display: 'flex', flexDirection: 'column', gap: '2px'}}>
                       <span style={{fontSize: '10px', color: '#FFD700', display: 'flex', alignItems: 'center', gap: '4px'}}>
                         <Truck size={10}/> {conjunto.cavalo}
@@ -198,11 +207,7 @@ export default function Motoristas() {
                     </div>
                   </td>
                   <td style={styles.td}>{m.cpf}</td>
-                  <td style={styles.td}>{m.telefone}</td>
-                  <td style={{...styles.td, color: '#FFD700', fontWeight: 'bold'}}>{m.cnh_cat}</td>
-                  <td style={styles.td}>{m.cidade}</td>
                   <td style={{...styles.td, color: '#FFD700'}}>{m.email_app}</td>
-                  <td style={styles.td}>{verSenhas ? m.senha_app : '****'}</td>
                   <td style={styles.td}>
                     <div style={{display: 'flex', gap: '5px'}}>
                       <button onClick={() => prepararEdicao(m)} style={styles.btnIcon}><Edit size={14}/></button>
@@ -232,7 +237,7 @@ const styles = {
   btnSalvar: { flex: 1, padding: '12px', border: 'none', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', color: '#000' },
   btnCancelar: { padding: '12px 20px', backgroundColor: '#e74c3c', border: 'none', borderRadius: '6px', color: '#FFF', cursor: 'pointer' },
   wrapperTabela: { backgroundColor: '#0a0a0a', borderRadius: '12px', border: '1px solid #222', overflowX: 'auto' },
-  tabela: { width: '100%', borderCollapse: 'collapse', minWidth: '1200px' },
+  tabela: { width: '100%', borderCollapse: 'collapse', minWidth: '1000px' },
   headerTab: { backgroundColor: '#111', textAlign: 'left' },
   th: { padding: '15px', color: '#666', fontSize: '10px', fontWeight: 'bold' },
   td: { padding: '12px 15px', fontSize: '12px', borderBottom: '1px solid #111' },

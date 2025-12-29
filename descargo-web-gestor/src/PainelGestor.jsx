@@ -5,7 +5,7 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
     Truck, Users, LayoutDashboard, ClipboardList, 
     LogOut, Fuel, Settings, UserCheck, Bell, Container,
-    MapPin, FileText 
+    MapPin, FileText, Route, CalendarDays // Importado ícone para Escala
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -16,10 +16,12 @@ import Carretas from './Carretas';
 import Notificacoes from './Notificacoes';
 import ClientesPontos from './ClientesPontos';
 import Folgas from './Folgas';
+import Roteirizacao from './Roteirizacao';
+import Escala from './Escala'; // Importando a nova tela de gestão de escala
 
 // Importação dos Dashboards
 import DashboardGeral from './DashboardGeral';
-import DashboardCargas from './DashboardCargas'; // <-- Novo Dashboard Relatório
+import DashboardCargas from './DashboardCargas';
 
 const PainelGestor = () => {
     const [motoristasOnline, setMotoristasOnline] = useState([]);
@@ -58,8 +60,14 @@ const PainelGestor = () => {
                             styles={styles} 
                         />;
             
-            case 'relatorio_viagens': // <-- Novo Caso
+            case 'relatorio_viagens':
                 return <DashboardCargas />;
+            
+            case 'roteirizacao':
+                return <Roteirizacao />;
+            
+            case 'escala': // Novo caso para a tela de Escala
+                return <Escala />;
             
             case 'cargas': return <PainelCargas />;
             case 'veiculos': return <Veiculos />;
@@ -81,12 +89,20 @@ const PainelGestor = () => {
                         <LayoutDashboard size={18} /> Monitoramento
                     </div>
 
-                    {/* Novo Botão de Relatório de Viagens */}
+                    {/* Novo item de menu: Escala Motoristas */}
+                    <div onClick={() => setMenuAtivo('escala')} style={menuAtivo === 'escala' ? styles.navItemAtivo : styles.navItem}>
+                        <CalendarDays size={18} /> Escala Motoristas
+                    </div>
+
                     <div onClick={() => setMenuAtivo('relatorio_viagens')} style={menuAtivo === 'relatorio_viagens' ? styles.navItemAtivo : styles.navItem}>
                         <FileText size={18} /> Relatório de Viagens
                     </div>
 
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
+
+                    <div onClick={() => setMenuAtivo('roteirizacao')} style={menuAtivo === 'roteirizacao' ? styles.navItemAtivo : styles.navItem}>
+                        <Route size={18} /> Roteirização
+                    </div>
 
                     <div onClick={() => setMenuAtivo('cargas')} style={menuAtivo === 'cargas' ? styles.navItemAtivo : styles.navItem}>
                         <ClipboardList size={18} /> Painel de Cargas
@@ -145,14 +161,6 @@ const styles = {
     main: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
     header: { height: '60px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 30px', color: '#444', fontSize: '11px' },
     content: { padding: '25px', flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' },
-    titulo: { color: '#FFD700', fontSize: '22px', margin: 0, borderLeft: '4px solid #FFD700', paddingLeft: '15px' },
-    grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px' },
-    card: { backgroundColor: '#111', padding: '15px', borderRadius: '10px', border: '1px solid #222', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-    cardInfo: { display: 'flex', flexDirection: 'column' },
-    cardLabel: { fontSize: '10px', color: '#666', fontWeight: 'bold', textTransform: 'uppercase' },
-    cardValor: { fontSize: '24px', fontWeight: 'bold', marginTop: '5px', color: '#FFF' },
-    mapaContainer: { borderRadius: '15px', overflow: 'hidden', border: '1px solid #333', backgroundColor: '#111' },
-    mapaHeader: { padding: '10px 15px', borderBottom: '1px solid #222', color: '#888', fontSize: '12px' }
 };
 
 export default PainelGestor;

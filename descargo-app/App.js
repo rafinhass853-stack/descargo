@@ -20,8 +20,13 @@ import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
 import { FontAwesome, MaterialCommunityIcons, Ionicons, MaterialIcons } from '@expo/vector-icons';
 
+// Componentes do Sistema
 import Conta from './Conta'; 
+import Jornada from './Jornada';
+import Escala from './Escala';
+import MinhasViagens from './MinhasViagens';
 
+// Firebase Imports
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -45,6 +50,7 @@ import {
   and 
 } from 'firebase/firestore';
 
+// Configuração Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -100,7 +106,7 @@ export default function App() {
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
-  // --- HTML DO MAPA ---
+  // --- HTML DO MAPA (LEAFLET + OSRM) ---
   const generateLeafletHtml = () => {
     const lat = location?.latitude || -23.5505;
     const lng = location?.longitude || -46.6333;
@@ -331,6 +337,65 @@ export default function App() {
     return () => { if (sub) sub.remove(); };
   }, [isLoggedIn]);
 
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'painel':
+        return (
+          <View style={{flex: 1}}>
+            <WebView 
+              ref={webviewRef} originWhitelist={['*']}
+              source={{ html: generateLeafletHtml() }}
+              style={{ flex: 1, backgroundColor: '#000' }}
+            />
+            <View style={styles.topFloatingHeader}>
+              <TouchableOpacity style={styles.floatingStatus} onPress={() => {
+                Alert.alert("Status", "Alterar operação:", [
+                  { text: "Sem programação", onPress: () => { setStatusOperacional("Sem programação"); sincronizarComFirestore({statusOperacional: "Sem programação"}); }},
+                  { text: "Manutenção", onPress: () => { setStatusOperacional("Manutenção"); sincronizarComFirestore({statusOperacional: "Manutenção"}); }},
+                  { text: "Cancelar", style: "cancel" }
+                ]);
+              }}>
+                <View style={[styles.dot, {backgroundColor: '#FFD700'}]} />
+                <Text style={styles.floatingStatusText}>{statusOperacional.toUpperCase()}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.floatingStatus, {borderColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444'}]} onPress={() => {
+                const n = statusJornada === 'dentro da jornada' ? 'fora da jornada' : 'dentro da jornada';
+                setStatusJornada(n); sincronizarComFirestore({ statusJornada: n });
+              }}>
+                <View style={[styles.dot, {backgroundColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444'}]} />
+                <Text style={styles.floatingStatusText}>{statusJornada === 'dentro da jornada' ? 'ONLINE' : 'OFFLINE'}</Text>
+              </TouchableOpacity>
+            </View>
+            {cargaAtiva && (
+              <View style={[styles.floatingRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderLeftWidth: 5}]}>
+                <View style={styles.routeHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.routeLabel}>VIAGEM ATIVA • DT {cargaAtiva.dt || '---'}</Text>
+                    <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
+                  </View>
+                  <TouchableOpacity onPress={finalizarViagem}>
+                    <Ionicons name="checkmark-done-circle" size={45} color={chegouAoDestino ? "#2ecc71" : "#333"} />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+            <TouchableOpacity style={styles.floatingGps} onPress={() => {
+                if (webviewRef.current && location) {
+                  webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude }));
+                }
+            }}>
+              <MaterialIcons name="my-location" size={24} color="#FFD700" />
+            </TouchableOpacity>
+          </View>
+        );
+      case 'viagens': return <MinhasViagens auth={auth} db={db} />;
+      case 'escala': return <Escala auth={auth} db={db} />;
+      case 'jornada': return <Jornada auth={auth} db={db} />;
+      case 'perfil': return <Conta auth={auth} db={db} />;
+      default: return null;
+    }
+  };
+
   if (!isLoggedIn) {
     return (
       <SafeAreaView style={styles.loginContainer}>
@@ -349,6 +414,8 @@ export default function App() {
                 {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>ENTRAR NO SISTEMA</Text>}
               </TouchableOpacity>
             </View>
+
+            {/* SEÇÃO DE REDES SOCIAIS COM OS LINKS CORRETOS */}
             <View style={styles.socialContainer}>
               <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
                 <FontAwesome name="linkedin-square" size={32} color="#0e76a8" />
@@ -373,78 +440,31 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
-      
-      {activeTab === 'painel' ? (
-        <View style={{flex: 1}}>
-          <WebView 
-            ref={webviewRef} originWhitelist={['*']}
-            source={{ html: generateLeafletHtml() }}
-            style={{ flex: 1, backgroundColor: '#000' }}
-          />
-
-          {/* STATUS FLUTUANTES NO TOPO */}
-          <View style={styles.topFloatingHeader}>
-            <TouchableOpacity style={styles.floatingStatus} onPress={() => {
-              Alert.alert("Status", "Alterar operação:", [
-                { text: "Sem programação", onPress: () => { setStatusOperacional("Sem programação"); sincronizarComFirestore({statusOperacional: "Sem programação"}); }},
-                { text: "Manutenção", onPress: () => { setStatusOperacional("Manutenção"); sincronizarComFirestore({statusOperacional: "Manutenção"}); }},
-                { text: "Cancelar", style: "cancel" }
-              ]);
-            }}>
-              <View style={[styles.dot, {backgroundColor: '#FFD700'}]} />
-              <Text style={styles.floatingStatusText}>{statusOperacional.toUpperCase()}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity style={[styles.floatingStatus, {borderColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444'}]} onPress={() => {
-              const n = statusJornada === 'dentro da jornada' ? 'fora da jornada' : 'dentro da jornada';
-              setStatusJornada(n); sincronizarComFirestore({ statusJornada: n });
-            }}>
-              <View style={[styles.dot, {backgroundColor: statusJornada === 'dentro da jornada' ? '#2ecc71' : '#444'}]} />
-              <Text style={styles.floatingStatusText}>{statusJornada === 'dentro da jornada' ? 'ONLINE' : 'OFFLINE'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* CARD DE CARGA FLUTUANTE */}
-          {cargaAtiva && (
-            <View style={[styles.floatingRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderLeftWidth: 5}]}>
-              <View style={styles.routeHeader}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.routeLabel}>VIAGEM ATIVA • DT {cargaAtiva.dt || '---'}</Text>
-                  <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
-                </View>
-                <TouchableOpacity onPress={finalizarViagem}>
-                  <Ionicons name="checkmark-done-circle" size={45} color={chegouAoDestino ? "#2ecc71" : "#333"} />
-                </TouchableOpacity>
-              </View>
-            </View>
-          )}
-
-          {/* BOTÃO GPS FLUTUANTE */}
-          <TouchableOpacity style={styles.floatingGps} onPress={() => {
-             if (webviewRef.current && location) {
-               webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude }));
-             }
-          }}>
-            <MaterialIcons name="my-location" size={24} color="#FFD700" />
-          </TouchableOpacity>
-        </View>
-      ) : (
-        <View style={{flex: 1, paddingTop: 60}}><Conta auth={auth} db={db} /></View>
-      )}
-
-      {/* MENU FLUTUANTE (FLOATING NAV) */}
+      <View style={{flex: 1, paddingTop: activeTab === 'painel' ? 0 : 60}}>
+        {renderContent()}
+      </View>
       <View style={styles.floatingNavContainer}>
         <View style={styles.floatingNav}>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('painel')}>
             <Ionicons name="map" size={24} color={activeTab === 'painel' ? "#FFD700" : "#666"} />
             {activeTab === 'painel' && <View style={styles.activeIndicator} />}
           </TouchableOpacity>
-
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('viagens')}>
+            <MaterialCommunityIcons name="truck-delivery" size={24} color={activeTab === 'viagens' ? "#FFD700" : "#666"} />
+            {activeTab === 'viagens' && <View style={styles.activeIndicator} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('escala')}>
+            <MaterialCommunityIcons name="calendar-clock" size={24} color={activeTab === 'escala' ? "#FFD700" : "#666"} />
+            {activeTab === 'escala' && <View style={styles.activeIndicator} />}
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('jornada')}>
+            <Ionicons name="timer" size={24} color={activeTab === 'jornada' ? "#FFD700" : "#666"} />
+            {activeTab === 'jornada' && <View style={styles.activeIndicator} />}
+          </TouchableOpacity>
           <TouchableOpacity style={styles.navItem} onPress={() => setActiveTab('perfil')}>
             <MaterialCommunityIcons name="shield-account" size={24} color={activeTab === 'perfil' ? "#FFD700" : "#666"} />
             {activeTab === 'perfil' && <View style={styles.activeIndicator} />}
           </TouchableOpacity>
-
           <TouchableOpacity style={styles.navItem} onPress={handleLogout}>
             <Ionicons name="log-out" size={24} color="#ff4d4d" />
           </TouchableOpacity>
@@ -456,8 +476,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
-  
-  // LOGIN
   loginContainer: { flex: 1, backgroundColor: '#000' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 30, alignItems: 'center' },
   header: { alignItems: 'center', marginBottom: 50 },
@@ -468,25 +486,19 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#111', color: '#FFF', padding: 18, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#222', fontSize: 16 },
   button: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#000', fontWeight: '900', fontSize: 16 },
-  socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 30, marginTop: 40 },
+  socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 25, marginTop: 40 },
   signature: { color: '#444', fontSize: 11, textAlign: 'center', marginTop: 30, fontWeight: 'bold' },
-
-  // INTERFACE FLUTUANTE DO MAPA
   topFloatingHeader: { position: 'absolute', top: 50, left: 20, right: 20, flexDirection: 'row', gap: 10 },
   floatingStatus: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.85)', paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, borderWidth: 1, borderColor: '#222' },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   floatingStatusText: { color: '#FFF', fontSize: 10, fontWeight: '900' },
-
-  floatingRouteCard: { position: 'absolute', bottom: 100, left: 20, right: 20, backgroundColor: 'rgba(15,15,15,0.95)', borderRadius: 20, padding: 15, borderBottomWidth: 1, borderBottomColor: '#FFD70033', elevation: 5 },
+  floatingRouteCard: { position: 'absolute', bottom: 120, left: 20, right: 20, backgroundColor: 'rgba(15,15,15,0.95)', borderRadius: 20, padding: 15, borderBottomWidth: 1, borderBottomColor: '#FFD70033', elevation: 5 },
   routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', marginBottom: 2 },
   routeInfo: { color: '#FFF', fontSize: 18, fontWeight: '900' },
   routeHeader: { flexDirection: 'row', alignItems: 'center' },
-
-  floatingGps: { position: 'absolute', bottom: 180, right: 20, backgroundColor: 'rgba(0,0,0,0.9)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#222' },
-
-  // MENU DE NAVEGAÇÃO FLUTUANTE (ESTILO CÁPSULA)
+  floatingGps: { position: 'absolute', bottom: 200, right: 20, backgroundColor: 'rgba(0,0,0,0.9)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#222' },
   floatingNavContainer: { position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center' },
-  floatingNav: { flexDirection: 'row', backgroundColor: 'rgba(15,15,15,0.98)', paddingVertical: 12, paddingHorizontal: 30, borderRadius: 40, borderWidth: 1, borderColor: '#222', gap: 40, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10 },
-  navItem: { alignItems: 'center', justifyContent: 'center' },
+  floatingNav: { flexDirection: 'row', backgroundColor: 'rgba(15,15,15,0.98)', paddingVertical: 12, paddingHorizontal: 15, borderRadius: 40, borderWidth: 1, borderColor: '#222', gap: 15, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10 },
+  navItem: { alignItems: 'center', justifyContent: 'center', width: 42 },
   activeIndicator: { position: 'absolute', bottom: -8, width: 4, height: 4, borderRadius: 2, backgroundColor: '#FFD700' }
 });
