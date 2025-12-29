@@ -72,7 +72,6 @@ try {
 }
 
 const db = getFirestore(app);
-const { width, height } = Dimensions.get('window');
 
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
@@ -106,7 +105,7 @@ export default function App() {
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
-  // --- HTML DO MAPA (LEAFLET + OSRM) ---
+  // --- HTML DO MAPA (LEAFLET + GOOGLE SATELLITE) ---
   const generateLeafletHtml = () => {
     const lat = location?.latitude || -23.5505;
     const lng = location?.longitude || -46.6333;
@@ -136,10 +135,7 @@ export default function App() {
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style>
-          body { margin: 0; padding: 0; }
-          #map { height: 100vh; width: 100vw; background: #000; }
-        </style>
+        <style> body { margin: 0; padding: 0; } #map { height: 100vh; width: 100vw; background: #000; } </style>
       </head>
       <body>
         <div id="map"></div>
@@ -209,9 +205,16 @@ export default function App() {
   };
 
   useEffect(() => {
-    const atualizarDestino = async () => {
+    const atualizarDestinoERota = async () => {
       if (location && (geofenceAtiva || cargaAtiva)) {
-        if (geofenceAtiva?.centro?.lat) {
+        // Se a carga já vier com trajeto planejado (ROTOGRAMA IMPORTADO)
+        if (cargaAtiva?.trajeto && Array.isArray(cargaAtiva.trajeto) && cargaAtiva.trajeto.length > 0) {
+          setRotaCoords(cargaAtiva.trajeto);
+          const ultimo = cargaAtiva.trajeto[cargaAtiva.trajeto.length - 1];
+          setDestinoCoord({ latitude: ultimo.latitude, longitude: ultimo.longitude });
+        } 
+        // Caso contrário, tenta cercas ou cidades (AUTO-GERADO OSRM)
+        else if (geofenceAtiva?.centro?.lat) {
           const dLat = geofenceAtiva.centro.lat; const dLng = geofenceAtiva.centro.lng;
           setDestinoCoord({ latitude: dLat, longitude: dLng });
           buscarRotaOSRM(location, dLat, dLng);
@@ -227,7 +230,7 @@ export default function App() {
         }
       } else { setRotaCoords([]); setDestinoCoord(null); }
     };
-    atualizarDestino();
+    atualizarDestinoERota();
   }, [location?.latitude, geofenceAtiva, cargaAtiva]);
 
   useEffect(() => {
@@ -254,27 +257,17 @@ export default function App() {
     return () => unsubscribeAuth();
   }, []);
 
-  // AJUSTE: Sincronização robusta para evitar "Sem Sinal"
   const sincronizarComFirestore = async (extra = {}) => {
     const cur = auth.currentUser; 
     if (!cur) return;
     try {
-      const dados = {
-        motoristaId: cur.uid,
-        email: cur.email,
-        ultimaAtualizacao: serverTimestamp(),
-      };
-
-      // Só atualiza os campos se eles existirem (evita null no Firestore)
+      const dados = { motoristaId: cur.uid, email: cur.email, ultimaAtualizacao: serverTimestamp() };
       if (extra.latitude || location?.latitude) {
         dados.latitude = extra.latitude || location.latitude;
         dados.longitude = extra.longitude || location.longitude;
       }
-
-      // Garante que o status nunca vá vazio ou nulo
       dados.statusOperacional = extra.statusOperacional || statusOperacional || "Sem programação";
       dados.statusJornada = extra.statusJornada || statusJornada || "fora da jornada";
-
       await setDoc(doc(db, "localizacao_realtime", cur.uid), dados, { merge: true });
     } catch (e) { console.error("Erro sincronia:", e); }
   };
@@ -292,9 +285,7 @@ export default function App() {
               { text: "ACEITAR", onPress: () => { Vibration.cancel(); confirmarCarga(id, d); }}
             ]);
           }
-          if (d.status === "ACEITO") {
-            setCargaAtiva({ id, ...d });
-          }
+          if (d.status === "ACEITO") { setCargaAtiva({ id, ...d }); }
         });
         if (snap.empty) setCargaAtiva(null);
       });
@@ -305,11 +296,19 @@ export default function App() {
   const confirmarCarga = async (id, d) => {
     const op = d.tipoViagem === 'VAZIO' ? 'Viagem vazio' : 'Viagem carregado';
     await updateDoc(doc(db, "ordens_servico", id), { status: "ACEITO", aceitoEm: serverTimestamp() });
-    
-    // Sincroniza status operacional imediatamente ao aceitar
-    setStatusOperacional(op);
-    setCargaAtiva({ id, ...d }); 
+    setStatusOperacional(op); setCargaAtiva({ id, ...d }); 
     sincronizarComFirestore({ statusOperacional: op });
+  };
+
+  const solicitarRotaGestor = async () => {
+    if (!cargaAtiva) return;
+    try {
+      await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), {
+        solicitarRota: true,
+        solicitadoEm: serverTimestamp()
+      });
+      Alert.alert("Solicitado", "Aviso enviado ao painel operacional.");
+    } catch (e) { Alert.alert("Erro", "Falha ao solicitar."); }
   };
 
   const finalizarViagem = async () => {
@@ -319,9 +318,7 @@ export default function App() {
       { text: "Sim", onPress: async () => {
           await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), { status: "CONCLUÍDO", concluidoEm: serverTimestamp() });
           setCargaAtiva(null); setRotaCoords([]); setDestinoCoord(null); 
-          
-          const statusReset = "Sem programação";
-          setStatusOperacional(statusReset);
+          const statusReset = "Sem programação"; setStatusOperacional(statusReset);
           sincronizarComFirestore({ statusOperacional: statusReset });
       }}
     ]);
@@ -365,14 +362,10 @@ export default function App() {
       case 'painel':
         return (
           <View style={{flex: 1}}>
-            <WebView 
-              ref={webviewRef} originWhitelist={['*']}
-              source={{ html: generateLeafletHtml() }}
-              style={{ flex: 1, backgroundColor: '#000' }}
-            />
+            <WebView ref={webviewRef} originWhitelist={['*']} source={{ html: generateLeafletHtml() }} style={{ flex: 1, backgroundColor: '#000' }} />
             <View style={styles.topFloatingHeader}>
               <TouchableOpacity style={styles.floatingStatus} onPress={() => {
-                Alert.alert("Status", "Alterar operação:", [
+                Alert.alert("Status", "Alterar:", [
                   { text: "Sem programação", onPress: () => { setStatusOperacional("Sem programação"); sincronizarComFirestore({statusOperacional: "Sem programação"}); }},
                   { text: "Manutenção", onPress: () => { setStatusOperacional("Manutenção"); sincronizarComFirestore({statusOperacional: "Manutenção"}); }},
                   { text: "Cancelar", style: "cancel" }
@@ -393,8 +386,23 @@ export default function App() {
               <View style={[styles.floatingRouteCard, chegouAoDestino && {borderColor: '#2ecc71', borderLeftWidth: 5}]}>
                 <View style={styles.routeHeader}>
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.routeLabel}>VIAGEM ATIVA • DT {cargaAtiva.dt || '---'}</Text>
+                    <Text style={styles.routeLabel}>
+                       {cargaAtiva.trajeto?.length > 0 ? '🛣️ ROTA PLANEJADA' : '⚠️ VIAGEM SEM ROTA'} • DT {cargaAtiva.dt || '---'}
+                    </Text>
                     <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
+                    
+                    {!cargaAtiva.trajeto || cargaAtiva.trajeto.length === 0 ? (
+                      <TouchableOpacity 
+                        style={[styles.btnSolicitarRota, cargaAtiva.solicitarRota && { opacity: 0.6 }]} 
+                        onPress={solicitarRotaGestor}
+                        disabled={cargaAtiva.solicitarRota}
+                      >
+                        <MaterialIcons name="alt-route" size={14} color="#000" />
+                        <Text style={styles.btnSolicitarText}>
+                          {cargaAtiva.solicitarRota ? "ROTA SOLICITADA..." : "SOLICITAR CRIAÇÃO DA ROTA"}
+                        </Text>
+                      </TouchableOpacity>
+                    ) : null}
                   </View>
                   <TouchableOpacity onPress={finalizarViagem}>
                     <Ionicons name="checkmark-done-circle" size={45} color={chegouAoDestino ? "#2ecc71" : "#333"} />
@@ -403,9 +411,7 @@ export default function App() {
               </View>
             )}
             <TouchableOpacity style={styles.floatingGps} onPress={() => {
-                if (webviewRef.current && location) {
-                  webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude }));
-                }
+                if (webviewRef.current && location) { webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude })); }
             }}>
               <MaterialIcons name="my-location" size={24} color="#FFD700" />
             </TouchableOpacity>
@@ -435,21 +441,6 @@ export default function App() {
               <TextInput style={styles.input} placeholder="Senha" placeholderTextColor="#666" value={password} onChangeText={setPassword} secureTextEntry />
               <TouchableOpacity style={styles.button} onPress={handleLogin} disabled={loading}>
                 {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>ENTRAR NO SISTEMA</Text>}
-              </TouchableOpacity>
-            </View>
-
-            <View style={styles.socialContainer}>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.linkedin.com/in/rafael-araujo1992/')}>
-                <FontAwesome name="linkedin-square" size={32} color="#0e76a8" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.instagram.com/rafael.araujo1992/')}>
-                <FontAwesome name="instagram" size={32} color="#c13584" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('mailto:rafinhass853@gmail.com')}>
-                <FontAwesome name="envelope" size={32} color="#f39c12" />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={() => Linking.openURL('https://wa.me/5516988318626')}>
-                <FontAwesome name="whatsapp" size={32} color="#25D366" />
               </TouchableOpacity>
             </View>
             <Text style={styles.signature}>Desenvolvido por Rafael Araujo</Text>
@@ -508,7 +499,6 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#111', color: '#FFF', padding: 18, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#222', fontSize: 16 },
   button: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#000', fontWeight: '900', fontSize: 16 },
-  socialContainer: { flexDirection: 'row', justifyContent: 'center', gap: 25, marginTop: 40 },
   signature: { color: '#444', fontSize: 11, textAlign: 'center', marginTop: 30, fontWeight: 'bold' },
   topFloatingHeader: { position: 'absolute', top: 50, left: 20, right: 20, flexDirection: 'row', gap: 10 },
   floatingStatus: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.85)', paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, borderWidth: 1, borderColor: '#222' },
@@ -518,9 +508,11 @@ const styles = StyleSheet.create({
   routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', marginBottom: 2 },
   routeInfo: { color: '#FFF', fontSize: 18, fontWeight: '900' },
   routeHeader: { flexDirection: 'row', alignItems: 'center' },
+  btnSolicitarRota: { backgroundColor: '#FFD700', flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginTop: 10, alignSelf: 'flex-start', gap: 6 },
+  btnSolicitarText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
   floatingGps: { position: 'absolute', bottom: 200, right: 20, backgroundColor: 'rgba(0,0,0,0.9)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#222' },
   floatingNavContainer: { position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center' },
-  floatingNav: { flexDirection: 'row', backgroundColor: 'rgba(15,15,15,0.98)', paddingVertical: 12, paddingHorizontal: 15, borderRadius: 40, borderWidth: 1, borderColor: '#222', gap: 15, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10 },
+  floatingNav: { flexDirection: 'row', backgroundColor: 'rgba(15,15,15,0.98)', paddingVertical: 12, paddingHorizontal: 15, borderRadius: 40, borderWidth: 1, borderColor: '#222', gap: 15, elevation: 10 },
   navItem: { alignItems: 'center', justifyContent: 'center', width: 42 },
   activeIndicator: { position: 'absolute', bottom: -8, width: 4, height: 4, borderRadius: 2, backgroundColor: '#FFD700' }
 });

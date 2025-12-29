@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
 import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc } from "firebase/firestore";
-import { Plus, MapPin, Truck, UserPlus, Weight, Calendar, Trash2, Navigation, Settings as SettingsIcon, ClipboardList, Clock, Container } from 'lucide-react';
+import { Plus, MapPin, Truck, UserPlus, Weight, Calendar, Trash2, Navigation, Settings as SettingsIcon, ClipboardList, Clock, Container, Route, AlertTriangle } from 'lucide-react';
 
 import AcoesCargas from './AcoesCargas';
 
@@ -10,11 +10,14 @@ const PainelCargas = () => {
     const [clientesCadastrados, setClientesCadastrados] = useState([]);
     const [veiculos, setVeiculos] = useState([]); 
     const [carretas, setCarretas] = useState([]); 
+    const [rotasPlanejadas, setRotasPlanejadas] = useState([]);
     const [tipoViagem, setTipoViagem] = useState('CARREGADO');
+    
     const [novaCarga, setNovaCarga] = useState({
         dt: '', peso: '', perfilVeiculo: '', observacao: '',
         origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
         destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
+        trajeto: [] 
     });
 
     const [modalAberto, setModalAberto] = useState(false);
@@ -29,6 +32,14 @@ const PainelCargas = () => {
             setCargas(lista);
         });
 
+        // Monitorar Rotas Planejadas (Rotogramas)
+        const qRotas = query(collection(db, "rotas_planejadas"), orderBy("criadoEm", "desc"));
+        const unsubRotas = onSnapshot(qRotas, (snapshot) => {
+            const lista = [];
+            snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
+            setRotasPlanejadas(lista);
+        });
+
         // Monitorar Clientes
         const qClientes = query(collection(db, "cadastro_clientes_pontos"), orderBy("cliente", "asc"));
         const unsubClientes = onSnapshot(qClientes, (snapshot) => {
@@ -37,7 +48,7 @@ const PainelCargas = () => {
             setClientesCadastrados(lista);
         });
 
-        // Monitorar Cadastro de Veículos (Cavalos)
+        // Monitorar Veículos
         const unsubVeiculos = onSnapshot(collection(db, "cadastro_veiculos"), (snapshot) => {
             const lista = [];
             snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
@@ -52,23 +63,31 @@ const PainelCargas = () => {
         });
 
         return () => { 
-            unsubCargas(); 
-            unsubClientes(); 
-            unsubVeiculos();
-            unsubCarretas();
+            unsubCargas(); unsubRotas(); unsubClientes(); unsubVeiculos(); unsubCarretas();
         };
     }, []);
 
-    // FUNÇÃO CORRIGIDA COM OS NOMES DOS CAMPOS DO SEU FIREBASE
+    // Função para selecionar um rotograma e auto-preencher
+    const selecionarRotograma = (rotaId) => {
+        const rota = rotasPlanejadas.find(r => r.id === rotaId);
+        if (rota) {
+            setNovaCarga(prev => ({
+                ...prev,
+                origemCliente: rota.origem || '',
+                destinoCliente: rota.destino || '',
+                trajeto: rota.trajeto || [],
+                distanciaEstimada: rota.distancia || ''
+            }));
+            handleAutoPreencher(rota.origem, 'origem');
+            handleAutoPreencher(rota.destino, 'destino');
+        }
+    };
+
     const getConjuntoPlacas = (motoristaId) => {
         if (!motoristaId) return null;
-
-        // Procura nas coleções usando exatamente "motorista_id" como nas fotos
         const cavalo = veiculos.find(v => v.motorista_id === motoristaId);
         const carreta = carretas.find(c => c.motorista_id === motoristaId);
-
         if (!cavalo && !carreta) return null;
-
         return {
             cavalo: cavalo ? cavalo.placa : '---',
             carreta: carreta ? carreta.placa : '---'
@@ -76,11 +95,10 @@ const PainelCargas = () => {
     };
 
     const handleAutoPreencher = (valor, campo) => {
+        if (!valor) return;
         const campoNome = campo === 'origem' ? 'origemCliente' : 'destinoCliente';
         setNovaCarga(prev => ({ ...prev, [campoNome]: valor }));
-
         const clienteEncontrado = clientesCadastrados.find(c => c.cliente.toUpperCase() === valor.toUpperCase());
-
         if (clienteEncontrado) {
             if (campo === 'origem') {
                 setNovaCarga(prev => ({
@@ -106,18 +124,14 @@ const PainelCargas = () => {
         e.preventDefault();
         let prefixo = tipoViagem === 'MANUTENÇÃO' ? 'MT' : tipoViagem === 'VAZIO' ? 'VZ' : 'DT';
         const dtFinal = novaCarga.dt.trim() === '' ? `${prefixo}${Date.now().toString().slice(-6)}` : novaCarga.dt;
-
         const dadosParaSalvar = { ...novaCarga };
-        
         if (tipoViagem === 'VAZIO' || tipoViagem === 'MANUTENÇÃO') {
-            dadosParaSalvar.origemCliente = tipoViagem === 'VAZIO' ? 'PÁTIO / DESLOCAMENTO' : 'SAÍDA PARA OFICINA';
-            dadosParaSalvar.origemCnpj = '';
-            dadosParaSalvar.origemCidade = '';
-            dadosParaSalvar.origemData = new Date().toISOString();
+            if (!dadosParaSalvar.origemCliente) {
+                dadosParaSalvar.origemCliente = tipoViagem === 'VAZIO' ? 'PÁTIO / DESLOCAMENTO' : 'SAÍDA PARA OFICINA';
+            }
             dadosParaSalvar.peso = '0'; 
             dadosParaSalvar.perfilVeiculo = novaCarga.perfilVeiculo || tipoViagem;
         }
-
         try {
             await addDoc(collection(db, "ordens_servico"), {
                 ...dadosParaSalvar,
@@ -128,11 +142,11 @@ const PainelCargas = () => {
                 motoristaId: '',
                 criadoEm: serverTimestamp()
             });
-            
             setNovaCarga({
                 dt: '', peso: '', perfilVeiculo: '', observacao: '',
                 origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
                 destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
+                trajeto: []
             });
             alert(`Ordem de ${tipoViagem} lançada com sucesso!`);
         } catch (error) { 
@@ -170,7 +184,7 @@ const PainelCargas = () => {
                     <button key={tipo}
                         onClick={() => {
                             setTipoViagem(tipo);
-                            setNovaCarga(prev => ({...prev, destinoCliente: '', destinoCnpj: '', destinoCidade: '', peso: '', dt: ''}));
+                            setNovaCarga(prev => ({...prev, destinoCliente: '', destinoCnpj: '', destinoCidade: '', peso: '', dt: '', trajeto: []}));
                         }}
                         style={{...styles.tipoBtn, 
                             backgroundColor: tipoViagem === tipo ? (tipo === 'MANUTENÇÃO' ? '#e74c3c' : '#FFD700') : '#111', 
@@ -192,25 +206,40 @@ const PainelCargas = () => {
                 )}
 
                 <form onSubmit={handleSubmit} style={{ opacity: modalAberto ? 0.3 : 1, pointerEvents: modalAberto ? 'none' : 'auto' }}>
+                    <div style={styles.rotogramaSelectorContainer}>
+                        <label style={styles.labelRotograma}>
+                            <Route size={14} color="#FFD700"/> IMPORTAR ROTOGRAMA PLANEJADO:
+                        </label>
+                        <select 
+                            style={styles.selectRotograma}
+                            onChange={(e) => selecionarRotograma(e.target.value)}
+                            value=""
+                        >
+                            <option value="" disabled>Selecione o trecho planejado...</option>
+                            {rotasPlanejadas.map(rota => (
+                                <option key={rota.id} value={rota.id}>
+                                    {rota.origem.toUpperCase()} x {rota.destino.toUpperCase()} — ({rota.distancia} km)
+                                </option>
+                            ))}
+                        </select>
+                    </div>
+
                     <div style={{
                         ...styles.gridForm, 
                         gridTemplateColumns: tipoViagem === 'CARREGADO' ? 'repeat(3, 1fr)' : 'repeat(2, 1fr)' 
                     }}>
-                        
                         <div style={styles.formColumn}>
                             <h4 style={styles.columnTitle}><Weight size={14}/> INFORMAÇÕES</h4>
                             <input placeholder="Nº Documento (Opcional)" value={novaCarga.dt} onChange={e => setNovaCarga({...novaCarga, dt: e.target.value})} style={styles.input} />
-                            
                             {tipoViagem === 'CARREGADO' && (
                                 <input placeholder="Peso (ex: 32 Ton)" value={novaCarga.peso} onChange={e => setNovaCarga({...novaCarga, peso: e.target.value})} style={styles.input} required />
                             )}
-                            
                             <input placeholder="Placa / Tipo Veículo" value={novaCarga.perfilVeiculo} onChange={e => setNovaCarga({...novaCarga, perfilVeiculo: e.target.value})} style={styles.input} required />
                         </div>
 
-                        {tipoViagem === 'CARREGADO' && (
+                        {(tipoViagem === 'CARREGADO' || novaCarga.trajeto.length > 0) && (
                             <div style={styles.formColumn}>
-                                <h4 style={styles.columnTitle}><MapPin size={14} color="#FFD700"/> ORIGEM DA CARGA</h4>
+                                <h4 style={styles.columnTitle}><MapPin size={14} color="#FFD700"/> ORIGEM</h4>
                                 <input list="lista-clientes" placeholder="Nome do Local" value={novaCarga.origemCliente} onChange={e => handleAutoPreencher(e.target.value, 'origem')} style={styles.inputDestaqueOrigem} required />
                                 <input placeholder="CNPJ" value={novaCarga.origemCnpj} readOnly style={styles.inputReadOnly} />
                                 <input placeholder="Cidade/UF" value={novaCarga.origemCidade} readOnly style={styles.inputReadOnly} />
@@ -229,6 +258,12 @@ const PainelCargas = () => {
                             <input type="datetime-local" value={novaCarga.destinoData} onChange={e => setNovaCarga({...novaCarga, destinoData: e.target.value})} style={styles.inputDate} required />
                         </div>
                     </div>
+
+                    {novaCarga.trajeto.length > 0 && (
+                        <div style={styles.trajetoAviso}>
+                            <Route size={12} /> Rotograma importado: {novaCarga.trajeto.length} pontos de rota.
+                        </div>
+                    )}
 
                     <textarea 
                         placeholder={tipoViagem === 'MANUTENÇÃO' ? "Descreva os problemas ou peças a serem trocadas..." : "Observações importantes da viagem..."} 
@@ -258,8 +293,14 @@ const PainelCargas = () => {
                         <tbody>
                             {cargas.map(item => {
                                 const placas = getConjuntoPlacas(item.motoristaId);
+                                // Lógica de alerta: Solicitação ativa e sem trajeto
+                                const temSolicitacao = item.solicitarRota && (!item.trajeto || item.trajeto.length === 0);
+                                
                                 return (
-                                    <tr key={item.id} style={styles.tr}>
+                                    <tr key={item.id} style={{
+                                        ...styles.tr,
+                                        backgroundColor: temSolicitacao ? '#2a1a00' : 'transparent'
+                                    }}>
                                         <td style={styles.td}>
                                             <div style={{...styles.statusBadge, 
                                                 backgroundColor: item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#3d2b1f' : '#1b3d2b',
@@ -267,19 +308,26 @@ const PainelCargas = () => {
                                                 border: `1px solid ${item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : '#2ecc71'}`
                                             }}>{item.status === 'AGUARDANDO PROGRAMAÇÃO' ? 'AGUARDANDO' : (item.status || 'PROGRAMADA')}</div>
                                             <div style={styles.dtLabel}>{item.dt}</div>
+                                            
+                                            {temSolicitacao && (
+                                                <div style={styles.alertaRotaPendente}>
+                                                    <AlertTriangle size={10} /> ROTA SOLICITADA
+                                                </div>
+                                            )}
                                         </td>
                                         <td style={styles.td}>
                                             <div style={styles.infoCol}>
                                                 <span style={{...styles.textIcon, color: item.tipoViagem === 'MANUTENÇÃO' ? '#e74c3c' : item.tipoViagem === 'VAZIO' ? '#3498db' : '#ccc'}}>
                                                     {item.tipoViagem === 'MANUTENÇÃO' ? <SettingsIcon size={12}/> : item.tipoViagem === 'VAZIO' ? <Navigation size={12}/> : <Weight size={12}/>} 
                                                     {item.tipoViagem === 'CARREGADO' ? item.peso : item.tipoViagem}
+                                                    {item.trajeto?.length > 0 && <Route size={12} color="#2ecc71" title="Possui Rotograma"/>}
                                                 </span>
                                                 <span style={styles.textIcon}><Truck size={12}/> {item.perfilVeiculo}</span>
                                             </div>
                                         </td>
                                         <td style={styles.td}>
                                             <div style={styles.logisticaContainer}>
-                                                {item.tipoViagem === 'CARREGADO' && (
+                                                {(item.tipoViagem === 'CARREGADO' || item.origemCliente) && (
                                                     <>
                                                         <div style={styles.pontoInfo}>
                                                             <span style={styles.localName}><MapPin size={10} color="#FFD700"/> {item.origemCliente}</span>
@@ -315,7 +363,7 @@ const PainelCargas = () => {
                                         </td>
                                         <td style={styles.td}>
                                             <div style={styles.actionGroup}>
-                                                <button onClick={() => { setCargaParaAtribuir(item); setModalAberto(true); }} style={styles.circleBtn} title="Atribuir Motorista"><UserPlus size={16} /></button>
+                                                <button onClick={() => { setCargaParaAtribuir(item); setModalAberto(true); }} style={{...styles.circleBtn, backgroundColor: temSolicitacao ? '#FFD700' : '#333', color: temSolicitacao ? '#000' : '#fff'}} title="Atribuir Motorista / Editar"><UserPlus size={16} /></button>
                                                 <button onClick={() => { if(window.confirm("Deseja realmente excluir esta ordem?")) deleteDoc(doc(db, "ordens_servico", item.id)) }} style={styles.deleteBtn} title="Excluir"><Trash2 size={16} /></button>
                                             </div>
                                         </td>
@@ -330,7 +378,6 @@ const PainelCargas = () => {
     );
 };
 
-// ... (Estilos permanecem os mesmos que você já possui)
 const styles = {
     container: { padding: '20px', color: '#FFF', backgroundColor: '#050505', minHeight: '100vh', fontFamily: 'sans-serif' },
     header: { display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' },
@@ -339,6 +386,10 @@ const styles = {
     tipoViagemSelector: { display: 'flex', gap: '10px', marginBottom: '15px' },
     tipoBtn: { flex: 1, padding: '12px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '11px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', transition: '0.2s' },
     cardForm: { position: 'relative', backgroundColor: '#111', padding: '20px', borderRadius: '8px', border: '1px solid #222', marginBottom: '20px', minHeight: '320px' },
+    rotogramaSelectorContainer: { marginBottom: '20px', padding: '15px', backgroundColor: '#000', borderRadius: '6px', border: '1px dashed #444' },
+    labelRotograma: { fontSize: '11px', color: '#FFD700', marginBottom: '8px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
+    selectRotograma: { width: '100%', backgroundColor: '#0a0a0a', color: '#FFD700', border: '1px solid #333', padding: '12px', borderRadius: '4px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' },
+    trajetoAviso: { fontSize: '11px', color: '#2ecc71', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', backgroundColor: '#0a1a0a', borderRadius: '4px', border: '1px solid #1a3a1a' },
     gridForm: { display: 'grid', gap: '20px' },
     formColumn: { display: 'flex', flexDirection: 'column', gap: '8px' },
     columnTitle: { fontSize: '11px', color: '#FFD700', borderBottom: '1px solid #222', paddingBottom: '5px', display: 'flex', alignItems: 'center', gap: '5px' },
@@ -355,6 +406,7 @@ const styles = {
     table: { width: '100%', borderCollapse: 'collapse' },
     th: { padding: '15px', fontSize: '10px', color: '#555', borderBottom: '2px solid #222', textAlign: 'left', textTransform: 'uppercase' },
     td: { padding: '15px', borderBottom: '1px solid #1a1a1a', verticalAlign: 'middle' },
+    tr: { transition: '0.2s' },
     dtLabel: { fontSize: '11px', fontWeight: 'bold', marginTop: '5px', color: '#aaa' },
     statusBadge: { padding: '4px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', width: 'fit-content' },
     infoCol: { display: 'flex', flexDirection: 'column', gap: '4px' },
@@ -367,12 +419,13 @@ const styles = {
     seta: { color: '#333', fontWeight: 'bold' },
     semMotorista: { color: '#444', fontSize: '11px' },
     actionGroup: { display: 'flex', gap: '10px' },
-    circleBtn: { backgroundColor: '#FFD700', border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' },
+    circleBtn: { border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' },
     deleteBtn: { backgroundColor: '#221111', color: '#ff4444', border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' },
     containerResponsavel: { display: 'flex', flexDirection: 'column', gap: '5px' },
     motoristaAtribuido: { color: '#2ecc71', fontSize: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
     infoPlacas: { display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '17px' },
-    placaItem: { fontSize: '10px', color: '#999', display: 'flex', alignItems: 'center', gap: '4px' }
+    placaItem: { fontSize: '10px', color: '#999', display: 'flex', alignItems: 'center', gap: '4px' },
+    alertaRotaPendente: { color: '#FFD700', fontSize: '9px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px' }
 };
 
 export default PainelCargas;
