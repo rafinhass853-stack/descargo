@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   getFirestore, collection, onSnapshot, query, 
-  orderBy, doc, setDoc, deleteDoc, getDoc
+  orderBy, doc, setDoc, updateDoc, getDocs, where
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
-  Save, User, ChevronLeft, ChevronRight, 
-  Trash2, Calendar as CalIcon, AlertCircle, XCircle
+  Save, ChevronLeft, ChevronRight, 
+  Calendar as CalIcon, CheckCircle, Trash2, Info
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -22,8 +22,10 @@ const firebaseConfig = {
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const db = getFirestore(app);
 
-export default function Escala() {
+export default function AdminEscala() {
   const [motoristas, setMotoristas] = useState([]);
+  const [notificacoes, setNotificacoes] = useState({});
+  const [listaNotificacoes, setListaNotificacoes] = useState([]);
   const [escalaAtual, setEscalaAtual] = useState({});
   const [dataFiltro, setDataFiltro] = useState(new Date());
   
@@ -36,39 +38,67 @@ export default function Escala() {
   });
 
   const opcoesStatus = {
-    'P': { label: 'Trabalhado', color: '#2ecc71', bg: 'rgba(46, 204, 113, 0.2)' },
-    'DS': { label: 'Descanso', color: '#ff85a2', bg: 'rgba(255, 133, 162, 0.2)' },
-    'F': { label: 'Falta', color: '#e67e22', bg: 'rgba(230, 126, 34, 0.2)' },
-    'FE': { label: 'Férias', color: '#3498db', bg: 'rgba(52, 152, 219, 0.2)' },
-    'A': { label: 'Atestado', color: '#f1c40f', bg: 'rgba(241, 196, 15, 0.2)' },
-    'D': { label: 'Demitido', color: '#e74c3c', bg: 'rgba(231, 76, 60, 0.2)' },
-    'C1': { label: 'Contratado', color: '#00ced1', bg: 'rgba(0, 206, 209, 0.2)' },
+    'P': { label: 'Trabalhado', color: '#2ecc71' },
+    'DS': { label: 'Descanso', color: '#ff85a2' },
+    'F': { label: 'Falta', color: '#e67e22' },
+    'FE': { label: 'Férias', color: '#3498db' },
+    'A': { label: 'Atestado', color: '#f1c40f' },
+    'D': { label: 'Demitido', color: '#e74c3c' },
+    'C1': { label: 'Contratado', color: '#00ced1' },
   };
 
-  // 1. Carregar Motoristas
+  // --- LÓGICA DE CÁLCULOS (DASHBOARD) ---
+  const estatisticas = useMemo(() => {
+    const stats = { trabalhados: 0, descansos: 0, faltas: 0, ferias: 0, atestados: 0, saldoFolga: 0 };
+    const valores = Object.values(escalaAtual);
+    
+    valores.forEach(v => {
+      if (v.status === 'P') stats.trabalhados++;
+      if (v.status === 'DS') stats.descansos++;
+      if (v.status === 'F') stats.faltas++;
+      if (v.status === 'FE') stats.ferias++;
+      if (v.status === 'A') stats.atestados++;
+    });
+
+    // Regra: A cada 6 trabalhados, ganha 1 folga. Saldo = (Trabalhados / 6) - Descansos feitos
+    // Math.floor para considerar apenas ciclos completos de 6 dias
+    const folgasDireito = Math.floor(stats.trabalhados / 6);
+    stats.saldoFolga = folgasDireito - stats.descansos;
+
+    return stats;
+  }, [escalaAtual]);
+
   useEffect(() => {
-    try {
-      const q = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
-      const unsub = onSnapshot(q, (snapshot) => {
-        const lista = [];
-        snapshot.forEach((doc) => {
-          const dados = doc.data();
-          lista.push({ id: dados.uid || doc.id, ...dados });
-        });
-        setMotoristas(lista);
-      }, (error) => console.error("Erro motoristas:", error));
-      return () => unsub();
-    } catch (e) { console.error(e); }
+    const q = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
+    const unsubMot = onSnapshot(q, (snapshot) => {
+      let lista = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        lista.push({ id: data.uid || doc.id, ...data });
+      });
+      setMotoristas(lista);
+    });
+
+    const unsubNotif = onSnapshot(collection(db, "notificacoes_ajustes"), (snapshot) => {
+      let notes = {};
+      let lista = [];
+      snapshot.forEach(doc => { 
+        const data = doc.data();
+        if(data.temPendencia) {
+          notes[doc.id] = true; 
+          lista.push({ id: doc.id, ...data });
+        }
+      });
+      setNotificacoes(notes);
+      setListaNotificacoes(lista);
+    });
+
+    return () => { unsubMot(); unsubNotif(); };
   }, []);
 
-  // 2. Monitorar Escala do Motorista Selecionado
   useEffect(() => {
-    if (!form.motorista_id) {
-      setEscalaAtual({});
-      return;
-    }
-    const caminhoEscala = collection(db, "cadastro_motoristas", form.motorista_id, "escala");
-    const unsubEscala = onSnapshot(caminhoEscala, (snapshot) => {
+    if (!form.motorista_id) { setEscalaAtual({}); return; }
+    const unsubEscala = onSnapshot(collection(db, "cadastro_motoristas", form.motorista_id, "escala"), (snapshot) => {
       const dados = {};
       snapshot.forEach(doc => { dados[doc.id] = doc.data(); });
       setEscalaAtual(dados);
@@ -76,102 +106,109 @@ export default function Escala() {
     return () => unsubEscala();
   }, [form.motorista_id]);
 
-  const handleSelectMotorista = (e) => {
-    const uidSelecionado = e.target.value;
-    if (!uidSelecionado) {
-      setForm({ ...form, motorista_id: '', motorista_nome: '', diaPendente: null, obs: '' });
-    } else {
-      const mot = motoristas.find(m => (m.uid === uidSelecionado || m.id === uidSelecionado));
-      setForm({ ...form, motorista_id: uidSelecionado, motorista_nome: mot?.nome || '', diaPendente: null, obs: '' });
-    }
-  };
-
-  const apagarEscala = async () => {
-    if (!form.motorista_id || !form.diaPendente) return alert("Selecione um dia com escala para apagar.");
-    if (!window.confirm(`Deseja realmente remover a escala do dia ${form.diaPendente}?`)) return;
-
-    try {
-      const escalaDocRef = doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente);
-      await deleteDoc(escalaDocRef);
-      setForm({ ...form, diaPendente: null, obs: '' });
-      alert("Escala removida!");
-    } catch (error) {
-      alert("Erro ao apagar escala.");
+  const verificarPendenciasRestantes = async (motoristaId) => {
+    const escalaRef = collection(db, "cadastro_motoristas", motoristaId, "escala");
+    const q = query(escalaRef, where("ajustePendente", "==", true));
+    const snapshot = await getDocs(q);
+    if (snapshot.empty) {
+      await updateDoc(doc(db, "notificacoes_ajustes", motoristaId), { temPendencia: false });
     }
   };
 
   const salvarEscala = async () => {
-    if (!form.motorista_id || !form.diaPendente) {
-      alert("Selecione um motorista e clique em um dia no calendário!");
-      return;
-    }
-
+    if (!form.motorista_id || !form.diaPendente) return alert("Selecione um dia no calendário!");
     try {
-      const infoStatus = opcoesStatus[form.status];
-      const escalaDocRef = doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente);
-
-      await setDoc(escalaDocRef, {
-        motoristaId: form.motorista_id,
-        motoristaNome: form.motorista_nome,
+      const info = opcoesStatus[form.status];
+      await setDoc(doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente), {
         status: form.status,
-        color: infoStatus.color,
-        legenda: infoStatus.label,
+        color: info.color,
+        legenda: info.label,
         obs: form.obs,
-        dataReferencia: form.diaPendente,
-        dataRegistro: new Date().toISOString(),
-        ajustePendente: false 
+        ajustePendente: false,
+        alteradoEm: new Date()
       }, { merge: true });
-
+      await verificarPendenciasRestantes(form.motorista_id);
       setForm({ ...form, diaPendente: null, obs: '' });
-    } catch (error) {
-      alert("Erro ao gravar no banco de dados.");
+    } catch (e) { alert("Erro ao salvar."); }
+  };
+
+  const apagarNotificacao = async (id) => {
+    if (window.confirm("Deseja remover este alerta?")) {
+        await updateDoc(doc(db, "notificacoes_ajustes", id), { temPendencia: false });
     }
   };
 
   const gerarDias = () => {
     const ano = dataFiltro.getFullYear();
     const mes = dataFiltro.getMonth();
-    const primeiroDiaSemana = new Date(ano, mes, 1).getDay();
-    const totalDiasMes = new Date(ano, mes + 1, 0).getDate();
+    const primeiro = new Date(ano, mes, 1).getDay();
+    const total = new Date(ano, mes + 1, 0).getDate();
     const dias = [];
-    
-    for (let i = 0; i < primeiroDiaSemana; i++) dias.push(null);
-    for (let d = 1; d <= totalDiasMes; d++) {
-      const dataIso = `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      dias.push({ dia: d, dataIso });
+    for (let i = 0; i < primeiro; i++) dias.push(null);
+    for (let d = 1; d <= total; d++) {
+      dias.push({ dia: d, dataIso: `${ano}-${String(mes + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}` });
     }
     return dias;
   };
 
-  const mudarMes = (offset) => {
-    const novaData = new Date(dataFiltro.getFullYear(), dataFiltro.getMonth() + offset, 1);
-    setDataFiltro(novaData);
-  };
-
   return (
     <div style={styles.container}>
-      {/* SIDEBAR DE CONTROLE */}
+      {/* SIDEBAR */}
       <div style={styles.sidebar}>
         <div style={styles.brand}>
           <div style={styles.logoIcon}><CalIcon size={20} color="#000" /></div>
-          <h2 style={styles.titulo}>Escala Digital</h2>
+          <h2 style={styles.titulo}>Gestão de Escala</h2>
         </div>
+
+        <div style={styles.notifSection}>
+            <label style={styles.label}>PENDÊNCIAS DE MOTORISTAS</label>
+            <div style={styles.notifList}>
+                {listaNotificacoes.length === 0 ? (
+                    <p style={styles.emptyNotif}>Nenhum ajuste solicitado</p>
+                ) : (
+                    listaNotificacoes.map(n => (
+                        <div key={n.id} style={styles.notifCard} onClick={() => setForm({...form, motorista_id: n.id, motorista_nome: n.nome})}>
+                            <div style={{flex: 1}}>
+                                <div style={styles.notifNome}>{n.nome?.toUpperCase()}</div>
+                                <div style={styles.notifData}>Solicitou alteração</div>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); apagarNotificacao(n.id); }} style={styles.trashBtn}>
+                                <CheckCircle size={16} color="#2ecc71" />
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
+        </div>
+
+        <hr style={styles.divider} />
         
         <div style={styles.formGroup}>
-          <label style={styles.label}>SELECIONAR MOTORISTA</label>
-          <select style={styles.input} value={form.motorista_id} onChange={handleSelectMotorista}>
-            <option value="">Selecione um colaborador...</option>
+          <label style={styles.label}>MOTORISTA SELECIONADO</label>
+          <select 
+            style={{...styles.input, borderColor: notificacoes[form.motorista_id] ? '#FFD700' : '#222'}} 
+            value={form.motorista_id} 
+            onChange={(e) => {
+               const mot = motoristas.find(m => m.id === e.target.value);
+               setForm({...form, motorista_id: e.target.value, motorista_nome: mot?.nome || ''});
+            }}
+          >
+            <option value="">Selecione um motorista...</option>
             {motoristas.map(m => (
-              <option key={m.id} value={m.uid || m.id}>{m.nome}</option>
+              <option key={m.id} value={m.id}>
+                {notificacoes[m.id] ? '⚠️ ' : ''}{m.nome?.toUpperCase()}
+              </option>
             ))}
           </select>
         </div>
 
-        {form.motorista_id ? (
+        {form.motorista_id && (
           <div style={styles.controls}>
-            <label style={styles.label}>
-              STATUS {form.diaPendente ? `PARA O DIA ${form.diaPendente.split('-')[2]}` : '(ESCOLHA UM DIA)'}
-            </label>
+            <div style={styles.selectionInfo}>
+               <label style={styles.label}>EDITANDO: {form.diaPendente ? form.diaPendente.split('-')[2] : '--'}</label>
+               <span style={{fontSize: '10px', color: '#FFD700'}}>{form.motorista_nome}</span>
+            </div>
+
             <div style={styles.statusGrid}>
               {Object.keys(opcoesStatus).map(st => (
                 <button 
@@ -181,95 +218,89 @@ export default function Escala() {
                     ...styles.statusBtn,
                     backgroundColor: form.status === st ? opcoesStatus[st].color : '#1a1a1a',
                     color: form.status === st ? '#000' : '#888',
-                    borderColor: form.status === st ? opcoesStatus[st].color : '#333'
+                    border: form.status === st ? '1px solid #fff' : 'none'
                   }}
-                >
-                  {st}
-                </button>
+                >{st}</button>
               ))}
             </div>
 
-            <label style={styles.label}>OBSERVAÇÕES DO DIA</label>
             <textarea 
-              placeholder="Notas ou motivos de falta..."
+              placeholder="Motivo da alteração ou observação..." 
               style={styles.textarea} 
               value={form.obs} 
               onChange={e => setForm({...form, obs: e.target.value})} 
             />
 
-            <div style={styles.actionRow}>
-              <button onClick={salvarEscala} style={styles.saveBtn}>
-                <Save size={18} /> GRAVAR
-              </button>
-              <button onClick={apagarEscala} title="Remover este dia" style={styles.deleteBtn}>
-                <Trash2 size={18} />
-              </button>
-            </div>
-            
-            <button onClick={() => setForm({...form, diaPendente: null, obs: ''})} style={styles.clearBtn}>
-              <XCircle size={14} /> LIMPAR SELEÇÃO
+            <button onClick={salvarEscala} style={styles.saveBtn}>
+              <Save size={18} /> SALVAR ALTERAÇÃO
             </button>
-          </div>
-        ) : (
-          <div style={styles.emptyState}>
-            <AlertCircle size={40} color="#333" />
-            <p style={{color: '#555', fontSize: '13px', textAlign: 'center'}}>Escolha um motorista para gerenciar a escala</p>
           </div>
         )}
       </div>
 
-      {/* ÁREA DO CALENDÁRIO */}
+      {/* ÁREA PRINCIPAL */}
       <div style={styles.calendarArea}>
-        <div style={styles.calHeader}>
-          <div style={styles.calTitle}>
-            <h3 style={styles.monthName}>
-              {dataFiltro.toLocaleDateString('pt-BR', { month: 'long' }).toUpperCase()}
-            </h3>
-            <span style={styles.yearName}>{dataFiltro.getFullYear()}</span>
+        {/* DASHBOARD DE SALDOS */}
+        <div style={styles.dashboard}>
+          <div style={styles.dashCard}>
+            <span style={styles.dashLabel}>SALDO DE FOLGAS</span>
+            <span style={{...styles.dashValue, color: estatisticas.saldoFolga >= 0 ? '#2ecc71' : '#e74c3c'}}>
+              {estatisticas.saldoFolga > 0 ? `+${estatisticas.saldoFolga}` : estatisticas.saldoFolga}
+            </span>
+            <span style={styles.dashSub}>Regra 6x1</span>
           </div>
+          <div style={styles.dashCard}>
+            <span style={styles.dashLabel}>TRABALHADOS</span>
+            <span style={styles.dashValue}>{estatisticas.trabalhados}</span>
+            <span style={styles.dashSub}>Dias no mês</span>
+          </div>
+          <div style={styles.dashCard}>
+            <span style={styles.dashLabel}>FALTAS</span>
+            <span style={{...styles.dashValue, color: '#e67e22'}}>{estatisticas.faltas}</span>
+            <span style={styles.dashSub}>Sem justificativa</span>
+          </div>
+          <div style={styles.dashCard}>
+            <span style={styles.dashLabel}>FÉRIAS / ATEST.</span>
+            <span style={{...styles.dashValue, color: '#3498db'}}>{estatisticas.ferias + estatisticas.atestados}</span>
+            <span style={styles.dashSub}>Afastamentos</span>
+          </div>
+        </div>
+
+        <div style={styles.calHeader}>
+          <h3 style={styles.monthName}>
+            {dataFiltro.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}
+          </h3>
           <div style={styles.navGroup}>
-            <button style={styles.navBtn} onClick={() => mudarMes(-1)}><ChevronLeft size={20}/></button>
-            <button style={styles.navBtn} onClick={() => setDataFiltro(new Date())}>HOJE</button>
-            <button style={styles.navBtn} onClick={() => mudarMes(1)}><ChevronRight size={20}/></button>
+            <button style={styles.navBtn} onClick={() => setDataFiltro(new Date(dataFiltro.setMonth(dataFiltro.getMonth()-1)))}><ChevronLeft/></button>
+            <button style={styles.navBtn} onClick={() => setDataFiltro(new Date(dataFiltro.setMonth(dataFiltro.getMonth()+1)))}><ChevronRight/></button>
           </div>
         </div>
 
         <div style={styles.grid}>
-          {['DOM', 'SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB'].map(d => (
-            <div key={d} style={styles.weekDay}>{d}</div>
-          ))}
+          {['DOM','SEG','TER','QUA','QUI','SEX','SÁB'].map(d => <div key={d} style={styles.weekDay}>{d}</div>)}
           {gerarDias().map((item, idx) => {
             const dado = item ? escalaAtual[item.dataIso] : null;
-            const selecionado = form.diaPendente === item?.dataIso;
+            const sel = form.diaPendente === item?.dataIso;
             return (
               <div 
                 key={idx} 
-                onClick={() => item && setForm({...form, diaPendente: item.dataIso, obs: dado?.obs || ''})}
+                onClick={() => item && setForm({...form, diaPendente: item.dataIso, obs: dado?.motivoSolicitado || dado?.obs || '', status: dado?.status || 'P'})}
                 style={{
                   ...styles.dayBox,
-                  backgroundColor: dado ? 'transparent' : '#0d0d0d',
                   opacity: item ? 1 : 0,
-                  border: selecionado ? '2px solid #FFD700' : '1px solid #1a1a1a',
-                  boxShadow: selecionado ? '0 0 15px rgba(255, 215, 0, 0.3)' : 'none'
+                  border: sel ? '2px solid #FFD700' : '1px solid #1a1a1a',
+                  cursor: item ? 'pointer' : 'default'
                 }}
               >
-                {dado && (
-                  <div style={{...styles.statusBackground, backgroundColor: dado.color}} />
-                )}
-                
+                {dado && <div style={{...styles.statusBackground, backgroundColor: dado.color}} />}
                 <div style={styles.dayHeader}>
-                  <span style={{color: dado ? '#fff' : '#444', fontSize: '14px', zIndex: 2, fontWeight: '900'}}>
-                    {item?.dia}
-                  </span>
-                  {dado?.ajustePendente && <div style={styles.pulseDot} title="O motorista solicitou ajuste" />}
-                </div>
-
-                <div style={styles.dayFooter}>
-                  {dado?.status && (
-                    <span style={{...styles.statusBadge, color: dado.color}}>
-                      {dado.legenda?.toUpperCase() || dado.status}
-                    </span>
+                  <span style={{color: item ? (dado ? '#fff' : '#444') : 'transparent', fontWeight: 'bold'}}>{item?.dia}</span>
+                  {dado?.ajustePendente && (
+                    <div style={styles.pulseContainer}><div style={styles.pulseDot} /></div>
                   )}
+                </div>
+                <div style={styles.dayFooter}>
+                  <span style={{fontSize: '9px', color: dado?.color, fontWeight: 'bold'}}>{dado?.legenda}</span>
                 </div>
               </div>
             );
@@ -281,34 +312,47 @@ export default function Escala() {
 }
 
 const styles = {
-  container: { display: 'flex', gap: '24px', padding: '24px', backgroundColor: '#000', height: '100vh', boxSizing: 'border-box', color: '#fff', fontFamily: 'sans-serif' },
-  sidebar: { width: '340px', backgroundColor: '#0a0a0a', padding: '24px', borderRadius: '16px', border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' },
-  brand: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '32px' },
-  logoIcon: { backgroundColor: '#FFD700', padding: '8px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  titulo: { color: '#fff', fontSize: '20px', fontWeight: 'bold', margin: 0 },
-  formGroup: { marginBottom: '24px' },
-  label: { color: '#555', fontSize: '10px', fontWeight: '800', letterSpacing: '1px', marginBottom: '8px', display: 'block' },
-  input: { width: '100%', backgroundColor: '#111', border: '1px solid #222', color: '#fff', padding: '12px', borderRadius: '10px', fontSize: '14px', outline: 'none' },
-  statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px', marginBottom: '20px' },
-  statusBtn: { padding: '10px 0', border: '1px solid', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px', transition: 'all 0.2s' },
-  textarea: { width: '100%', height: '80px', backgroundColor: '#111', border: '1px solid #222', color: '#fff', borderRadius: '10px', padding: '12px', marginBottom: '20px', fontSize: '13px', resize: 'none', outline: 'none' },
-  actionRow: { display: 'flex', gap: '10px', marginBottom: '12px' },
-  saveBtn: { flex: 1, backgroundColor: '#FFD700', color: '#000', padding: '14px', border: 'none', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px' },
-  deleteBtn: { width: '54px', backgroundColor: '#222', color: '#ff4444', border: '1px solid #331111', borderRadius: '10px', cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center' },
-  clearBtn: { backgroundColor: 'transparent', color: '#444', border: 'none', fontSize: '11px', fontWeight: 'bold', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' },
-  emptyState: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '15px', opacity: 0.5 },
-  calendarArea: { flex: 1, backgroundColor: '#0a0a0a', padding: '24px', borderRadius: '16px', border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column', overflow: 'hidden' },
-  calHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' },
-  monthName: { margin: 0, color: '#FFD700', fontSize: '24px', fontWeight: '900' },
-  yearName: { color: '#444', fontSize: '16px', fontWeight: 'bold', marginLeft: '10px' },
+  container: { display: 'flex', gap: '20px', padding: '20px', backgroundColor: '#000', height: '100vh', color: '#fff', fontFamily: 'sans-serif', overflow: 'hidden' },
+  sidebar: { width: '320px', backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '15px', border: '1px solid #1a1a1a', overflowY: 'auto', display: 'flex', flexDirection: 'column' },
+  brand: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' },
+  logoIcon: { backgroundColor: '#FFD700', padding: '5px', borderRadius: '5px' },
+  titulo: { fontSize: '16px', margin: 0, fontWeight: 'bold' },
+  label: { fontSize: '10px', color: '#555', fontWeight: 'bold', marginBottom: '8px', display: 'block', letterSpacing: '1px' },
+  input: { width: '100%', padding: '12px', background: '#111', border: '1px solid #222', color: '#fff', borderRadius: '8px', marginBottom: '20px', outline: 'none', fontSize: '12px' },
+  selectionInfo: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
+  statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', marginBottom: '15px' },
+  statusBtn: { padding: '10px 0', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold', transition: '0.2s' },
+  textarea: { width: '100%', height: '70px', background: '#111', border: '1px solid #222', color: '#fff', borderRadius: '8px', padding: '10px', marginBottom: '15px', resize: 'none', fontSize: '12px' },
+  saveBtn: { width: '100%', padding: '14px', background: '#FFD700', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+  divider: { border: '0', borderTop: '1px solid #1a1a1a', margin: '20px 0' },
+  
+  notifSection: { marginBottom: '10px' },
+  notifList: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '150px', overflowY: 'auto' },
+  notifCard: { display: 'flex', alignItems: 'center', background: '#111', padding: '10px', borderRadius: '8px', border: '1px solid #222', cursor: 'pointer' },
+  notifNome: { fontSize: '11px', fontWeight: 'bold', color: '#FFD700' },
+  notifData: { fontSize: '9px', color: '#555' },
+  emptyNotif: { fontSize: '11px', color: '#333', textAlign: 'center', padding: '10px' },
+  trashBtn: { background: 'transparent', border: 'none', cursor: 'pointer', padding: '5px' },
+
+  calendarArea: { flex: 1, background: '#0a0a0a', padding: '20px', borderRadius: '15px', border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' },
+  
+  // Dashboard Styles
+  dashboard: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginBottom: '25px' },
+  dashCard: { background: '#111', border: '1px solid #1a1a1a', padding: '15px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
+  dashLabel: { fontSize: '9px', color: '#555', fontWeight: 'bold', marginBottom: '5px' },
+  dashValue: { fontSize: '24px', fontWeight: '900', color: '#fff' },
+  dashSub: { fontSize: '8px', color: '#333', marginTop: '4px', textTransform: 'uppercase' },
+
+  calHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
+  monthName: { color: '#FFD700', margin: 0, fontSize: '20px', fontWeight: '900' },
   navGroup: { display: 'flex', gap: '8px' },
-  navBtn: { backgroundColor: '#111', border: '1px solid #222', color: '#fff', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '10px', flex: 1 },
-  weekDay: { textAlign: 'center', color: '#333', fontSize: '11px', fontWeight: '900', paddingBottom: '10px' },
-  dayBox: { position: 'relative', minHeight: '80px', padding: '12px', borderRadius: '12px', cursor: 'pointer', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', overflow: 'hidden' },
-  statusBackground: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.15, zIndex: 1 },
-  dayHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', zIndex: 2 },
+  navBtn: { background: '#111', border: '1px solid #222', color: '#fff', padding: '8px', borderRadius: '8px', cursor: 'pointer' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px', flex: 1 },
+  weekDay: { textAlign: 'center', color: '#444', fontSize: '10px', fontWeight: 'bold', paddingBottom: '10px' },
+  dayBox: { position: 'relative', padding: '10px', borderRadius: '10px', background: '#0d0d0d', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' },
+  statusBackground: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, opacity: 0.12, zIndex: 1, borderRadius: '10px' },
+  dayHeader: { display: 'flex', justifyContent: 'space-between', zIndex: 2 },
   dayFooter: { zIndex: 2 },
-  statusBadge: { fontSize: '9px', fontWeight: '900', letterSpacing: '0.5px' },
-  pulseDot: { width: '8px', height: '8px', backgroundColor: '#FFD700', borderRadius: '50%', boxShadow: '0 0 10px #FFD700' }
+  pulseContainer: { position: 'relative', width: '8px', height: '8px' },
+  pulseDot: { width: '8px', height: '8px', background: '#FFD700', borderRadius: '50%', boxShadow: '0 0 10px #FFD700' }
 };

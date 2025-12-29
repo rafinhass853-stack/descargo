@@ -105,7 +105,10 @@ export default function App() {
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
-  // --- HTML DO MAPA (LEAFLET + GOOGLE SATELLITE) ---
+  // --- LOGICA DE REDES SOCIAIS ---
+  const openLink = (url) => Linking.openURL(url);
+
+  // --- HTML DO MAPA (Aqui as tags div estão dentro de uma STRING, o que é correto para WebView) ---
   const generateLeafletHtml = () => {
     const lat = location?.latitude || -23.5505;
     const lng = location?.longitude || -46.6333;
@@ -207,13 +210,11 @@ export default function App() {
   useEffect(() => {
     const atualizarDestinoERota = async () => {
       if (location && (geofenceAtiva || cargaAtiva)) {
-        // Se a carga já vier com trajeto planejado (ROTOGRAMA IMPORTADO)
         if (cargaAtiva?.trajeto && Array.isArray(cargaAtiva.trajeto) && cargaAtiva.trajeto.length > 0) {
           setRotaCoords(cargaAtiva.trajeto);
           const ultimo = cargaAtiva.trajeto[cargaAtiva.trajeto.length - 1];
           setDestinoCoord({ latitude: ultimo.latitude, longitude: ultimo.longitude });
         } 
-        // Caso contrário, tenta cercas ou cidades (AUTO-GERADO OSRM)
         else if (geofenceAtiva?.centro?.lat) {
           const dLat = geofenceAtiva.centro.lat; const dLng = geofenceAtiva.centro.lng;
           setDestinoCoord({ latitude: dLat, longitude: dLng });
@@ -443,7 +444,24 @@ export default function App() {
                 {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.buttonText}>ENTRAR NO SISTEMA</Text>}
               </TouchableOpacity>
             </View>
-            <Text style={styles.signature}>Desenvolvido por Rafael Araujo</Text>
+
+            <View style={styles.socialContainer}>
+              <Text style={styles.socialTitle}>SUPORTE E REDES SOCIAIS</Text>
+              <View style={styles.socialRow}>
+                <TouchableOpacity style={styles.socialIcon} onPress={() => openLink('https://wa.me/5519996969894')}>
+                  <FontAwesome name="whatsapp" size={24} color="#25D366" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.socialIcon} onPress={() => openLink('https://instagram.com/rafasousa_oficial')}>
+                  <FontAwesome name="instagram" size={24} color="#E1306C" />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.socialIcon} onPress={() => openLink('https://www.linkedin.com/in/rafael-araujo-64758a1a5/')}>
+                  <FontAwesome name="linkedin" size={24} color="#0077B5" />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.signature}>Desenvolvido por Rafael Araujo</Text>
+            </View>
           </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -499,7 +517,13 @@ const styles = StyleSheet.create({
   input: { backgroundColor: '#111', color: '#FFF', padding: 18, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#222', fontSize: 16 },
   button: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10 },
   buttonText: { color: '#000', fontWeight: '900', fontSize: 16 },
-  signature: { color: '#444', fontSize: 11, textAlign: 'center', marginTop: 30, fontWeight: 'bold' },
+  
+  socialContainer: { marginTop: 40, alignItems: 'center' },
+  socialTitle: { color: '#444', fontSize: 10, fontWeight: '900', letterSpacing: 1, marginBottom: 15 },
+  socialRow: { flexDirection: 'row', gap: 25, marginBottom: 20 },
+  socialIcon: { padding: 10, backgroundColor: '#111', borderRadius: 50, borderWidth: 1, borderColor: '#222' },
+  signature: { color: '#333', fontSize: 10, fontWeight: 'bold' },
+
   topFloatingHeader: { position: 'absolute', top: 50, left: 20, right: 20, flexDirection: 'row', gap: 10 },
   floatingStatus: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.85)', paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, borderWidth: 1, borderColor: '#222' },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },

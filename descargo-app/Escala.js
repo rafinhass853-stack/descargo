@@ -4,7 +4,7 @@ import {
   ScrollView, ActivityIndicator, Dimensions, Alert
 } from 'react-native';
 import { 
-  collection, onSnapshot, doc, setDoc, addDoc, serverTimestamp, query, where, getDocs 
+  collection, onSnapshot, doc, setDoc, serverTimestamp, query, where, getDocs 
 } from "firebase/firestore";
 import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 
@@ -33,15 +33,11 @@ export default function Escala({ auth, db }) {
 
     const carregarDadosMotorista = async () => {
       try {
-        // Busca o nome do motorista conforme a lógica da tela Conta
-        const q = query(
-          collection(db, "cadastro_motoristas"), 
-          where("uid", "==", user.uid)
-        );
+        const q = query(collection(db, "cadastro_motoristas"), where("uid", "==", user.uid));
         const querySnapshot = await getDocs(q);
         if (!querySnapshot.empty) {
-          const dados = querySnapshot.docs[0].data();
-          setUserData(dados);
+          // Captura o nome correto para enviar na notificação
+          setUserData({ id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() });
         }
       } catch (error) {
         console.error("Erro ao buscar cadastro:", error);
@@ -87,33 +83,39 @@ export default function Escala({ auth, db }) {
     return contagem;
   }, [diasDoMes, escalaAtual]);
 
+  // FUNÇÃO AJUSTADA PARA O NOVO PAINEL GESTOR
   const enviarSolicitacao = async (dataIso, motivo) => {
-    if (!motivo || motivo.trim() === "") return;
+    if (!motivo || motivo.trim() === "") {
+      return Alert.alert("Atenção", "Você precisa descrever o motivo.");
+    }
+    
     try {
       const user = auth.currentUser;
-      await setDoc(doc(db, "cadastro_motoristas", user.uid, "escala", dataIso), {
+      const motoristaId = user.uid;
+      const nomeMotorista = userData?.nome || "Motorista Desconhecido";
+      
+      // 1. Marca o dia específico como pendente na escala do motorista
+      await setDoc(doc(db, "cadastro_motoristas", motoristaId, "escala", dataIso), {
         ajustePendente: true,
         motivoSolicitado: motivo,
-        timestamp: serverTimestamp()
+        solicitadoEm: serverTimestamp()
       }, { merge: true });
 
-      await setDoc(doc(db, "notificacoes_ajustes", user.uid), {
-        nome: userData?.nome || "Motorista",
+      // 2. Alerta o Painel dos seus amigos (Coleção Global de Notificações)
+      await setDoc(doc(db, "notificacoes_ajustes", motoristaId), {
+        motoristaId: motoristaId,
+        nome: nomeMotorista,
         ultimaSolicitacao: serverTimestamp(),
-        temPendencia: true
+        temPendencia: true,
+        dataDoAjuste: dataIso, // Informação extra para facilitar a vida do gestor
+        motivo: motivo
       }, { merge: true });
 
-      await addDoc(collection(db, "notificacoes_ajustes", user.uid, "solicitacoes"), {
-        dataReferencia: dataIso,
-        mensagem: motivo,
-        lida: false,
-        criadoEm: serverTimestamp()
-      });
-
-      Alert.alert("Sucesso", "Solicitação enviada!");
+      Alert.alert("Sucesso", "O gestor foi notificado. Aguarde a atualização no seu calendário.");
       setDiaSelecionado(null);
     } catch (error) {
-      Alert.alert("Erro", "Falha ao enviar.");
+      console.error(error);
+      Alert.alert("Erro", "Falha ao enviar. Tente novamente.");
     }
   };
 
@@ -121,11 +123,7 @@ export default function Escala({ auth, db }) {
 
   return (
     <View style={styles.container}>
-      <ScrollView 
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 120 }} // Espaço extra para não cobrir o resumo
-      >
-        {/* HEADER COMPACTO */}
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>Minha Escala</Text>
           <View style={styles.driverBadge}>
@@ -134,7 +132,6 @@ export default function Escala({ auth, db }) {
           </View>
         </View>
 
-        {/* NAVEGAÇÃO MÊS SUBIDA */}
         <View style={styles.navRow}>
           <TouchableOpacity onPress={() => setDataFiltro(new Date(dataFiltro.setMonth(dataFiltro.getMonth() - 1)))}>
             <Ionicons name="chevron-back" size={22} color="#FFD700" />
@@ -145,7 +142,6 @@ export default function Escala({ auth, db }) {
           </TouchableOpacity>
         </View>
 
-        {/* GRADE CALENDÁRIO OTIMIZADA */}
         <View style={styles.grid}>
           {['D', 'S', 'T', 'Q', 'Q', 'S', 'S'].map((d, i) => (
             <Text key={i} style={styles.weekDayText}>{d}</Text>
@@ -174,7 +170,6 @@ export default function Escala({ auth, db }) {
           })}
         </View>
 
-        {/* RESUMO DOS STATUS - SUBIDO E MAIS VISÍVEL */}
         <View style={styles.resumoContainer}>
           <Text style={styles.resumoTitle}>CONTAGEM DO MÊS</Text>
           <View style={styles.resumoGrid}>
@@ -188,7 +183,6 @@ export default function Escala({ auth, db }) {
           </View>
         </View>
 
-        {/* CARD DE DETALHE (APARECE AO CLICAR) */}
         {diaSelecionado && (
           <View style={styles.detailCard}>
             <View style={styles.detailHeader}>
@@ -200,11 +194,19 @@ export default function Escala({ auth, db }) {
             <Text style={styles.detailStatus}>
               Status: <Text style={{ color: diaSelecionado.color || '#666' }}>{diaSelecionado.legenda || 'Não definido'}</Text>
             </Text>
+            
             <TouchableOpacity 
               style={styles.ajusteBtn}
-              onPress={() => Alert.prompt("Ajuste", "Motivo da alteração:", [{text: "Cancelar"}, {text: "Enviar", onPress: (t) => enviarSolicitacao(diaSelecionado.dataIso, t)}])}
+              onPress={() => Alert.prompt(
+                "Solicitar Ajuste", 
+                "Explique ao gestor o motivo da alteração:", 
+                [
+                  { text: "Cancelar", style: "cancel" }, 
+                  { text: "Enviar Notificação", onPress: (motivo) => enviarSolicitacao(diaSelecionado.dataIso, motivo) }
+                ]
+              )}
             >
-              <Text style={styles.ajusteBtnText}>SOLICITAR AJUSTE</Text>
+              <Text style={styles.ajusteBtnText}>NOTIFICAR GESTOR</Text>
             </TouchableOpacity>
           </View>
         )}
@@ -216,22 +218,18 @@ export default function Escala({ auth, db }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  
   header: { paddingHorizontal: 20, paddingTop: 45, marginBottom: 5 }, 
   headerTitle: { color: '#FFF', fontSize: 28, fontWeight: '900', letterSpacing: -1 },
   driverBadge: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: 5 },
   driverName: { color: '#FFD700', fontSize: 13, fontWeight: 'bold' },
-
   navRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginHorizontal: 20, marginBottom: 10, marginTop: 15 },
   monthText: { color: '#FFF', fontWeight: '900', fontSize: 14, letterSpacing: 1 },
-
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 15, justifyContent: 'center' },
   weekDayText: { width: (width - 40) / 7, textAlign: 'center', color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 8 },
   dayBox: { width: (width - 50) / 7, height: height * 0.065, margin: 2, borderRadius: 8, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
   statusLine: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 4 },
   dayNumber: { fontSize: 17, fontWeight: 'bold' },
-  pulseDot: { position: 'absolute', top: 5, right: 5, width: 6, height: 6, backgroundColor: '#FFD700', borderRadius: 3 },
-
+  pulseDot: { position: 'absolute', top: 5, right: 5, width: 8, height: 8, backgroundColor: '#FFD700', borderRadius: 4, borderWidth: 1, borderColor: '#000' },
   resumoContainer: { marginHorizontal: 20, marginTop: 15, padding: 15, backgroundColor: '#0A0A0A', borderRadius: 15, borderWidth: 1, borderColor: '#1A1A1A' },
   resumoTitle: { color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 12, letterSpacing: 1 },
   resumoGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
@@ -239,7 +237,6 @@ const styles = StyleSheet.create({
   resumoDot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
   resumoLabel: { color: '#888', fontSize: 11, flex: 1 },
   resumoValue: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
-
   detailCard: { margin: 20, padding: 20, backgroundColor: '#0D0D0D', borderRadius: 20, borderColor: '#222', borderWidth: 1 },
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   detailTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
