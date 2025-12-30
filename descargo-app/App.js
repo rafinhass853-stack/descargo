@@ -96,6 +96,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
+  const [currentSpeed, setCurrentSpeed] = useState(0); // Estado para o velocímetro
   const [cargaAtiva, setCargaAtiva] = useState(null);
   const [todasAsCercas, setTodasAsCercas] = useState([]);
   const [geofenceAtiva, setGeofenceAtiva] = useState(null); 
@@ -108,7 +109,7 @@ export default function App() {
   // --- LOGICA DE REDES SOCIAIS ---
   const openLink = (url) => Linking.openURL(url);
 
-  // --- HTML DO MAPA (Aqui as tags div estão dentro de uma STRING, o que é correto para WebView) ---
+  // --- HTML DO MAPA ---
   const generateLeafletHtml = () => {
     const lat = location?.latitude || -23.5505;
     const lng = location?.longitude || -46.6333;
@@ -347,9 +348,16 @@ export default function App() {
       (async () => {
         let { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') return;
-        sub = await Location.watchPositionAsync({ accuracy: Location.Accuracy.High, timeInterval: 15000, distanceInterval: 20 }, (loc) => {
+        sub = await Location.watchPositionAsync({ 
+            accuracy: Location.Accuracy.High, 
+            timeInterval: 2000, // Diminuído para o velocímetro ser mais fluido
+            distanceInterval: 1 
+        }, (loc) => {
           if (loc.coords) { 
             setLocation(loc.coords); 
+            // Converte m/s para km/h (speed * 3.6)
+            const speedKmh = loc.coords.speed ? Math.round(loc.coords.speed * 3.6) : 0;
+            setCurrentSpeed(speedKmh < 0 ? 0 : speedKmh);
             sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }); 
           }
         });
@@ -364,6 +372,13 @@ export default function App() {
         return (
           <View style={{flex: 1}}>
             <WebView ref={webviewRef} originWhitelist={['*']} source={{ html: generateLeafletHtml() }} style={{ flex: 1, backgroundColor: '#000' }} />
+            
+            {/* VELOCÍMETRO FLUTUANTE */}
+            <View style={styles.speedometerContainer}>
+              <Text style={styles.speedText}>{currentSpeed}</Text>
+              <Text style={styles.speedUnit}>KM/H</Text>
+            </View>
+
             <View style={styles.topFloatingHeader}>
               <TouchableOpacity style={styles.floatingStatus} onPress={() => {
                 Alert.alert("Status", "Alterar:", [
@@ -524,10 +539,16 @@ const styles = StyleSheet.create({
   socialIcon: { padding: 10, backgroundColor: '#111', borderRadius: 50, borderWidth: 1, borderColor: '#222' },
   signature: { color: '#333', fontSize: 10, fontWeight: 'bold' },
 
-  topFloatingHeader: { position: 'absolute', top: 50, left: 20, right: 20, flexDirection: 'row', gap: 10 },
+  topFloatingHeader: { position: 'absolute', top: 50, left: 20, right: 100, flexDirection: 'row', gap: 10 },
   floatingStatus: { flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.85)', paddingVertical: 10, paddingHorizontal: 15, borderRadius: 30, borderWidth: 1, borderColor: '#222' },
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   floatingStatusText: { color: '#FFF', fontSize: 10, fontWeight: '900' },
+  
+  // ESTILOS DO VELOCÍMETRO
+  speedometerContainer: { position: 'absolute', top: 50, right: 20, width: 70, height: 70, backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: 35, borderWidth: 2, borderColor: '#FFD700', justifyContent: 'center', alignItems: 'center', elevation: 10 },
+  speedText: { color: '#FFD700', fontSize: 24, fontWeight: '900' },
+  speedUnit: { color: '#FFF', fontSize: 8, fontWeight: 'bold', marginTop: -2 },
+
   floatingRouteCard: { position: 'absolute', bottom: 120, left: 20, right: 20, backgroundColor: 'rgba(15,15,15,0.95)', borderRadius: 20, padding: 15, borderBottomWidth: 1, borderBottomColor: '#FFD70033', elevation: 5 },
   routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', marginBottom: 2 },
   routeInfo: { color: '#FFF', fontSize: 18, fontWeight: '900' },
