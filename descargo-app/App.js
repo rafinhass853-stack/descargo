@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { 
   StyleSheet, 
   View, 
@@ -73,6 +73,22 @@ try {
 
 const db = getFirestore(app);
 
+// COMPONENTE DE MAPA ISOLADO (Para evitar o flash do velocímetro)
+const MapViewStatic = memo(({ html, webviewRef }) => {
+  return (
+    <WebView
+      ref={webviewRef}
+      originWhitelist={['*']}
+      source={{ html }}
+      style={{ flex: 1, backgroundColor: '#000' }}
+      onMessage={() => {}}
+      androidLayerType="hardware"
+      domStorageEnabled={true}
+      javaScriptEnabled={true}
+    />
+  );
+}, (prev, next) => prev.html === next.html);
+
 const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
   const R = 6371e3; 
@@ -96,7 +112,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
-  const [currentSpeed, setCurrentSpeed] = useState(0); // Estado para o velocímetro
+  const [currentSpeed, setCurrentSpeed] = useState(0); 
   const [cargaAtiva, setCargaAtiva] = useState(null);
   const [todasAsCercas, setTodasAsCercas] = useState([]);
   const [geofenceAtiva, setGeofenceAtiva] = useState(null); 
@@ -106,11 +122,10 @@ export default function App() {
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
 
-  // --- LOGICA DE REDES SOCIAIS ---
   const openLink = (url) => Linking.openURL(url);
 
-  // --- HTML DO MAPA ---
-  const generateLeafletHtml = () => {
+  // GERAÇÃO DO HTML APENAS QUANDO ESTRUTURA MUDA
+  const mapHtml = useMemo(() => {
     const lat = location?.latitude || -23.5505;
     const lng = location?.longitude || -46.6333;
 
@@ -139,7 +154,7 @@ export default function App() {
         <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-        <style> body { margin: 0; padding: 0; } #map { height: 100vh; width: 100vw; background: #000; } </style>
+        <style> body { margin: 0; padding: 0; background: #000; overflow: hidden; } #map { height: 100vh; width: 100vw; } </style>
       </head>
       <body>
         <div id="map"></div>
@@ -157,21 +172,23 @@ export default function App() {
           ${cercasJs}
           ${rotaJs}
           window.addEventListener('message', function(e) {
-            var data = JSON.parse(e.data);
-            if(data.type === 'updateLoc') { marker.setLatLng([data.lat, data.lng]); }
-            if(data.type === 'center') { map.flyTo([data.lat, data.lng], 16); }
+            try {
+              var data = JSON.parse(e.data);
+              if(data.type === 'updateLoc') { marker.setLatLng([data.lat, data.lng]); }
+              if(data.type === 'center') { map.flyTo([data.lat, data.lng], 16); }
+            } catch(err) {}
           });
         </script>
       </body>
       </html>
     `;
-  };
+  }, [todasAsCercas.length, rotaCoords.length, (cargaAtiva?.id || null)]);
 
   useEffect(() => {
     if (location && webviewRef.current) {
       webviewRef.current.postMessage(JSON.stringify({ type: 'updateLoc', lat: location.latitude, lng: location.longitude }));
     }
-  }, [location]);
+  }, [location?.latitude, location?.longitude]);
 
   useEffect(() => {
     if (isLoggedIn) {
@@ -350,12 +367,11 @@ export default function App() {
         if (status !== 'granted') return;
         sub = await Location.watchPositionAsync({ 
             accuracy: Location.Accuracy.High, 
-            timeInterval: 2000, // Diminuído para o velocímetro ser mais fluido
+            timeInterval: 2000, 
             distanceInterval: 1 
         }, (loc) => {
           if (loc.coords) { 
             setLocation(loc.coords); 
-            // Converte m/s para km/h (speed * 3.6)
             const speedKmh = loc.coords.speed ? Math.round(loc.coords.speed * 3.6) : 0;
             setCurrentSpeed(speedKmh < 0 ? 0 : speedKmh);
             sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }); 
@@ -371,9 +387,9 @@ export default function App() {
       case 'painel':
         return (
           <View style={{flex: 1}}>
-            <WebView ref={webviewRef} originWhitelist={['*']} source={{ html: generateLeafletHtml() }} style={{ flex: 1, backgroundColor: '#000' }} />
+            {/* O MAPA AGORA ESTÁ ISOLADO EM UM COMPONENTE MEMORIZADO */}
+            <MapViewStatic html={mapHtml} webviewRef={webviewRef} />
             
-            {/* VELOCÍMETRO FLUTUANTE */}
             <View style={styles.speedometerContainer}>
               <Text style={styles.speedText}>{currentSpeed}</Text>
               <Text style={styles.speedUnit}>KM/H</Text>
@@ -544,7 +560,6 @@ const styles = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, marginRight: 8 },
   floatingStatusText: { color: '#FFF', fontSize: 10, fontWeight: '900' },
   
-  // ESTILOS DO VELOCÍMETRO
   speedometerContainer: { position: 'absolute', top: 50, right: 20, width: 70, height: 70, backgroundColor: 'rgba(0,0,0,0.9)', borderRadius: 35, borderWidth: 2, borderColor: '#FFD700', justifyContent: 'center', alignItems: 'center', elevation: 10 },
   speedText: { color: '#FFD700', fontSize: 24, fontWeight: '900' },
   speedUnit: { color: '#FFF', fontSize: 8, fontWeight: 'bold', marginTop: -2 },

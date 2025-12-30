@@ -33,7 +33,7 @@ const DashboardGeral = () => {
     const [carretas, setCarretas] = useState([]);
     const [localizacoes, setLocalizacoes] = useState({});
     const [cercas, setCercas] = useState([]);
-    const [cargasAtivas, setCargasAtivas] = useState({}); // Novo estado para cargas
+    const [cargasAtivas, setCargasAtivas] = useState({}); 
     const [mapFocus, setMapFocus] = useState({ center: [-21.78, -48.17], zoom: 6 });
     const [filtroGrid, setFiltroGrid] = useState("");
 
@@ -62,14 +62,11 @@ const DashboardGeral = () => {
             setCarretas(lista);
         });
 
-        // Monitorar Cargas Ativas (Status ACEITO)
         const unsubCargas = onSnapshot(query(collection(db, "ordens_servico"), where("status", "==", "ACEITO")), (snapshot) => {
             const mapping = {};
             snapshot.forEach(doc => {
                 const data = doc.data();
-                if (data.motoristaId) {
-                    mapping[data.motoristaId] = data;
-                }
+                if (data.motoristaId) mapping[data.motoristaId] = data;
             });
             setCargasAtivas(mapping);
         });
@@ -89,8 +86,12 @@ const DashboardGeral = () => {
                         statusOp: d.statusOperacional || 'Sem programação',
                         statusJornada: d.statusJornada || 'fora da jornada',
                         email: d.email?.toLowerCase().trim(),
+                        cidade: d.cidade || "Não identificado",
+                        uf: d.uf || "",
                         ultima: d.ultimaAtualizacao?.toDate ? 
-                                d.ultimaAtualizacao.toDate().toLocaleTimeString('pt-BR') : "---"
+                                d.ultimaAtualizacao.toDate().toLocaleString('pt-BR', {
+                                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+                                }) : "---"
                     };
                     locs[docId] = dadosLoc;
                     if (d.email) locs[d.email.toLowerCase().trim()] = dadosLoc;
@@ -193,6 +194,7 @@ const DashboardGeral = () => {
                                             {placas.cavalo && <span>🚛 {placas.cavalo} / {placas.carreta}</span>}<br/>
                                             <hr/>
                                             <strong>Status:</strong> {gps.statusOp}<br/>
+                                            <strong>Local:</strong> {gps.cidade} - {gps.uf}<br/>
                                             {carga && (
                                                 <div style={{marginTop: '5px', color: '#d35400'}}>
                                                     <strong>📍 Destino:</strong> {carga.destinoCidade || carga.cidade_destino}<br/>
@@ -216,6 +218,7 @@ const DashboardGeral = () => {
                         <tr style={{ backgroundColor: '#0f0f0f' }}>
                             <th style={styles.th}>AÇÕES</th>
                             <th style={styles.th}>MOTORISTA / PLACAS</th>
+                            <th style={styles.th}>LOCALIZAÇÃO</th>
                             <th style={styles.th}>CARGA ATIVA</th>
                             <th style={styles.th}>GPS STATUS</th>
                             <th style={styles.th}>OPERACIONAL</th>
@@ -254,6 +257,12 @@ const DashboardGeral = () => {
                                             </div>
                                         </td>
                                         <td style={styles.td}>
+                                            <div style={{ fontSize: '11px', color: gps ? '#fff' : '#444', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <MapPin size={12} color="#666" />
+                                                {gps ? `${gps.cidade} - ${gps.uf}` : "---"}
+                                            </div>
+                                        </td>
+                                        <td style={styles.td}>
                                             {carga ? (
                                                 <div>
                                                     <div style={{ fontSize: '11px', color: '#FFD700', fontWeight: 'bold' }}>
@@ -271,9 +280,12 @@ const DashboardGeral = () => {
                                         <td style={styles.td}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                                 <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: gps ? '#2ecc71' : '#e74c3c' }} />
-                                                <span style={{ fontSize: '11px', color: gps ? '#2ecc71' : '#666' }}>
-                                                    {gps ? `ONLINE (${gps.ultima})` : 'SEM SINAL'}
-                                                </span>
+                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <span style={{ fontSize: '11px', color: gps ? '#2ecc71' : '#666', fontWeight: 'bold' }}>
+                                                        {gps ? 'ONLINE' : 'SEM SINAL'}
+                                                    </span>
+                                                    {gps && <span style={{ fontSize: '9px', color: '#888' }}>{gps.ultima}</span>}
+                                                </div>
                                             </div>
                                         </td>
                                         <td style={styles.td}>

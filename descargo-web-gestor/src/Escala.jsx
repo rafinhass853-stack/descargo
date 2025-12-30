@@ -9,7 +9,7 @@ import {
   Calendar as CalIcon, CheckCircle, Trash2, Info
 } from 'lucide-react';
 
-// --- CONFIGURAÇÃO FIREBASE ---
+// --- CONFIGURAÇÃO FIREBASE (MANTIDA) ---
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -34,7 +34,8 @@ export default function AdminEscala() {
     motorista_nome: '',
     status: 'P',
     obs: '',
-    diaPendente: null
+    diaPendente: null,
+    motivoMotorista: '' // <-- NOVO CAMPO
   });
 
   const opcoesStatus = {
@@ -47,11 +48,9 @@ export default function AdminEscala() {
     'C1': { label: 'Contratado', color: '#00ced1' },
   };
 
-  // --- LÓGICA DE CÁLCULOS (DASHBOARD) ---
   const estatisticas = useMemo(() => {
     const stats = { trabalhados: 0, descansos: 0, faltas: 0, ferias: 0, atestados: 0, saldoFolga: 0 };
     const valores = Object.values(escalaAtual);
-    
     valores.forEach(v => {
       if (v.status === 'P') stats.trabalhados++;
       if (v.status === 'DS') stats.descansos++;
@@ -59,12 +58,8 @@ export default function AdminEscala() {
       if (v.status === 'FE') stats.ferias++;
       if (v.status === 'A') stats.atestados++;
     });
-
-    // Regra: A cada 6 trabalhados, ganha 1 folga. Saldo = (Trabalhados / 6) - Descansos feitos
-    // Math.floor para considerar apenas ciclos completos de 6 dias
     const folgasDireito = Math.floor(stats.trabalhados / 6);
     stats.saldoFolga = folgasDireito - stats.descansos;
-
     return stats;
   }, [escalaAtual]);
 
@@ -107,11 +102,15 @@ export default function AdminEscala() {
   }, [form.motorista_id]);
 
   const verificarPendenciasRestantes = async (motoristaId) => {
-    const escalaRef = collection(db, "cadastro_motoristas", motoristaId, "escala");
-    const q = query(escalaRef, where("ajustePendente", "==", true));
-    const snapshot = await getDocs(q);
-    if (snapshot.empty) {
-      await updateDoc(doc(db, "notificacoes_ajustes", motoristaId), { temPendencia: false });
+    try {
+      const escalaRef = collection(db, "cadastro_motoristas", motoristaId, "escala");
+      const q = query(escalaRef, where("ajustePendente", "==", true));
+      const snapshot = await getDocs(q);
+      await setDoc(doc(db, "notificacoes_ajustes", motoristaId), { 
+        temPendencia: !snapshot.empty 
+      }, { merge: true });
+    } catch (error) {
+      console.error(error);
     }
   };
 
@@ -127,14 +126,18 @@ export default function AdminEscala() {
         ajustePendente: false,
         alteradoEm: new Date()
       }, { merge: true });
+
       await verificarPendenciasRestantes(form.motorista_id);
-      setForm({ ...form, diaPendente: null, obs: '' });
-    } catch (e) { alert("Erro ao salvar."); }
+      setForm({ ...form, diaPendente: null, obs: '', motivoMotorista: '' });
+      alert("Escala atualizada!");
+    } catch (e) { 
+      alert("Erro ao salvar."); 
+    }
   };
 
   const apagarNotificacao = async (id) => {
     if (window.confirm("Deseja remover este alerta?")) {
-        await updateDoc(doc(db, "notificacoes_ajustes", id), { temPendencia: false });
+        await setDoc(doc(db, "notificacoes_ajustes", id), { temPendencia: false }, { merge: true });
     }
   };
 
@@ -153,7 +156,6 @@ export default function AdminEscala() {
 
   return (
     <div style={styles.container}>
-      {/* SIDEBAR */}
       <div style={styles.sidebar}>
         <div style={styles.brand}>
           <div style={styles.logoIcon}><CalIcon size={20} color="#000" /></div>
@@ -170,7 +172,7 @@ export default function AdminEscala() {
                         <div key={n.id} style={styles.notifCard} onClick={() => setForm({...form, motorista_id: n.id, motorista_nome: n.nome})}>
                             <div style={{flex: 1}}>
                                 <div style={styles.notifNome}>{n.nome?.toUpperCase()}</div>
-                                <div style={styles.notifData}>Solicitou alteração</div>
+                                <div style={styles.notifData}>Verificar solicitações</div>
                             </div>
                             <button onClick={(e) => { e.stopPropagation(); apagarNotificacao(n.id); }} style={styles.trashBtn}>
                                 <CheckCircle size={16} color="#2ecc71" />
@@ -190,7 +192,7 @@ export default function AdminEscala() {
             value={form.motorista_id} 
             onChange={(e) => {
                const mot = motoristas.find(m => m.id === e.target.value);
-               setForm({...form, motorista_id: e.target.value, motorista_nome: mot?.nome || ''});
+               setForm({...form, motorista_id: e.target.value, motorista_nome: mot?.nome || '', diaPendente: null, motivoMotorista: ''});
             }}
           >
             <option value="">Selecione um motorista...</option>
@@ -209,6 +211,17 @@ export default function AdminEscala() {
                <span style={{fontSize: '10px', color: '#FFD700'}}>{form.motorista_nome}</span>
             </div>
 
+            {/* CAIXA DE MENSAGEM DO MOTORISTA */}
+            {form.motivoMotorista && (
+              <div style={styles.motivoAlerta}>
+                <div style={{display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '5px'}}>
+                  <Info size={12} color="#FFD700" />
+                  <span style={{fontSize: '10px', fontWeight: 'bold', color: '#FFD700'}}>JUSTIFICATIVA DO MOTORISTA:</span>
+                </div>
+                <p style={styles.motivoTexto}>{form.motivoMotorista}</p>
+              </div>
+            )}
+
             <div style={styles.statusGrid}>
               {Object.keys(opcoesStatus).map(st => (
                 <button 
@@ -225,7 +238,7 @@ export default function AdminEscala() {
             </div>
 
             <textarea 
-              placeholder="Motivo da alteração ou observação..." 
+              placeholder="Sua observação final..." 
               style={styles.textarea} 
               value={form.obs} 
               onChange={e => setForm({...form, obs: e.target.value})} 
@@ -238,38 +251,17 @@ export default function AdminEscala() {
         )}
       </div>
 
-      {/* ÁREA PRINCIPAL */}
       <div style={styles.calendarArea}>
-        {/* DASHBOARD DE SALDOS */}
+        {/* DASHBOARD MANTIDO */}
         <div style={styles.dashboard}>
-          <div style={styles.dashCard}>
-            <span style={styles.dashLabel}>SALDO DE FOLGAS</span>
-            <span style={{...styles.dashValue, color: estatisticas.saldoFolga >= 0 ? '#2ecc71' : '#e74c3c'}}>
-              {estatisticas.saldoFolga > 0 ? `+${estatisticas.saldoFolga}` : estatisticas.saldoFolga}
-            </span>
-            <span style={styles.dashSub}>Regra 6x1</span>
-          </div>
-          <div style={styles.dashCard}>
-            <span style={styles.dashLabel}>TRABALHADOS</span>
-            <span style={styles.dashValue}>{estatisticas.trabalhados}</span>
-            <span style={styles.dashSub}>Dias no mês</span>
-          </div>
-          <div style={styles.dashCard}>
-            <span style={styles.dashLabel}>FALTAS</span>
-            <span style={{...styles.dashValue, color: '#e67e22'}}>{estatisticas.faltas}</span>
-            <span style={styles.dashSub}>Sem justificativa</span>
-          </div>
-          <div style={styles.dashCard}>
-            <span style={styles.dashLabel}>FÉRIAS / ATEST.</span>
-            <span style={{...styles.dashValue, color: '#3498db'}}>{estatisticas.ferias + estatisticas.atestados}</span>
-            <span style={styles.dashSub}>Afastamentos</span>
-          </div>
+          <div style={styles.dashCard}><span style={styles.dashLabel}>SALDO FOLGAS</span><span style={{...styles.dashValue, color: estatisticas.saldoFolga >= 0 ? '#2ecc71' : '#e74c3c'}}>{estatisticas.saldoFolga}</span></div>
+          <div style={styles.dashCard}><span style={styles.dashLabel}>TRABALHADOS</span><span style={styles.dashValue}>{estatisticas.trabalhados}</span></div>
+          <div style={styles.dashCard}><span style={styles.dashLabel}>FALTAS</span><span style={{...styles.dashValue, color: '#e67e22'}}>{estatisticas.faltas}</span></div>
+          <div style={styles.dashCard}><span style={styles.dashLabel}>FÉRIAS/AT.</span><span style={{...styles.dashValue, color: '#3498db'}}>{estatisticas.ferias + estatisticas.atestados}</span></div>
         </div>
 
         <div style={styles.calHeader}>
-          <h3 style={styles.monthName}>
-            {dataFiltro.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}
-          </h3>
+          <h3 style={styles.monthName}>{dataFiltro.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}</h3>
           <div style={styles.navGroup}>
             <button style={styles.navBtn} onClick={() => setDataFiltro(new Date(dataFiltro.setMonth(dataFiltro.getMonth()-1)))}><ChevronLeft/></button>
             <button style={styles.navBtn} onClick={() => setDataFiltro(new Date(dataFiltro.setMonth(dataFiltro.getMonth()+1)))}><ChevronRight/></button>
@@ -284,11 +276,17 @@ export default function AdminEscala() {
             return (
               <div 
                 key={idx} 
-                onClick={() => item && setForm({...form, diaPendente: item.dataIso, obs: dado?.motivoSolicitado || dado?.obs || '', status: dado?.status || 'P'})}
+                onClick={() => item && setForm({
+                  ...form, 
+                  diaPendente: item.dataIso, 
+                  obs: dado?.obs || '', 
+                  status: dado?.status || 'P',
+                  motivoMotorista: dado?.motivoSolicitado || '' // <-- PEGA O MOTIVO AQUI
+                })}
                 style={{
                   ...styles.dayBox,
                   opacity: item ? 1 : 0,
-                  border: sel ? '2px solid #FFD700' : '1px solid #1a1a1a',
+                  border: sel ? '2px solid #FFD700' : (dado?.ajustePendente ? '1px solid #FF85A2' : '1px solid #1a1a1a'),
                   cursor: item ? 'pointer' : 'default'
                 }}
               >
@@ -325,7 +323,6 @@ const styles = {
   textarea: { width: '100%', height: '70px', background: '#111', border: '1px solid #222', color: '#fff', borderRadius: '8px', padding: '10px', marginBottom: '15px', resize: 'none', fontSize: '12px' },
   saveBtn: { width: '100%', padding: '14px', background: '#FFD700', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
   divider: { border: '0', borderTop: '1px solid #1a1a1a', margin: '20px 0' },
-  
   notifSection: { marginBottom: '10px' },
   notifList: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '150px', overflowY: 'auto' },
   notifCard: { display: 'flex', alignItems: 'center', background: '#111', padding: '10px', borderRadius: '8px', border: '1px solid #222', cursor: 'pointer' },
@@ -333,16 +330,12 @@ const styles = {
   notifData: { fontSize: '9px', color: '#555' },
   emptyNotif: { fontSize: '11px', color: '#333', textAlign: 'center', padding: '10px' },
   trashBtn: { background: 'transparent', border: 'none', cursor: 'pointer', padding: '5px' },
-
   calendarArea: { flex: 1, background: '#0a0a0a', padding: '20px', borderRadius: '15px', border: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column' },
-  
-  // Dashboard Styles
   dashboard: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginBottom: '25px' },
   dashCard: { background: '#111', border: '1px solid #1a1a1a', padding: '15px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   dashLabel: { fontSize: '9px', color: '#555', fontWeight: 'bold', marginBottom: '5px' },
   dashValue: { fontSize: '24px', fontWeight: '900', color: '#fff' },
   dashSub: { fontSize: '8px', color: '#333', marginTop: '4px', textTransform: 'uppercase' },
-
   calHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   monthName: { color: '#FFD700', margin: 0, fontSize: '20px', fontWeight: '900' },
   navGroup: { display: 'flex', gap: '8px' },
@@ -354,5 +347,8 @@ const styles = {
   dayHeader: { display: 'flex', justifyContent: 'space-between', zIndex: 2 },
   dayFooter: { zIndex: 2 },
   pulseContainer: { position: 'relative', width: '8px', height: '8px' },
-  pulseDot: { width: '8px', height: '8px', background: '#FFD700', borderRadius: '50%', boxShadow: '0 0 10px #FFD700' }
+  pulseDot: { width: '8px', height: '8px', background: '#FFD700', borderRadius: '50%', boxShadow: '0 0 10px #FFD700' },
+  // ESTILOS DA CAIXA DE MOTIVO
+  motivoAlerta: { background: 'rgba(255, 215, 0, 0.1)', border: '1px solid #FFD700', borderRadius: '8px', padding: '10px', marginBottom: '15px' },
+  motivoTexto: { margin: 0, fontSize: '12px', color: '#fff', fontStyle: 'italic' }
 };

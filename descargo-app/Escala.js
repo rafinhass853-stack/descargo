@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   StyleSheet, View, Text, TouchableOpacity, 
-  ScrollView, ActivityIndicator, Dimensions, Alert
+  ScrollView, ActivityIndicator, Dimensions, Alert, TextInput
 } from 'react-native';
 import { 
   collection, onSnapshot, doc, setDoc, serverTimestamp, query, where, getDocs 
@@ -16,6 +16,8 @@ export default function Escala({ auth, db }) {
   const [loading, setLoading] = useState(true);
   const [userData, setUserData] = useState(null);
   const [diaSelecionado, setDiaSelecionado] = useState(null);
+  const [motivoAjuste, setMotivoAjuste] = useState('');
+  const [enviando, setEnviando] = useState(false);
 
   const opcoesStatus = {
     'P': { label: 'Trabalhado', color: '#2ecc71' },
@@ -36,7 +38,6 @@ export default function Escala({ auth, db }) {
         const q = query(collection(db, "cadastro_motoristas"), where("uid", "==", user.uid));
         const querySnapshot = await getDocs(q);
         if (!querySnapshot.empty) {
-          // Captura o nome correto para enviar na notificação
           setUserData({ id: querySnapshot.docs[0].id, ...querySnapshot.docs[0].data() });
         }
       } catch (error) {
@@ -83,39 +84,39 @@ export default function Escala({ auth, db }) {
     return contagem;
   }, [diasDoMes, escalaAtual]);
 
-  // FUNÇÃO AJUSTADA PARA O NOVO PAINEL GESTOR
-  const enviarSolicitacao = async (dataIso, motivo) => {
-    if (!motivo || motivo.trim() === "") {
-      return Alert.alert("Atenção", "Você precisa descrever o motivo.");
+  const enviarSolicitacao = async () => {
+    if (!motivoAjuste || motivoAjuste.trim() === "") {
+      return Alert.alert("Atenção", "Por favor, digite o motivo do ajuste.");
     }
     
+    setEnviando(true);
     try {
       const user = auth.currentUser;
       const motoristaId = user.uid;
-      const nomeMotorista = userData?.nome || "Motorista Desconhecido";
+      const dataIso = diaSelecionado.dataIso;
       
-      // 1. Marca o dia específico como pendente na escala do motorista
       await setDoc(doc(db, "cadastro_motoristas", motoristaId, "escala", dataIso), {
         ajustePendente: true,
-        motivoSolicitado: motivo,
+        motivoSolicitado: motivoAjuste,
         solicitadoEm: serverTimestamp()
       }, { merge: true });
 
-      // 2. Alerta o Painel dos seus amigos (Coleção Global de Notificações)
       await setDoc(doc(db, "notificacoes_ajustes", motoristaId), {
         motoristaId: motoristaId,
-        nome: nomeMotorista,
+        nome: userData?.nome || "Motorista",
         ultimaSolicitacao: serverTimestamp(),
         temPendencia: true,
-        dataDoAjuste: dataIso, // Informação extra para facilitar a vida do gestor
-        motivo: motivo
+        dataDoAjuste: dataIso, 
+        motivo: motivoAjuste 
       }, { merge: true });
 
-      Alert.alert("Sucesso", "O gestor foi notificado. Aguarde a atualização no seu calendário.");
+      Alert.alert("Enviado", "Sua solicitação foi enviada ao gestor.");
+      setMotivoAjuste('');
       setDiaSelecionado(null);
     } catch (error) {
-      console.error(error);
-      Alert.alert("Erro", "Falha ao enviar. Tente novamente.");
+      Alert.alert("Erro", "Falha ao enviar solicitação.");
+    } finally {
+      setEnviando(false);
     }
   };
 
@@ -152,26 +153,29 @@ export default function Escala({ auth, db }) {
             return (
               <TouchableOpacity 
                 key={idx} 
-                onPress={() => item && setDiaSelecionado({ ...item, ...dado })}
+                onPress={() => {
+                    item && setDiaSelecionado({ ...item, ...dado });
+                    setMotivoAjuste('');
+                }}
                 style={[
                   styles.dayBox, 
                   { 
                     backgroundColor: item ? '#111' : 'transparent', 
-                    borderColor: isSel ? '#FFD700' : '#222', 
-                    borderWidth: isSel ? 2 : 1 
+                    borderColor: isSel ? '#FFD700' : (dado?.ajustePendente ? '#FFD700' : '#222'), 
+                    borderWidth: (isSel || dado?.ajustePendente) ? 1.5 : 1 
                   }
                 ]}
               >
                 {dado?.color && <View style={[styles.statusLine, { backgroundColor: dado.color }]} />}
                 <Text style={[styles.dayNumber, { color: item ? (dado ? '#FFF' : '#666') : 'transparent' }]}>{item?.dia}</Text>
-                {dado?.ajustePendente && <View style={styles.pulseDot} />}
+                {dado?.ajustePendente && <View style={styles.miniBadge} />}
               </TouchableOpacity>
             );
           })}
         </View>
 
         <View style={styles.resumoContainer}>
-          <Text style={styles.resumoTitle}>CONTAGEM DO MÊS</Text>
+          <Text style={styles.resumoTitle}>RESUMO DO MÊS</Text>
           <View style={styles.resumoGrid}>
             {Object.entries(opcoesStatus).map(([key, value]) => (
               <View key={key} style={styles.resumoItem}>
@@ -191,23 +195,41 @@ export default function Escala({ auth, db }) {
                 <Ionicons name="close-circle" size={24} color="#444" />
               </TouchableOpacity>
             </View>
+
             <Text style={styles.detailStatus}>
-              Status: <Text style={{ color: diaSelecionado.color || '#666' }}>{diaSelecionado.legenda || 'Não definido'}</Text>
+              Status: <Text style={{ color: diaSelecionado.color || '#666', fontWeight: 'bold' }}>{diaSelecionado.legenda || 'Vazio'}</Text>
             </Text>
-            
-            <TouchableOpacity 
-              style={styles.ajusteBtn}
-              onPress={() => Alert.prompt(
-                "Solicitar Ajuste", 
-                "Explique ao gestor o motivo da alteração:", 
-                [
-                  { text: "Cancelar", style: "cancel" }, 
-                  { text: "Enviar Notificação", onPress: (motivo) => enviarSolicitacao(diaSelecionado.dataIso, motivo) }
-                ]
-              )}
-            >
-              <Text style={styles.ajusteBtnText}>NOTIFICAR GESTOR</Text>
-            </TouchableOpacity>
+
+            {diaSelecionado.ajustePendente ? (
+              <View style={styles.statusAguardando}>
+                <Ionicons name="hourglass-outline" size={20} color="#FFD700" />
+                <Text style={styles.aguardandoText}>Solicitação enviada ao gestor</Text>
+                <Text style={styles.motivoPrevio}>"{diaSelecionado.motivoSolicitado}"</Text>
+              </View>
+            ) : (
+              <View style={styles.areaAjuste}>
+                <Text style={styles.labelInput}>DESCREVA O MOTIVO DO AJUSTE:</Text>
+                <TextInput 
+                  style={styles.input}
+                  placeholder="Ex: Trabalhei neste dia mas consta folga..."
+                  placeholderTextColor="#444"
+                  value={motivoAjuste}
+                  onChangeText={setMotivoAjuste}
+                  multiline
+                />
+                <TouchableOpacity 
+                  style={[styles.ajusteBtn, { opacity: enviando ? 0.6 : 1 }]} 
+                  onPress={enviarSolicitacao}
+                  disabled={enviando}
+                >
+                  {enviando ? (
+                    <ActivityIndicator color="#000" size="small" />
+                  ) : (
+                    <Text style={styles.ajusteBtnText}>SOLICITAR AJUSTE</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         )}
       </ScrollView>
@@ -226,12 +248,12 @@ const styles = StyleSheet.create({
   monthText: { color: '#FFF', fontWeight: '900', fontSize: 14, letterSpacing: 1 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 15, justifyContent: 'center' },
   weekDayText: { width: (width - 40) / 7, textAlign: 'center', color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 8 },
-  dayBox: { width: (width - 50) / 7, height: height * 0.065, margin: 2, borderRadius: 8, justifyContent: 'center', alignItems: 'center', overflow: 'hidden' },
+  dayBox: { width: (width - 50) / 7, height: height * 0.065, margin: 2, borderRadius: 8, justifyContent: 'center', alignItems: 'center' },
   statusLine: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 4 },
   dayNumber: { fontSize: 17, fontWeight: 'bold' },
-  pulseDot: { position: 'absolute', top: 5, right: 5, width: 8, height: 8, backgroundColor: '#FFD700', borderRadius: 4, borderWidth: 1, borderColor: '#000' },
+  miniBadge: { position: 'absolute', top: 5, right: 5, width: 6, height: 6, backgroundColor: '#FFD700', borderRadius: 3 },
   resumoContainer: { marginHorizontal: 20, marginTop: 15, padding: 15, backgroundColor: '#0A0A0A', borderRadius: 15, borderWidth: 1, borderColor: '#1A1A1A' },
-  resumoTitle: { color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 12, letterSpacing: 1 },
+  resumoTitle: { color: '#444', fontSize: 10, fontWeight: '900', marginBottom: 12 },
   resumoGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   resumoItem: { flexDirection: 'row', alignItems: 'center', width: '48%', marginBottom: 8 },
   resumoDot: { width: 7, height: 7, borderRadius: 4, marginRight: 6 },
@@ -239,8 +261,14 @@ const styles = StyleSheet.create({
   resumoValue: { color: '#FFF', fontSize: 12, fontWeight: 'bold' },
   detailCard: { margin: 20, padding: 20, backgroundColor: '#0D0D0D', borderRadius: 20, borderColor: '#222', borderWidth: 1 },
   detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  detailTitle: { color: '#FFF', fontSize: 20, fontWeight: 'bold' },
-  detailStatus: { color: '#888', fontSize: 15, marginBottom: 15 },
+  detailTitle: { color: '#FFF', fontSize: 22, fontWeight: 'bold' },
+  detailStatus: { color: '#888', fontSize: 14, marginBottom: 20 },
+  areaAjuste: { marginTop: 10 },
+  labelInput: { color: '#FFD700', fontSize: 10, fontWeight: '900', marginBottom: 8 },
+  input: { backgroundColor: '#111', color: '#FFF', borderRadius: 10, padding: 12, fontSize: 14, textAlignVertical: 'top', height: 80, borderWidth: 1, borderColor: '#222', marginBottom: 15 },
   ajusteBtn: { backgroundColor: '#FFD700', padding: 15, borderRadius: 12, alignItems: 'center' },
-  ajusteBtnText: { color: '#000', fontWeight: '900', fontSize: 13 }
+  ajusteBtnText: { color: '#000', fontWeight: '900', fontSize: 13 },
+  statusAguardando: { alignItems: 'center', paddingVertical: 10 },
+  aguardandoText: { color: '#FFD700', fontWeight: 'bold', marginTop: 8 },
+  motivoPrevio: { color: '#444', fontSize: 12, fontStyle: 'italic', marginTop: 5, textAlign: 'center' }
 });
