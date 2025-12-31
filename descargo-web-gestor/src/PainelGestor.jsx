@@ -5,7 +5,7 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
     Truck, Users, LayoutDashboard, ClipboardList, 
     LogOut, Fuel, Settings, UserCheck, Bell, Container,
-    MapPin, FileText, Route, CalendarDays // Importado ícone para Escala
+    MapPin, FileText, Route, CalendarDays, Gauge // Adicionado Gauge aqui
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -17,7 +17,8 @@ import Notificacoes from './Notificacoes';
 import ClientesPontos from './ClientesPontos';
 import Folgas from './Folgas';
 import Roteirizacao from './Roteirizacao';
-import Escala from './Escala'; // Importando a nova tela de gestão de escala
+import Escala from './Escala';
+import JornadaHodometro from './JornadaHodometro'; // Importado aqui
 
 // Importação dos Dashboards
 import DashboardGeral from './DashboardGeral';
@@ -66,8 +67,11 @@ const PainelGestor = () => {
             case 'roteirizacao':
                 return <Roteirizacao />;
             
-            case 'escala': // Novo caso para a tela de Escala
+            case 'escala':
                 return <Escala />;
+            
+            case 'jornada_hodometro': // Adicionado o caso para a nova tela
+                return <JornadaHodometro />;
             
             case 'cargas': return <PainelCargas />;
             case 'veiculos': return <Veiculos />;
@@ -89,9 +93,13 @@ const PainelGestor = () => {
                         <LayoutDashboard size={18} /> Monitoramento
                     </div>
 
-                    {/* Novo item de menu: Escala Motoristas */}
                     <div onClick={() => setMenuAtivo('escala')} style={menuAtivo === 'escala' ? styles.navItemAtivo : styles.navItem}>
                         <CalendarDays size={18} /> Escala Motoristas
+                    </div>
+
+                    {/* Novo item de menu: Jornada e Hodômetro */}
+                    <div onClick={() => setMenuAtivo('jornada_hodometro')} style={menuAtivo === 'jornada_hodometro' ? styles.navItemAtivo : styles.navItem}>
+                        <Gauge size={18} /> Jornada e Hodômetro
                     </div>
 
                     <div onClick={() => setMenuAtivo('relatorio_viagens')} style={menuAtivo === 'relatorio_viagens' ? styles.navItemAtivo : styles.navItem}>

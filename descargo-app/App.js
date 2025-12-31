@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { FontAwesome, MaterialCommunityIcons, Ionicons, MaterialIcons } from '@expo/vector-icons';
 
 // Componentes do Sistema
@@ -50,7 +51,15 @@ import {
   and 
 } from 'firebase/firestore';
 
-// Configuração Firebase
+const LOCATION_TASK_NAME = 'background-location-task';
+
+TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
+  if (error) return;
+  if (data) {
+    const { locations } = data;
+  }
+});
+
 const firebaseConfig = {
   apiKey: "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -73,8 +82,8 @@ try {
 
 const db = getFirestore(app);
 
-// COMPONENTE DE MAPA ISOLADO (Para evitar o flash do velocímetro)
 const MapViewStatic = memo(({ html, webviewRef }) => {
+  if (!html) return <View style={{flex: 1, backgroundColor: '#000', justifyContent: 'center'}}><ActivityIndicator color="#FFD700" /></View>;
   return (
     <WebView
       ref={webviewRef}
@@ -112,6 +121,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
+  const [hasCentered, setHasCentered] = useState(false); // Flag para evitar reset de zoom
   const [currentSpeed, setCurrentSpeed] = useState(0); 
   const [cargaAtiva, setCargaAtiva] = useState(null);
   const [todasAsCercas, setTodasAsCercas] = useState([]);
@@ -124,10 +134,12 @@ export default function App() {
 
   const openLink = (url) => Linking.openURL(url);
 
-  // GERAÇÃO DO HTML APENAS QUANDO ESTRUTURA MUDA
+  // GERAÇÃO DO HTML - Só gera se tiver localização
   const mapHtml = useMemo(() => {
-    const lat = location?.latitude || -23.5505;
-    const lng = location?.longitude || -46.6333;
+    if (!location) return null;
+
+    const lat = location.latitude;
+    const lng = location.longitude;
 
     const cercasJs = todasAsCercas.map(item => {
       if (!item.geofence) return '';
@@ -182,11 +194,26 @@ export default function App() {
       </body>
       </html>
     `;
-  }, [todasAsCercas.length, rotaCoords.length, (cargaAtiva?.id || null)]);
+  }, [todasAsCercas.length, rotaCoords.length, !!location, (cargaAtiva?.id || null)]);
 
+  // Sincroniza posição com o WebView
   useEffect(() => {
     if (location && webviewRef.current) {
-      webviewRef.current.postMessage(JSON.stringify({ type: 'updateLoc', lat: location.latitude, lng: location.longitude }));
+      webviewRef.current.postMessage(JSON.stringify({ 
+        type: 'updateLoc', 
+        lat: location.latitude, 
+        lng: location.longitude 
+      }));
+      
+      // Se for a primeira vez que pegamos sinal real, força o mapa a ir para lá
+      if (!hasCentered) {
+        webviewRef.current.postMessage(JSON.stringify({ 
+          type: 'center', 
+          lat: location.latitude, 
+          lng: location.longitude 
+        }));
+        setHasCentered(true);
+      }
     }
   }, [location?.latitude, location?.longitude]);
 
@@ -287,6 +314,7 @@ export default function App() {
       }
       dados.statusOperacional = extra.statusOperacional || statusOperacional || "Sem programação";
       dados.statusJornada = extra.statusJornada || statusJornada || "fora da jornada";
+      dados.velocidade = currentSpeed; 
       await setDoc(doc(db, "localizacao_realtime", cur.uid), dados, { merge: true });
     } catch (e) { console.error("Erro sincronia:", e); }
   };
@@ -317,17 +345,6 @@ export default function App() {
     await updateDoc(doc(db, "ordens_servico", id), { status: "ACEITO", aceitoEm: serverTimestamp() });
     setStatusOperacional(op); setCargaAtiva({ id, ...d }); 
     sincronizarComFirestore({ statusOperacional: op });
-  };
-
-  const solicitarRotaGestor = async () => {
-    if (!cargaAtiva) return;
-    try {
-      await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), {
-        solicitarRota: true,
-        solicitadoEm: serverTimestamp()
-      });
-      Alert.alert("Solicitado", "Aviso enviado ao painel operacional.");
-    } catch (e) { Alert.alert("Erro", "Falha ao solicitar."); }
   };
 
   const finalizarViagem = async () => {
@@ -363,8 +380,24 @@ export default function App() {
     let sub;
     if (isLoggedIn) {
       (async () => {
-        let { status } = await Location.requestForegroundPermissionsAsync();
-        if (status !== 'granted') return;
+        let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
+        if (fgStatus !== 'granted') return;
+
+        if (Platform.OS === 'android') {
+            await Location.requestBackgroundPermissionsAsync();
+        }
+
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+            accuracy: Location.Accuracy.BestForNavigation,
+            timeInterval: 5000,
+            distanceInterval: 10,
+            foregroundService: {
+                notificationTitle: "Descargo Proteção",
+                notificationBody: "Monitoramento de rota ativo.",
+                notificationColor: "#FFD700"
+            }
+        });
+
         sub = await Location.watchPositionAsync({ 
             accuracy: Location.Accuracy.High, 
             timeInterval: 2000, 
@@ -387,7 +420,6 @@ export default function App() {
       case 'painel':
         return (
           <View style={{flex: 1}}>
-            {/* O MAPA AGORA ESTÁ ISOLADO EM UM COMPONENTE MEMORIZADO */}
             <MapViewStatic html={mapHtml} webviewRef={webviewRef} />
             
             <View style={styles.speedometerContainer}>
@@ -419,22 +451,9 @@ export default function App() {
                 <View style={styles.routeHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.routeLabel}>
-                       {cargaAtiva.trajeto?.length > 0 ? '🛣️ ROTA PLANEJADA' : '⚠️ VIAGEM SEM ROTA'} • DT {cargaAtiva.dt || '---'}
+                        {cargaAtiva.trajeto?.length > 0 ? '🛣️ ROTA PLANEJADA' : '⚠️ VIAGEM SEM ROTA'} • DT {cargaAtiva.dt || '---'}
                     </Text>
                     <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.cliente_destino}</Text>
-                    
-                    {!cargaAtiva.trajeto || cargaAtiva.trajeto.length === 0 ? (
-                      <TouchableOpacity 
-                        style={[styles.btnSolicitarRota, cargaAtiva.solicitarRota && { opacity: 0.6 }]} 
-                        onPress={solicitarRotaGestor}
-                        disabled={cargaAtiva.solicitarRota}
-                      >
-                        <MaterialIcons name="alt-route" size={14} color="#000" />
-                        <Text style={styles.btnSolicitarText}>
-                          {cargaAtiva.solicitarRota ? "ROTA SOLICITADA..." : "SOLICITAR CRIAÇÃO DA ROTA"}
-                        </Text>
-                      </TouchableOpacity>
-                    ) : null}
                   </View>
                   <TouchableOpacity onPress={finalizarViagem}>
                     <Ionicons name="checkmark-done-circle" size={45} color={chegouAoDestino ? "#2ecc71" : "#333"} />
@@ -443,7 +462,9 @@ export default function App() {
               </View>
             )}
             <TouchableOpacity style={styles.floatingGps} onPress={() => {
-                if (webviewRef.current && location) { webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude })); }
+                if (webviewRef.current && location) { 
+                  webviewRef.current.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude })); 
+                }
             }}>
               <MaterialIcons name="my-location" size={24} color="#FFD700" />
             </TouchableOpacity>
@@ -568,8 +589,6 @@ const styles = StyleSheet.create({
   routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', marginBottom: 2 },
   routeInfo: { color: '#FFF', fontSize: 18, fontWeight: '900' },
   routeHeader: { flexDirection: 'row', alignItems: 'center' },
-  btnSolicitarRota: { backgroundColor: '#FFD700', flexDirection: 'row', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 8, marginTop: 10, alignSelf: 'flex-start', gap: 6 },
-  btnSolicitarText: { color: '#000', fontSize: 10, fontWeight: 'bold' },
   floatingGps: { position: 'absolute', bottom: 200, right: 20, backgroundColor: 'rgba(0,0,0,0.9)', padding: 12, borderRadius: 50, borderWidth: 1, borderColor: '#222' },
   floatingNavContainer: { position: 'absolute', bottom: 30, left: 0, right: 0, alignItems: 'center' },
   floatingNav: { flexDirection: 'row', backgroundColor: 'rgba(15,15,15,0.98)', paddingVertical: 12, paddingHorizontal: 15, borderRadius: 40, borderWidth: 1, borderColor: '#222', gap: 15, elevation: 10 },
