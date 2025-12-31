@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polygon, Circle } from 'react-leaflet';
 import MarkerClusterGroup from 'react-leaflet-markercluster';
 import { 
-    Users, AlertCircle, Truck, Search, MapPin, Eye, MessageCircle, Container, Navigation
+    Users, AlertCircle, Truck, Search, MapPin, Eye, MessageCircle, Container, Navigation, Gauge
 } from 'lucide-react';
 import L from 'leaflet';
 import { db } from "./firebase";
@@ -36,6 +36,14 @@ const DashboardGeral = () => {
     const [cargasAtivas, setCargasAtivas] = useState({}); 
     const [mapFocus, setMapFocus] = useState({ center: [-21.78, -48.17], zoom: 6 });
     const [filtroGrid, setFiltroGrid] = useState("");
+
+    // --- NOVA FUNÇÃO DE STATUS DE VELOCIDADE ---
+    const getStatusVelocidade = (vel) => {
+        const v = parseFloat(vel) || 0;
+        if (v <= 0) return { label: 'PARADO', color: '#7f8c8d', bg: '#2c3e50' };
+        if (v > 0 && v <= 80) return { label: 'MOVIMENTO', color: '#2ecc71', bg: '#1b5e20' };
+        return { label: 'ALTA', color: '#e74c3c', bg: '#7b1f1f' };
+    };
 
     useEffect(() => {
         const unsubMot = onSnapshot(query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc")), (snapshot) => {
@@ -88,6 +96,7 @@ const DashboardGeral = () => {
                         email: d.email?.toLowerCase().trim(),
                         cidade: d.cidade || "Não identificado",
                         uf: d.uf || "",
+                        velocidade: d.velocidade || 0, // CAMPO VELOCIDADE ADICIONADO
                         ultima: d.ultimaAtualizacao?.toDate ? 
                                 d.ultimaAtualizacao.toDate().toLocaleString('pt-BR', {
                                     day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
@@ -193,6 +202,7 @@ const DashboardGeral = () => {
                                             <strong style={{fontSize: '14px'}}>{m.nome.toUpperCase()}</strong><br/>
                                             {placas.cavalo && <span>🚛 {placas.cavalo} / {placas.carreta}</span>}<br/>
                                             <hr/>
+                                            <strong>Velocidade:</strong> {gps.velocidade} km/h<br/>
                                             <strong>Status:</strong> {gps.statusOp}<br/>
                                             <strong>Local:</strong> {gps.cidade} - {gps.uf}<br/>
                                             {carga && (
@@ -222,6 +232,7 @@ const DashboardGeral = () => {
                             <th style={styles.th}>CARGA ATIVA</th>
                             <th style={styles.th}>GPS STATUS</th>
                             <th style={styles.th}>OPERACIONAL</th>
+                            <th style={styles.th}>VELOCIDADE</th> {/* NOVA COLUNA */}
                         </tr>
                     </thead>
                     <tbody>
@@ -231,6 +242,8 @@ const DashboardGeral = () => {
                                 const gps = getGPS(m);
                                 const placas = getPlacasMotorista(m.id);
                                 const carga = getCarga(m.id);
+                                const vStatus = gps ? getStatusVelocidade(gps.velocidade) : null;
+
                                 return (
                                     <tr key={m.id} style={{ borderBottom: '1px solid #111' }}>
                                         <td style={styles.td}>
@@ -295,6 +308,28 @@ const DashboardGeral = () => {
                                             <div style={{ fontSize: '9px', color: '#FFD700' }}>
                                                 {gps ? gps.statusJornada : ''}
                                             </div>
+                                        </td>
+                                        {/* NOVA COLUNA VELOCIDADE COM BADGE */}
+                                        <td style={styles.td}>
+                                            {gps ? (
+                                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                                    <span style={{ 
+                                                        fontSize: '9px', 
+                                                        fontWeight: 'bold', 
+                                                        color: vStatus.color, 
+                                                        backgroundColor: vStatus.bg,
+                                                        padding: '2px 6px',
+                                                        borderRadius: '4px',
+                                                        textAlign: 'center',
+                                                        width: 'fit-content'
+                                                    }}>
+                                                        {vStatus.label}
+                                                    </span>
+                                                    <span style={{ fontSize: '11px', color: '#fff', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                                        <Gauge size={12} color="#666" /> {gps.velocidade} km/h
+                                                    </span>
+                                                </div>
+                                            ) : '---'}
                                         </td>
                                     </tr>
                                 );

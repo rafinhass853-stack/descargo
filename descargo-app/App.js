@@ -121,7 +121,7 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [location, setLocation] = useState(null);
-  const [hasCentered, setHasCentered] = useState(false); // Flag para evitar reset de zoom
+  const [hasCentered, setHasCentered] = useState(false); 
   const [currentSpeed, setCurrentSpeed] = useState(0); 
   const [cargaAtiva, setCargaAtiva] = useState(null);
   const [todasAsCercas, setTodasAsCercas] = useState([]);
@@ -134,7 +134,6 @@ export default function App() {
 
   const openLink = (url) => Linking.openURL(url);
 
-  // GERAÇÃO DO HTML - Só gera se tiver localização
   const mapHtml = useMemo(() => {
     if (!location) return null;
 
@@ -196,7 +195,6 @@ export default function App() {
     `;
   }, [todasAsCercas.length, rotaCoords.length, !!location, (cargaAtiva?.id || null)]);
 
-  // Sincroniza posição com o WebView
   useEffect(() => {
     if (location && webviewRef.current) {
       webviewRef.current.postMessage(JSON.stringify({ 
@@ -205,7 +203,6 @@ export default function App() {
         lng: location.longitude 
       }));
       
-      // Se for a primeira vez que pegamos sinal real, força o mapa a ir para lá
       if (!hasCentered) {
         webviewRef.current.postMessage(JSON.stringify({ 
           type: 'center', 
@@ -307,14 +304,23 @@ export default function App() {
     const cur = auth.currentUser; 
     if (!cur) return;
     try {
-      const dados = { motoristaId: cur.uid, email: cur.email, ultimaAtualizacao: serverTimestamp() };
+      const dados = { 
+        motoristaId: cur.uid, 
+        email: cur.email, 
+        ultimaAtualizacao: serverTimestamp() 
+      };
+
       if (extra.latitude || location?.latitude) {
         dados.latitude = extra.latitude || location.latitude;
         dados.longitude = extra.longitude || location.longitude;
       }
+      
       dados.statusOperacional = extra.statusOperacional || statusOperacional || "Sem programação";
       dados.statusJornada = extra.statusJornada || statusJornada || "fora da jornada";
-      dados.velocidade = currentSpeed; 
+      
+      // Captura a velocidade direto do parâmetro extra para evitar atraso de estado
+      dados.velocidade = extra.velocidade !== undefined ? extra.velocidade : currentSpeed; 
+
       await setDoc(doc(db, "localizacao_realtime", cur.uid), dados, { merge: true });
     } catch (e) { console.error("Erro sincronia:", e); }
   };
@@ -404,10 +410,18 @@ export default function App() {
             distanceInterval: 1 
         }, (loc) => {
           if (loc.coords) { 
-            setLocation(loc.coords); 
             const speedKmh = loc.coords.speed ? Math.round(loc.coords.speed * 3.6) : 0;
-            setCurrentSpeed(speedKmh < 0 ? 0 : speedKmh);
-            sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude }); 
+            const finalSpeed = speedKmh < 0 ? 0 : speedKmh;
+            
+            setLocation(loc.coords); 
+            setCurrentSpeed(finalSpeed);
+            
+            // Sincroniza passando a velocidade calculada agora
+            sincronizarComFirestore({ 
+              latitude: loc.coords.latitude, 
+              longitude: loc.coords.longitude,
+              velocidade: finalSpeed 
+            }); 
           }
         });
       })();
