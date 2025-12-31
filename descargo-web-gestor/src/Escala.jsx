@@ -6,10 +6,10 @@ import {
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
   Save, ChevronLeft, ChevronRight, 
-  Calendar as CalIcon, CheckCircle, Trash2, Info
+  Calendar as CalIcon, CheckCircle, Trash2, Info, XCircle
 } from 'lucide-react';
 
-// --- CONFIGURAÇÃO FIREBASE (MANTIDA) ---
+// --- CONFIGURAÇÃO FIREBASE ---
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -35,9 +35,10 @@ export default function AdminEscala() {
     status: 'P',
     obs: '',
     diaPendente: null,
-    motivoMotorista: '' // <-- NOVO CAMPO
+    motivoMotorista: ''
   });
 
+  // Adicionada a opção 'LIMPAR' para ocupar o espaço vazio
   const opcoesStatus = {
     'P': { label: 'Trabalhado', color: '#2ecc71' },
     'DS': { label: 'Descanso', color: '#ff85a2' },
@@ -46,6 +47,17 @@ export default function AdminEscala() {
     'A': { label: 'Atestado', color: '#f1c40f' },
     'D': { label: 'Demitido', color: '#e74c3c' },
     'C1': { label: 'Contratado', color: '#00ced1' },
+    'LIMPAR': { label: 'Limpar Dia', color: '#333' }, 
+  };
+
+  const limparForm = () => {
+    setForm({
+      ...form,
+      diaPendente: null,
+      obs: '',
+      status: 'P',
+      motivoMotorista: ''
+    });
   };
 
   const estatisticas = useMemo(() => {
@@ -117,18 +129,32 @@ export default function AdminEscala() {
   const salvarEscala = async () => {
     if (!form.motorista_id || !form.diaPendente) return alert("Selecione um dia no calendário!");
     try {
-      const info = opcoesStatus[form.status];
-      await setDoc(doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente), {
-        status: form.status,
-        color: info.color,
-        legenda: info.label,
-        obs: form.obs,
-        ajustePendente: false,
-        alteradoEm: new Date()
-      }, { merge: true });
+      const docRef = doc(db, "cadastro_motoristas", form.motorista_id, "escala", form.diaPendente);
+      
+      if (form.status === 'LIMPAR') {
+        // Remove os dados do status e cor, resetando o dia
+        await setDoc(docRef, {
+          status: null,
+          color: 'transparent',
+          legenda: '',
+          obs: '',
+          ajustePendente: false,
+          alteradoEm: new Date()
+        }, { merge: true });
+      } else {
+        const info = opcoesStatus[form.status];
+        await setDoc(docRef, {
+          status: form.status,
+          color: info.color,
+          legenda: info.label,
+          obs: form.obs,
+          ajustePendente: false,
+          alteradoEm: new Date()
+        }, { merge: true });
+      }
 
       await verificarPendenciasRestantes(form.motorista_id);
-      setForm({ ...form, diaPendente: null, obs: '', motivoMotorista: '' });
+      limparForm();
       alert("Escala atualizada!");
     } catch (e) { 
       alert("Erro ao salvar."); 
@@ -192,7 +218,7 @@ export default function AdminEscala() {
             value={form.motorista_id} 
             onChange={(e) => {
                const mot = motoristas.find(m => m.id === e.target.value);
-               setForm({...form, motorista_id: e.target.value, motorista_nome: mot?.nome || '', diaPendente: null, motivoMotorista: ''});
+               setForm({...form, motorista_id: e.target.value, motorista_nome: mot?.nome || '', diaPendente: null, motivoMotorista: '', obs: ''});
             }}
           >
             <option value="">Selecione um motorista...</option>
@@ -211,12 +237,10 @@ export default function AdminEscala() {
                <span style={{fontSize: '10px', color: '#FFD700'}}>{form.motorista_nome}</span>
             </div>
 
-            {/* CAIXA DE MENSAGEM DO MOTORISTA */}
             {form.motivoMotorista && (
               <div style={styles.motivoAlerta}>
                 <div style={{display: 'flex', gap: '5px', alignItems: 'center', marginBottom: '5px'}}>
-                  <Info size={12} color="#FFD700" />
-                  <span style={{fontSize: '10px', fontWeight: 'bold', color: '#FFD700'}}>JUSTIFICATIVA DO MOTORISTA:</span>
+                  <span style={{fontSize: '10px', fontWeight: 'bold', color: '#FFD700'}}>JUSTIFICATIVA:</span>
                 </div>
                 <p style={styles.motivoTexto}>{form.motivoMotorista}</p>
               </div>
@@ -229,11 +253,13 @@ export default function AdminEscala() {
                   onClick={() => setForm({...form, status: st})}
                   style={{
                     ...styles.statusBtn,
-                    backgroundColor: form.status === st ? opcoesStatus[st].color : '#1a1a1a',
-                    color: form.status === st ? '#000' : '#888',
+                    backgroundColor: form.status === st ? (st === 'LIMPAR' ? '#c0392b' : opcoesStatus[st].color) : '#1a1a1a',
+                    color: form.status === st ? '#fff' : '#888',
                     border: form.status === st ? '1px solid #fff' : 'none'
                   }}
-                >{st}</button>
+                >
+                  {st === 'LIMPAR' ? <Trash2 size={14} /> : st}
+                </button>
               ))}
             </div>
 
@@ -244,15 +270,19 @@ export default function AdminEscala() {
               onChange={e => setForm({...form, obs: e.target.value})} 
             />
 
-            <button onClick={salvarEscala} style={styles.saveBtn}>
-              <Save size={18} /> SALVAR ALTERAÇÃO
-            </button>
+            <div style={{display: 'flex', gap: '10px'}}>
+                <button onClick={limparForm} style={styles.clearBtn} title="Limpar campos">
+                   <XCircle size={18} /> LIMPAR
+                </button>
+                <button onClick={salvarEscala} style={styles.saveBtn}>
+                   <Save size={18} /> SALVAR
+                </button>
+            </div>
           </div>
         )}
       </div>
 
       <div style={styles.calendarArea}>
-        {/* DASHBOARD MANTIDO */}
         <div style={styles.dashboard}>
           <div style={styles.dashCard}><span style={styles.dashLabel}>SALDO FOLGAS</span><span style={{...styles.dashValue, color: estatisticas.saldoFolga >= 0 ? '#2ecc71' : '#e74c3c'}}>{estatisticas.saldoFolga}</span></div>
           <div style={styles.dashCard}><span style={styles.dashLabel}>TRABALHADOS</span><span style={styles.dashValue}>{estatisticas.trabalhados}</span></div>
@@ -273,6 +303,8 @@ export default function AdminEscala() {
           {gerarDias().map((item, idx) => {
             const dado = item ? escalaAtual[item.dataIso] : null;
             const sel = form.diaPendente === item?.dataIso;
+            const temStatusValido = dado?.status && dado?.status !== 'LIMPAR';
+            
             return (
               <div 
                 key={idx} 
@@ -281,7 +313,7 @@ export default function AdminEscala() {
                   diaPendente: item.dataIso, 
                   obs: dado?.obs || '', 
                   status: dado?.status || 'P',
-                  motivoMotorista: dado?.motivoSolicitado || '' // <-- PEGA O MOTIVO AQUI
+                  motivoMotorista: dado?.motivoSolicitado || ''
                 })}
                 style={{
                   ...styles.dayBox,
@@ -290,15 +322,15 @@ export default function AdminEscala() {
                   cursor: item ? 'pointer' : 'default'
                 }}
               >
-                {dado && <div style={{...styles.statusBackground, backgroundColor: dado.color}} />}
+                {temStatusValido && <div style={{...styles.statusBackground, backgroundColor: dado.color}} />}
                 <div style={styles.dayHeader}>
-                  <span style={{color: item ? (dado ? '#fff' : '#444') : 'transparent', fontWeight: 'bold'}}>{item?.dia}</span>
+                  <span style={{color: item ? (temStatusValido ? '#fff' : '#444') : 'transparent', fontWeight: 'bold'}}>{item?.dia}</span>
                   {dado?.ajustePendente && (
                     <div style={styles.pulseContainer}><div style={styles.pulseDot} /></div>
                   )}
                 </div>
                 <div style={styles.dayFooter}>
-                  <span style={{fontSize: '9px', color: dado?.color, fontWeight: 'bold'}}>{dado?.legenda}</span>
+                  <span style={{fontSize: '9px', color: dado?.color, fontWeight: 'bold'}}>{temStatusValido ? dado?.legenda : ''}</span>
                 </div>
               </div>
             );
@@ -319,9 +351,10 @@ const styles = {
   input: { width: '100%', padding: '12px', background: '#111', border: '1px solid #222', color: '#fff', borderRadius: '8px', marginBottom: '20px', outline: 'none', fontSize: '12px' },
   selectionInfo: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' },
   statusGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '5px', marginBottom: '15px' },
-  statusBtn: { padding: '10px 0', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold', transition: '0.2s' },
+  statusBtn: { padding: '10px 0', border: 'none', borderRadius: '5px', cursor: 'pointer', fontSize: '10px', fontWeight: 'bold', transition: '0.2s', display: 'flex', alignItems: 'center', justifyContent: 'center' },
   textarea: { width: '100%', height: '70px', background: '#111', border: '1px solid #222', color: '#fff', borderRadius: '8px', padding: '10px', marginBottom: '15px', resize: 'none', fontSize: '12px' },
-  saveBtn: { width: '100%', padding: '14px', background: '#FFD700', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+  saveBtn: { flex: 2, padding: '14px', background: '#FFD700', color: '#000', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+  clearBtn: { flex: 1, padding: '14px', background: '#222', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px', fontSize: '10px' },
   divider: { border: '0', borderTop: '1px solid #1a1a1a', margin: '20px 0' },
   notifSection: { marginBottom: '10px' },
   notifList: { display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '150px', overflowY: 'auto' },
@@ -335,7 +368,6 @@ const styles = {
   dashCard: { background: '#111', border: '1px solid #1a1a1a', padding: '15px', borderRadius: '12px', display: 'flex', flexDirection: 'column', alignItems: 'center' },
   dashLabel: { fontSize: '9px', color: '#555', fontWeight: 'bold', marginBottom: '5px' },
   dashValue: { fontSize: '24px', fontWeight: '900', color: '#fff' },
-  dashSub: { fontSize: '8px', color: '#333', marginTop: '4px', textTransform: 'uppercase' },
   calHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' },
   monthName: { color: '#FFD700', margin: 0, fontSize: '20px', fontWeight: '900' },
   navGroup: { display: 'flex', gap: '8px' },
@@ -348,7 +380,6 @@ const styles = {
   dayFooter: { zIndex: 2 },
   pulseContainer: { position: 'relative', width: '8px', height: '8px' },
   pulseDot: { width: '8px', height: '8px', background: '#FFD700', borderRadius: '50%', boxShadow: '0 0 10px #FFD700' },
-  // ESTILOS DA CAIXA DE MOTIVO
   motivoAlerta: { background: 'rgba(255, 215, 0, 0.1)', border: '1px solid #FFD700', borderRadius: '8px', padding: '10px', marginBottom: '15px' },
   motivoTexto: { margin: 0, fontSize: '12px', color: '#fff', fontStyle: 'italic' }
 };
