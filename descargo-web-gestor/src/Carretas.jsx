@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
 import { 
     collection, addDoc, onSnapshot, query, 
-    deleteDoc, doc, orderBy, updateDoc 
+    deleteDoc, doc, orderBy, updateDoc, getDocs, where 
 } from "firebase/firestore";
 import { 
     Container, Plus, Trash2, 
@@ -20,6 +20,13 @@ const Carretas = () => {
         motorista_id: '',
         motorista_nome: 'SEM MOTORISTA'
     });
+
+    // Função de máscara para placa (ABC-1234 ou ABC-1D23)
+    const formatarPlaca = (valor) => {
+        const v = valor.toUpperCase().replace(/[^A-Z0-9]/g, ""); 
+        if (v.length <= 3) return v;
+        return `${v.slice(0, 3)}-${v.slice(3, 7)}`;
+    };
 
     useEffect(() => {
         const qCarretas = query(collection(db, "carretas"), orderBy("placa", "asc"));
@@ -48,21 +55,40 @@ const Carretas = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!novaCarreta.placa || !novaCarreta.capacidade) return alert("Preencha os campos obrigatórios!");
+        
+        if (novaCarreta.placa.length < 8) {
+            alert("Placa inválida! Use o formato ABC-1234 ou ABC-1D23.");
+            return;
+        }
+        if (!novaCarreta.capacidade) return alert("Preencha a capacidade de paletes!");
 
         try {
+            // --- VERIFICAÇÃO DE DUPLICIDADE ---
+            const q = query(collection(db, "carretas"), where("placa", "==", novaCarreta.placa));
+            const querySnapshot = await getDocs(q);
+            
+            // Verifica se encontrou alguém com a mesma placa que não seja o documento que estou editando
+            const existeDuplicata = querySnapshot.docs.some(doc => doc.id !== editandoId);
+
+            if (existeDuplicata) {
+                alert("Erro: Já existe uma carreta cadastrada com esta placa!");
+                return;
+            }
+
             if (editandoId) {
                 await updateDoc(doc(db, "carretas", editandoId), novaCarreta);
                 setEditandoId(null);
             } else {
                 await addDoc(collection(db, "carretas"), novaCarreta);
             }
+            
             setNovaCarreta({ 
                 placa: '', tipo: 'Sider', capacidade: '', 
                 motorista_id: '', motorista_nome: 'SEM MOTORISTA' 
             });
         } catch (error) {
             console.error("Erro ao salvar carreta:", error);
+            alert("Erro ao salvar os dados.");
         }
     };
 
@@ -102,8 +128,9 @@ const Carretas = () => {
                     <input 
                         style={styles.input}
                         placeholder="ABC-1234"
+                        maxLength={8}
                         value={novaCarreta.placa}
-                        onChange={(e) => setNovaCarreta({...novaCarreta, placa: e.target.value.toUpperCase()})}
+                        onChange={(e) => setNovaCarreta({...novaCarreta, placa: formatarPlaca(e.target.value)})}
                     />
                 </div>
 
@@ -204,6 +231,7 @@ const Carretas = () => {
     );
 };
 
+// ... estilos permanecem iguais
 const styles = {
     container: { padding: '10px', color: '#FFF' },
     titulo: { color: '#FFD700', fontSize: '22px', marginBottom: '20px' },

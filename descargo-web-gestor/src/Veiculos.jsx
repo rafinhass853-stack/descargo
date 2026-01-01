@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   getFirestore, collection, addDoc, onSnapshot, 
-  query, orderBy, doc, updateDoc, deleteDoc 
+  query, orderBy, doc, updateDoc, deleteDoc, getDocs, where 
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
@@ -34,6 +34,13 @@ export default function Veiculos() {
     motorista_nome: 'SEM MOTORISTA'
   });
 
+  // Função para formatar a placa automaticamente
+  const formatarPlaca = (valor) => {
+    const v = valor.toUpperCase().replace(/[^A-Z0-9]/g, ""); // Remove tudo que não é letra ou número
+    if (v.length <= 3) return v;
+    return `${v.slice(0, 3)}-${v.slice(3, 7)}`; // Adiciona o hífen após o 3º caractere
+  };
+
   useEffect(() => {
     const qV = query(collection(db, "cadastro_veiculos"), orderBy("placa", "asc"));
     const unsubscribeV = onSnapshot(qV, (snapshot) => {
@@ -57,18 +64,31 @@ export default function Veiculos() {
 
   const salvarVeiculo = async (e) => {
     e.preventDefault();
-    if (!novoVeiculo.placa) {
-      alert("A placa é obrigatória!");
+    if (novoVeiculo.placa.length < 8) {
+      alert("Placa inválida! Use o formato ABC-1234 ou ABC-1D23.");
       return;
     }
 
     try {
+      // --- VERIFICAÇÃO DE DUPLICIDADE ---
+      // Só verifica se não for uma edição ou se a placa mudou
+      const q = query(collection(db, "cadastro_veiculos"), where("placa", "==", novoVeiculo.placa));
+      const querySnapshot = await getDocs(q);
+      
+      const existeDuplicata = querySnapshot.docs.some(doc => doc.id !== editandoId);
+
+      if (existeDuplicata) {
+        alert("Erro: Já existe um veículo cadastrado com esta placa!");
+        return;
+      }
+
       if (editandoId) {
         await updateDoc(doc(db, "cadastro_veiculos", editandoId), novoVeiculo);
         setEditandoId(null);
       } else {
         await addDoc(collection(db, "cadastro_veiculos"), novoVeiculo);
       }
+
       setNovoVeiculo({ 
         placa: '', 
         tipo: 'Truck', 
@@ -78,6 +98,7 @@ export default function Veiculos() {
       });
     } catch (e) {
       console.error("Erro:", e);
+      alert("Erro ao salvar veículo.");
     }
   };
 
@@ -118,8 +139,9 @@ export default function Veiculos() {
           <input 
             style={styles.input}
             placeholder="ABC-1234" 
+            maxLength={8}
             value={novoVeiculo.placa} 
-            onChange={e => setNovoVeiculo({...novoVeiculo, placa: e.target.value.toUpperCase()})} 
+            onChange={e => setNovoVeiculo({...novoVeiculo, placa: formatarPlaca(e.target.value)})} 
           />
         </div>
 
@@ -212,6 +234,7 @@ export default function Veiculos() {
   );
 }
 
+// ... (seus estilos permanecem os mesmos)
 const styles = {
   container: { padding: '10px', color: '#FFF' },
   titulo: { color: '#FFD700', fontSize: '22px', marginBottom: '20px' },
