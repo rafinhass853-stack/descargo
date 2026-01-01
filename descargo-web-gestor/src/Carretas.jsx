@@ -5,26 +5,23 @@ import {
     deleteDoc, doc, orderBy, updateDoc 
 } from "firebase/firestore";
 import { 
-    Container, Plus, Trash2, Hash, Gauge, 
-    Box, UserPlus, Edit3, CheckCircle, XCircle 
+    Container, Plus, Trash2, 
+    Box, UserPlus, Edit3, CheckCircle, XCircle, Gauge 
 } from 'lucide-react';
 
 const Carretas = () => {
     const [carretas, setCarretas] = useState([]);
-    const [motoristas, setMotoristas] = useState([]); // Lista para o dropdown
+    const [motoristas, setMotoristas] = useState([]); 
     const [editandoId, setEditandoId] = useState(null);
     const [novaCarreta, setNovaCarreta] = useState({
         placa: '',
         tipo: 'Sider',
         capacidade: '',
-        modeloMarca: '',
         motorista_id: '',
         motorista_nome: 'SEM MOTORISTA'
     });
 
-    // Busca as carretas e motoristas no Firebase em tempo real
     useEffect(() => {
-        // Monitoramento de Carretas
         const qCarretas = query(collection(db, "carretas"), orderBy("placa", "asc"));
         const unsubscribeCarretas = onSnapshot(qCarretas, (snapshot) => {
             const lista = [];
@@ -34,7 +31,6 @@ const Carretas = () => {
             setCarretas(lista);
         });
 
-        // Monitoramento de Motoristas
         const qMotoristas = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
         const unsubscribeMotoristas = onSnapshot(qMotoristas, (snapshot) => {
             const lista = [];
@@ -63,7 +59,7 @@ const Carretas = () => {
             }
             setNovaCarreta({ 
                 placa: '', tipo: 'Sider', capacidade: '', 
-                modeloMarca: '', motorista_id: '', motorista_nome: 'SEM MOTORISTA' 
+                motorista_id: '', motorista_nome: 'SEM MOTORISTA' 
             });
         } catch (error) {
             console.error("Erro ao salvar carreta:", error);
@@ -100,7 +96,6 @@ const Carretas = () => {
         <div style={styles.container}>
             <h2 style={styles.titulo}>Gestão de Carretas</h2>
 
-            {/* Formulário de Cadastro / Edição */}
             <form onSubmit={handleSubmit} style={styles.form}>
                 <div style={styles.inputGroup}>
                     <label style={styles.label}>Placa</label>
@@ -151,16 +146,6 @@ const Carretas = () => {
                     />
                 </div>
 
-                <div style={styles.inputGroup}>
-                    <label style={styles.label}>Modelo / Marca</label>
-                    <input 
-                        style={styles.input}
-                        placeholder="Ex: Randon 2024"
-                        value={novaCarreta.modeloMarca}
-                        onChange={(e) => setNovaCarreta({...novaCarreta, modeloMarca: e.target.value})}
-                    />
-                </div>
-
                 <div style={{ display: 'flex', gap: '10px' }}>
                     <button type="submit" style={{...styles.btnAdicionar, backgroundColor: editandoId ? '#2ecc71' : '#FFD700'}}>
                         {editandoId ? <CheckCircle size={20} /> : <Plus size={20} />} 
@@ -173,7 +158,7 @@ const Carretas = () => {
                                 setEditandoId(null); 
                                 setNovaCarreta({
                                     placa: '', tipo: 'Sider', capacidade: '', 
-                                    modeloMarca: '', motorista_id: '', motorista_nome: 'SEM MOTORISTA'
+                                    motorista_id: '', motorista_nome: 'SEM MOTORISTA'
                                 })
                             }} 
                             style={{...styles.btnAdicionar, backgroundColor: '#e74c3c'}}
@@ -184,7 +169,6 @@ const Carretas = () => {
                 </div>
             </form>
 
-            {/* Lista de Carretas */}
             <div style={styles.grid}>
                 {carretas.map((item) => (
                     <div key={item.id} style={{...styles.card, borderLeft: item.motorista_id ? '4px solid #3498db' : '4px solid #FFD700'}}>
@@ -200,7 +184,6 @@ const Carretas = () => {
                         </div>
                         
                         <div style={styles.cardBody}>
-                            {/* Box do Motorista Associado */}
                             <div style={styles.motoristaBox}>
                                 <UserPlus size={14} color={item.motorista_id ? "#3498db" : "#666"} />
                                 <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -213,7 +196,6 @@ const Carretas = () => {
 
                             <p style={styles.info}><Box size={14} /> <strong>Tipo:</strong> {item.tipo}</p>
                             <p style={styles.info}><Gauge size={14} /> <strong>Capacidade:</strong> {item.capacidade} paletes</p>
-                            <p style={styles.info}><Hash size={14} /> <strong>Modelo:</strong> {item.modeloMarca}</p>
                         </div>
                     </div>
                 ))}

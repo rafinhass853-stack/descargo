@@ -5,8 +5,8 @@ import {
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
-  Truck, Plus, Trash2, Gauge, Box, Edit3, 
-  CheckCircle, UserPlus, XCircle 
+  Truck, Plus, Trash2, Box, Edit3, 
+  CheckCircle, UserPlus
 } from 'lucide-react';
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -24,20 +24,17 @@ const db = getFirestore(app);
 
 export default function Veiculos() {
   const [veiculos, setVeiculos] = useState([]);
-  const [motoristas, setMotoristas] = useState([]); // Lista para o dropdown
+  const [motoristas, setMotoristas] = useState([]); 
   const [editandoId, setEditandoId] = useState(null);
   const [novoVeiculo, setNovoVeiculo] = useState({
     placa: '',
     tipo: 'Truck',
-    capacidade_tanque: '',
-    modelo: '',
     status: 'DISPONÍVEL',
     motorista_id: '',
     motorista_nome: 'SEM MOTORISTA'
   });
 
   useEffect(() => {
-    // 1. Monitoramento de Veículos
     const qV = query(collection(db, "cadastro_veiculos"), orderBy("placa", "asc"));
     const unsubscribeV = onSnapshot(qV, (snapshot) => {
       const lista = [];
@@ -45,7 +42,6 @@ export default function Veiculos() {
       setVeiculos(lista);
     });
 
-    // 2. Monitoramento de Motoristas (para o Select)
     const qM = query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc"));
     const unsubscribeM = onSnapshot(qM, (snapshot) => {
       const lista = [];
@@ -61,8 +57,8 @@ export default function Veiculos() {
 
   const salvarVeiculo = async (e) => {
     e.preventDefault();
-    if (!novoVeiculo.placa || !novoVeiculo.capacidade_tanque) {
-      alert("Placa e Capacidade do Tanque são obrigatórios!");
+    if (!novoVeiculo.placa) {
+      alert("A placa é obrigatória!");
       return;
     }
 
@@ -76,8 +72,6 @@ export default function Veiculos() {
       setNovoVeiculo({ 
         placa: '', 
         tipo: 'Truck', 
-        capacidade_tanque: '', 
-        modelo: '', 
         status: 'DISPONÍVEL',
         motorista_id: '',
         motorista_nome: 'SEM MOTORISTA'
@@ -143,7 +137,6 @@ export default function Veiculos() {
           </select>
         </div>
 
-        {/* CAMPO DE ASSOCIAÇÃO DE MOTORISTA */}
         <div style={styles.inputGroup}>
           <label style={styles.label}>Associar Motorista</label>
           <select 
@@ -158,27 +151,6 @@ export default function Veiculos() {
           </select>
         </div>
 
-        <div style={styles.inputGroup}>
-          <label style={styles.label}>Tanque (Litros)</label>
-          <input 
-            type="number" 
-            style={styles.input} 
-            placeholder="Ex: 300" 
-            value={novoVeiculo.capacidade_tanque} 
-            onChange={e => setNovoVeiculo({...novoVeiculo, capacidade_tanque: e.target.value})} 
-          />
-        </div>
-
-        <div style={styles.inputGroup}>
-          <label style={styles.label}>Modelo / Marca</label>
-          <input 
-            style={styles.input} 
-            placeholder="Ex: Volvo FH 540" 
-            value={novoVeiculo.modelo} 
-            onChange={e => setNovoVeiculo({...novoVeiculo, modelo: e.target.value})} 
-          />
-        </div>
-
         <div style={{ display: 'flex', gap: '10px' }}>
             <button type="submit" style={{...styles.btnAdicionar, backgroundColor: editandoId ? '#2ecc71' : '#FFD700'}}>
                 {editandoId ? <CheckCircle size={20} /> : <Plus size={20} />} 
@@ -190,8 +162,7 @@ export default function Veiculos() {
                   onClick={() => {
                     setEditandoId(null); 
                     setNovoVeiculo({
-                      placa: '', tipo: 'Truck', capacidade_tanque: '', 
-                      modelo: '', status: 'DISPONÍVEL', motorista_id: '', motorista_nome: 'SEM MOTORISTA'
+                      placa: '', tipo: 'Truck', status: 'DISPONÍVEL', motorista_id: '', motorista_nome: 'SEM MOTORISTA'
                     })
                   }} 
                   style={{...styles.btnAdicionar, backgroundColor: '#e74c3c'}}
@@ -202,7 +173,7 @@ export default function Veiculos() {
         </div>
       </form>
 
-      {/* Lista de Veículos em Cards */}
+      {/* Lista de Veículos */}
       <div style={styles.grid}>
         {veiculos.map((v) => (
           <div key={v.id} style={{...styles.card, borderLeft: v.motorista_id ? '4px solid #3498db' : '4px solid #FFD700'}}>
@@ -222,7 +193,6 @@ export default function Veiculos() {
                     {v.status}
                 </div>
 
-                {/* VISUALIZAÇÃO DO MOTORISTA NO CARD */}
                 <div style={styles.motoristaBox}>
                   <UserPlus size={14} color={v.motorista_id ? "#3498db" : "#666"} />
                   <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -234,8 +204,6 @@ export default function Veiculos() {
                 </div>
 
                 <p style={styles.info}><Box size={14} /> <strong>Tipo:</strong> {v.tipo}</p>
-                <p style={styles.info}><Gauge size={14} /> <strong>Tanque:</strong> {v.capacidade_tanque} L</p>
-                <p style={styles.info}><Truck size={14} /> <strong>Modelo:</strong> {v.modelo}</p>
             </div>
           </div>
         ))}
@@ -249,7 +217,7 @@ const styles = {
   titulo: { color: '#FFD700', fontSize: '22px', marginBottom: '20px' },
   form: { 
     display: 'grid', 
-    gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', 
+    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
     gap: '15px', 
     backgroundColor: '#111', 
     padding: '20px', 

@@ -1,11 +1,18 @@
-import React, { useEffect, useState, useMemo, memo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Linking, ActivityIndicator } from 'react-native';
+import React, { useEffect, useState, memo } from 'react';
+import { 
+    View, 
+    Text, 
+    StyleSheet, 
+    TouchableOpacity, 
+    Linking, 
+    ActivityIndicator, 
+    Platform // Adicionado Platform
+} from 'react-native';
 import MapView, { Circle, Polygon, PROVIDER_GOOGLE } from 'react-native-maps';
 import { db } from "./firebase";
-import { collection, query, where, onSnapshot } from "firebase/firestore";
-import { Navigation, MapPin, Package, AlertTriangle } from 'lucide-react-native';
+import { collection, query, where, onSnapshot, limit } from "firebase/firestore"; // Adicionado limit
+import { Navigation, MapPin, Package } from 'lucide-react-native';
 
-// Otimização: Componente de Geofence separado para evitar re-render do mapa todo
 const GeofenceLayer = memo(({ cerca }) => {
     if (!cerca || !cerca.geofence) return null;
 
@@ -44,7 +51,6 @@ const CargaViagem = ({ motoristaEmail }) => {
     const [cercaDestino, setCercaDestino] = useState(null);
     const [loading, setLoading] = useState(true);
     
-    // Posição inicial fixa para carregar o mapa rápido
     const [region, setRegion] = useState({
         latitude: -21.78,
         longitude: -48.17,
@@ -53,21 +59,30 @@ const CargaViagem = ({ motoristaEmail }) => {
     });
 
     useEffect(() => {
+        if (!motoristaEmail) return;
+
+        // Ajustado para buscar status "ACEITO" ou "EM VIAGEM"
         const q = query(
             collection(db, "ordens_servico"),
             where("motorista_email", "==", motoristaEmail),
-            where("status", "==", "EM VIAGEM")
+            where("status", "in", ["ACEITO", "EM VIAGEM"]),
+            limit(1)
         );
 
         const unsubViagem = onSnapshot(q, (snapshot) => {
             if (!snapshot.empty) {
                 const dados = snapshot.docs[0].data();
                 setViagemAtiva(dados);
-                buscarCercaNoMapa(dados.cliente_destino);
+                // A função buscarCerca agora retorna seu próprio unsubscribe
+                const unsubCerca = buscarCercaNoMapa(dados.cliente_destino || dados.destinoCliente);
+                return () => unsubCerca && unsubCerca();
             } else {
                 setViagemAtiva(null);
                 setCercaDestino(null);
             }
+            setLoading(false);
+        }, (err) => {
+            console.error("Erro Viagem:", err);
             setLoading(false);
         });
 
@@ -76,52 +91,63 @@ const CargaViagem = ({ motoristaEmail }) => {
 
     const buscarCercaNoMapa = (nomeCliente) => {
         if (!nomeCliente) return;
+        
         const qCerca = query(
             collection(db, "cadastro_clientes_pontos"),
-            where("cliente", "==", nomeCliente.toUpperCase())
+            where("cliente", "==", nomeCliente.toUpperCase()),
+            limit(1)
         );
 
-        onSnapshot(qCerca, (snapshot) => {
+        // Retornamos o unsubscribe para ser limpo pelo useEffect pai
+        return onSnapshot(qCerca, (snapshot) => {
             if (!snapshot.empty) {
                 const dadosCerca = snapshot.docs[0].data();
                 setCercaDestino(dadosCerca);
                 
-                // Atualiza a região apenas uma vez ao encontrar a cerca
-                const lat = dadosCerca.geofence.tipo === 'circle' 
-                    ? dadosCerca.geofence.centro.lat 
-                    : dadosCerca.geofence.coordenadas[0].lat;
-                const lng = dadosCerca.geofence.tipo === 'circle' 
-                    ? dadosCerca.geofence.centro.lng 
-                    : dadosCerca.geofence.coordenadas[0].lng;
+                const geo = dadosCerca.geofence;
+                const lat = geo.tipo === 'circle' ? geo.centro.lat : geo.coordenadas[0].lat;
+                const lng = geo.tipo === 'circle' ? geo.centro.lng : geo.coordenadas[0].lng;
 
-                setRegion(prev => ({
-                    ...prev,
+                setRegion({
                     latitude: lat,
                     longitude: lng,
-                }));
+                    latitudeDelta: 0.02,
+                    longitudeDelta: 0.02,
+                });
             }
         });
     };
 
-    // Abre o Waze ou Google Maps externo (muito mais leve que navegar dentro do app)
     const abrirNavegacao = () => {
-        const url = Platform.select({
-            ios: `maps:0,0?q=${viagemAtiva.cliente_destino}`,
-            android: `geo:0,0?q=${viagemAtiva.cliente_destino}`,
+        if (!viagemAtiva) return;
+        const destino = viagemAtiva.cliente_destino || viagemAtiva.destinoCliente;
+        
+        // Melhorei a URL para funcionar melhor no Google Maps e Waze
+        const url = Platform.OS === 'ios' 
+            ? `maps://0,0?q=${destino}`
+            : `geo:0,0?q=${destino}`;
+            
+        Linking.openURL(url).catch(() => {
+            Alert.alert("Erro", "Não foi possível abrir o mapa externo.");
         });
-        Linking.openURL(url);
     };
 
-    if (loading) return <ActivityIndicator size="large" color="#FFD700" style={{flex:1, backgroundColor:'#000'}}/>;
+    if (loading) return (
+        <View style={styles.centered}>
+            <ActivityIndicator size="large" color="#FFD700" />
+        </View>
+    );
 
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.headerTitle}>VIAGEM EM ANDAMENTO</Text>
+                <Text style={styles.headerTitle}>
+                    {viagemAtiva?.status === "ACEITO" ? "VIAGEM INICIADA" : "EM ANDAMENTO"}
+                </Text>
                 {viagemAtiva && (
                     <View style={styles.infoRow}>
                         <Package size={16} color="#666" />
-                        <Text style={styles.text}>Carga: {viagemAtiva.produto}</Text>
+                        <Text style={styles.text}>Carga: {viagemAtiva.produto || 'Geral'}</Text>
                     </View>
                 )}
             </View>
@@ -130,13 +156,11 @@ const CargaViagem = ({ motoristaEmail }) => {
                 <MapView
                     provider={PROVIDER_GOOGLE}
                     style={styles.map}
-                    initialRegion={region}
+                    region={region} // Mudado de initialRegion para region para acompanhar o destino
                     showsUserLocation={true}
-                    followsUserLocation={false} // IMPORTANTE: true causa lentidão em aparelhos simples
                     loadingEnabled={true}
-                    moveOnMarkerPress={false}
-                    pitchEnabled={false} // Desativa inclinação 3D para ganhar performance
-                    mapType="standard" // 'hybrid' é bem mais pesado, use 'standard' se estiver travando muito
+                    pitchEnabled={false}
+                    mapType="standard"
                 >
                     <GeofenceLayer cerca={cercaDestino} />
                 </MapView>
@@ -148,13 +172,15 @@ const CargaViagem = ({ motoristaEmail }) => {
                         <Text style={styles.destLabel}>DESTINO FINAL</Text>
                         <View style={styles.infoRow}>
                             <MapPin size={18} color="#FFD700" />
-                            <Text style={styles.destName}>{viagemAtiva.cliente_destino.toUpperCase()}</Text>
+                            <Text style={styles.destName}>
+                                {(viagemAtiva.cliente_destino || viagemAtiva.destinoCliente)?.toUpperCase()}
+                            </Text>
                         </View>
                     </View>
 
                     <TouchableOpacity style={styles.navButton} onPress={abrirNavegacao}>
                         <Navigation size={20} color="#000" />
-                        <Text style={styles.navButtonText}>ABRIR NO GPS EXTERNO</Text>
+                        <Text style={styles.navButtonText}>INICIAR GPS EXTERNO</Text>
                     </TouchableOpacity>
                 </View>
             )}
@@ -164,15 +190,16 @@ const CargaViagem = ({ motoristaEmail }) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#000' },
-    header: { padding: 15, borderBottomWidth: 1, borderBottomColor: '#222' },
+    centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+    header: { padding: 15, borderBottomWidth: 1, borderBottomColor: '#222', paddingTop: 40 },
     headerTitle: { color: '#FFD700', fontSize: 16, fontWeight: 'bold' },
     infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 },
     text: { color: '#fff', fontSize: 14 },
-    mapWrapper: { flex: 1, position: 'relative' }, // O mapa agora ocupa o espaço disponível
+    mapWrapper: { flex: 1 },
     map: { ...StyleSheet.absoluteFillObject },
-    footer: { padding: 20, backgroundColor: '#000' },
+    footer: { padding: 20, backgroundColor: '#000', paddingBottom: 30 },
     destCard: { backgroundColor: '#111', padding: 15, borderRadius: 10 },
-    destLabel: { color: '#666', fontSize: 10 },
+    destLabel: { color: '#666', fontSize: 10, marginBottom: 4 },
     destName: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
     navButton: {
         backgroundColor: '#FFD700', marginTop: 15, padding: 15,

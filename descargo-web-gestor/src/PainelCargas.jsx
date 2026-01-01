@@ -14,7 +14,7 @@ const PainelCargas = () => {
     const [tipoViagem, setTipoViagem] = useState('CARREGADO');
     
     const [novaCarga, setNovaCarga] = useState({
-        dt: '', peso: '', perfilVeiculo: '', observacao: '',
+        dt: '', peso: '', perfilVeiculo: 'Trucado', observacao: '',
         origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
         destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
         trajeto: [] 
@@ -24,7 +24,6 @@ const PainelCargas = () => {
     const [cargaParaAtribuir, setCargaParaAtribuir] = useState(null);
 
     useEffect(() => {
-        // Monitorar Ordens de Serviço
         const qCargas = query(collection(db, "ordens_servico"), orderBy("criadoEm", "desc"));
         const unsubCargas = onSnapshot(qCargas, (snapshot) => {
             const lista = [];
@@ -32,7 +31,6 @@ const PainelCargas = () => {
             setCargas(lista);
         });
 
-        // Monitorar Rotas Planejadas (Rotogramas)
         const qRotas = query(collection(db, "rotas_planejadas"), orderBy("criadoEm", "desc"));
         const unsubRotas = onSnapshot(qRotas, (snapshot) => {
             const lista = [];
@@ -40,7 +38,6 @@ const PainelCargas = () => {
             setRotasPlanejadas(lista);
         });
 
-        // Monitorar Clientes
         const qClientes = query(collection(db, "cadastro_clientes_pontos"), orderBy("cliente", "asc"));
         const unsubClientes = onSnapshot(qClientes, (snapshot) => {
             const lista = [];
@@ -48,14 +45,12 @@ const PainelCargas = () => {
             setClientesCadastrados(lista);
         });
 
-        // Monitorar Veículos
         const unsubVeiculos = onSnapshot(collection(db, "cadastro_veiculos"), (snapshot) => {
             const lista = [];
             snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
             setVeiculos(lista);
         });
 
-        // Monitorar Carretas
         const unsubCarretas = onSnapshot(collection(db, "carretas"), (snapshot) => {
             const lista = [];
             snapshot.forEach((doc) => lista.push({ id: doc.id, ...doc.data() }));
@@ -67,7 +62,6 @@ const PainelCargas = () => {
         };
     }, []);
 
-    // Função para selecionar um rotograma e auto-preencher
     const selecionarRotograma = (rotaId) => {
         const rota = rotasPlanejadas.find(r => r.id === rotaId);
         if (rota) {
@@ -124,14 +118,18 @@ const PainelCargas = () => {
         e.preventDefault();
         let prefixo = tipoViagem === 'MANUTENÇÃO' ? 'MT' : tipoViagem === 'VAZIO' ? 'VZ' : 'DT';
         const dtFinal = novaCarga.dt.trim() === '' ? `${prefixo}${Date.now().toString().slice(-6)}` : novaCarga.dt;
-        const dadosParaSalvar = { ...novaCarga };
+        
+        let dadosParaSalvar = { ...novaCarga };
+        
+        // Ajuste automático de perfil conforme sua solicitação
         if (tipoViagem === 'VAZIO' || tipoViagem === 'MANUTENÇÃO') {
             if (!dadosParaSalvar.origemCliente) {
                 dadosParaSalvar.origemCliente = tipoViagem === 'VAZIO' ? 'PÁTIO / DESLOCAMENTO' : 'SAÍDA PARA OFICINA';
             }
             dadosParaSalvar.peso = '0'; 
-            dadosParaSalvar.perfilVeiculo = novaCarga.perfilVeiculo || tipoViagem;
+            dadosParaSalvar.perfilVeiculo = tipoViagem; // Salva como VAZIO ou MANUTENÇÃO no banco
         }
+
         try {
             await addDoc(collection(db, "ordens_servico"), {
                 ...dadosParaSalvar,
@@ -143,7 +141,7 @@ const PainelCargas = () => {
                 criadoEm: serverTimestamp()
             });
             setNovaCarga({
-                dt: '', peso: '', perfilVeiculo: '', observacao: '',
+                dt: '', peso: '', perfilVeiculo: 'Trucado', observacao: '',
                 origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
                 destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
                 trajeto: []
@@ -184,7 +182,16 @@ const PainelCargas = () => {
                     <button key={tipo}
                         onClick={() => {
                             setTipoViagem(tipo);
-                            setNovaCarga(prev => ({...prev, destinoCliente: '', destinoCnpj: '', destinoCidade: '', peso: '', dt: '', trajeto: []}));
+                            setNovaCarga(prev => ({
+                                ...prev, 
+                                destinoCliente: '', 
+                                destinoCnpj: '', 
+                                destinoCidade: '', 
+                                peso: '', 
+                                dt: '', 
+                                trajeto: [],
+                                perfilVeiculo: tipo === 'CARREGADO' ? 'Trucado' : tipo
+                            }));
                         }}
                         style={{...styles.tipoBtn, 
                             backgroundColor: tipoViagem === tipo ? (tipo === 'MANUTENÇÃO' ? '#e74c3c' : '#FFD700') : '#111', 
@@ -231,10 +238,23 @@ const PainelCargas = () => {
                         <div style={styles.formColumn}>
                             <h4 style={styles.columnTitle}><Weight size={14}/> INFORMAÇÕES</h4>
                             <input placeholder="Nº Documento (Opcional)" value={novaCarga.dt} onChange={e => setNovaCarga({...novaCarga, dt: e.target.value})} style={styles.input} />
+                            
+                            {/* LOGICA SOLICITADA: Tipo Veículo apenas em CARREGADO com opções específicas */}
                             {tipoViagem === 'CARREGADO' && (
-                                <input placeholder="Peso (ex: 32 Ton)" value={novaCarga.peso} onChange={e => setNovaCarga({...novaCarga, peso: e.target.value})} style={styles.input} required />
+                                <>
+                                    <input placeholder="Peso (ex: 32 Ton)" value={novaCarga.peso} onChange={e => setNovaCarga({...novaCarga, peso: e.target.value})} style={styles.input} required />
+                                    <select 
+                                        value={novaCarga.perfilVeiculo} 
+                                        onChange={e => setNovaCarga({...novaCarga, perfilVeiculo: e.target.value})} 
+                                        style={styles.input}
+                                        required
+                                    >
+                                        <option value="Trucado">Trucado</option>
+                                        <option value="Toco">Toco</option>
+                                        <option value="Truck">Truck</option>
+                                    </select>
+                                </>
                             )}
-                            <input placeholder="Placa / Tipo Veículo" value={novaCarga.perfilVeiculo} onChange={e => setNovaCarga({...novaCarga, perfilVeiculo: e.target.value})} style={styles.input} required />
                         </div>
 
                         {(tipoViagem === 'CARREGADO' || novaCarga.trajeto.length > 0) && (
@@ -293,7 +313,6 @@ const PainelCargas = () => {
                         <tbody>
                             {cargas.map(item => {
                                 const placas = getConjuntoPlacas(item.motoristaId);
-                                // Lógica de alerta: Solicitação ativa e sem trajeto
                                 const temSolicitacao = item.solicitarRota && (!item.trajeto || item.trajeto.length === 0);
                                 
                                 return (
@@ -308,7 +327,6 @@ const PainelCargas = () => {
                                                 border: `1px solid ${item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : '#2ecc71'}`
                                             }}>{item.status === 'AGUARDANDO PROGRAMAÇÃO' ? 'AGUARDANDO' : (item.status || 'PROGRAMADA')}</div>
                                             <div style={styles.dtLabel}>{item.dt}</div>
-                                            
                                             {temSolicitacao && (
                                                 <div style={styles.alertaRotaPendente}>
                                                     <AlertTriangle size={10} /> ROTA SOLICITADA

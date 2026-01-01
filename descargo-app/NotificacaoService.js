@@ -25,11 +25,15 @@ export const useNotificacaoCarga = (db, user, isLoggedIn, setCargaAtiva, confirm
 
             const isVazio = dados.tipoViagem === 'VAZIO';
             
+            // Definição do Título e Mensagem baseada no seu pedido
+            const titulo = isVazio ? "Deslocamento Vazio" : "🔔 NOVA CARGA DISPONÍVEL";
+            const mensagem = isVazio 
+              ? `destino: ${dados.destinoCliente || dados.cliente_destino}\nhorário chegada: ${dados.horarioChegada || "Não informado"}`
+              : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente}\n🚛 CARRETA: ${dados.carreta || "---"}`;
+
             Alert.alert(
-              isVazio ? "⚪ LANÇAMENTO DE VAZIO" : "🔔 NOVA CARGA DISPONÍVEL",
-              isVazio 
-                ? `📍 DESTINO: ${dados.destinoCliente}\n🏙️ CIDADE: ${dados.destinoCidade}\n🆔 DT: ${dados.dt || "---"}`
-                : `📍 ORIGEM: ${dados.origemCliente}\n🏁 DESTINO: ${dados.destinoCliente}\n🚛 CARRETA: ${dados.carreta || "---"}`,
+              titulo,
+              mensagem,
               [
                 { 
                   text: "RECUSAR", 

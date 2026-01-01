@@ -1,12 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { MapContainer, TileLayer, useMap } from 'react-leaflet';
+import React, { useState, useEffect, useRef } from 'react';
+import { MapContainer, TileLayer, useMap, Polygon, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet-routing-machine';
 import { db } from "./firebase";
 import { collection, onSnapshot, addDoc, deleteDoc, updateDoc, doc, serverTimestamp, query, orderBy } from "firebase/firestore";
-import { Navigation, Save, List, Hash, Trash2, Edit3, XCircle, MapPin, Gauge } from 'lucide-react';
+import { Navigation, Save, List, Trash2, Edit3, XCircle, Gauge } from 'lucide-react';
 
-// Ícones Leaflet
+// Ajuste de Ícones do Leaflet
 import icon from 'leaflet/dist/images/marker-icon.png';
 import iconShadow from 'leaflet/dist/images/marker-shadow.png';
 
@@ -18,42 +18,53 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
-let routingInstance = null;
-
+// COMPONENTE DE ROTEIRIZAÇÃO (CORRIGIDO)
 const RoutingMachine = ({ waypoints, setDistancia }) => {
     const map = useMap();
+    const routingControlRef = useRef(null);
 
     useEffect(() => {
         if (!map || waypoints.length < 2) return;
-        if (routingInstance) map.removeControl(routingInstance);
 
-        routingInstance = L.Routing.control({
+        // Limpa instância anterior se existir
+        if (routingControlRef.current) {
+            map.removeControl(routingControlRef.current);
+        }
+
+        // Cria a nova rota
+        const control = L.Routing.control({
             waypoints: waypoints.map(p => L.latLng(p.lat, p.lng)),
             lineOptions: {
-                styles: [{ color: '#FFD700', weight: 6, opacity: 0.9 }]
+                styles: [{ color: '#FFD700', weight: 6, opacity: 0.8 }]
             },
-            routeWhileDragging: true,
+            routeWhileDragging: false,
             addWaypoints: true,
             language: 'pt-BR',
             show: false,
         }).addTo(map);
 
-        routingInstance.on('routesfound', (e) => {
+        routingControlRef.current = control;
+
+        control.on('routesfound', (e) => {
             const route = e.routes[0];
             const distKm = (route.summary.totalDistance / 1000).toFixed(2);
             setDistancia(distKm);
         });
 
-        const container = routingInstance.getContainer();
+        // Oculta o painel de instruções branco do Leaflet
+        const container = control.getContainer();
         if (container) container.style.display = 'none';
 
+        // Ajusta o zoom para caber a rota
         const group = new L.featureGroup(waypoints.map(p => L.marker([p.lat, p.lng])));
         map.fitBounds(group.getBounds().pad(0.2));
 
         return () => {
-            if (routingInstance) map.removeControl(routingInstance);
+            if (routingControlRef.current && map) {
+                map.removeControl(routingControlRef.current);
+            }
         };
-    }, [map, waypoints, setDistancia]);
+    }, [map, waypoints]); // Removido setDistancia para evitar loops
 
     return null;
 };
@@ -68,6 +79,7 @@ const Roteirizacao = () => {
     const [salvando, setSalvando] = useState(false);
     const [distanciaAtual, setDistanciaAtual] = useState(0);
 
+    // Carregar dados do Firebase
     useEffect(() => {
         const unsubClientes = onSnapshot(collection(db, "cadastro_clientes_pontos"), (snapshot) => {
             setClientes(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -86,24 +98,27 @@ const Roteirizacao = () => {
     }, []);
 
     const gerarRota = () => {
-        if (pontoA && pontoB) {
-            setRotaAtiva([pontoA.geofence.coordenadas[0], pontoB.geofence.coordenadas[0]]);
+        if (pontoA?.geofence?.coordenadas?.[0] && pontoB?.geofence?.coordenadas?.[0]) {
+            const start = pontoA.geofence.coordenadas[0];
+            const end = pontoB.geofence.coordenadas[0];
+            setRotaAtiva([
+                { lat: start.lat || start[0], lng: start.lng || start[1] },
+                { lat: end.lat || end[0], lng: end.lng || end[1] }
+            ]);
+        } else {
+            alert("Selecione pontos que possuem cercas geográficas válidas.");
         }
     };
 
     const salvarOuAtualizarRota = async () => {
-        if (!routingInstance) return;
+        if (rotaAtiva.length < 2) return;
         
         setSalvando(true);
         try {
-            const waypointsFinais = routingInstance.getWaypoints()
-                .filter(wp => wp.latLng)
-                .map(wp => ({ lat: wp.latLng.lat, lng: wp.latLng.lng }));
-
             const dadosRota = {
                 origem: pontoA?.cliente || "Ponto Manual",
                 destino: pontoB?.cliente || "Destino Manual",
-                trajeto: waypointsFinais,
+                trajeto: rotaAtiva, // Salva os waypoints atuais
                 distancia: distanciaAtual,
                 atualizadoEm: serverTimestamp(),
                 status: 'planejado'
@@ -115,9 +130,10 @@ const Roteirizacao = () => {
                 await addDoc(collection(db, "rotas_planejadas"), { ...dadosRota, criadoEm: serverTimestamp() });
             }
             limparFormulario();
-            alert("Rota registrada com sucesso!");
+            alert("Rota salva com sucesso!");
         } catch (error) {
-            console.error(error);
+            console.error("Erro ao salvar:", error);
+            alert("Erro ao salvar rota.");
         } finally {
             setSalvando(false);
         }
@@ -148,7 +164,7 @@ const Roteirizacao = () => {
                             <XCircle size={18} /> Cancelar
                         </button>
                     )}
-                    <button onClick={salvarOuAtualizarRota} style={localStyles.btnSecundario} disabled={salvando}>
+                    <button onClick={salvarOuAtualizarRota} style={localStyles.btnSecundario} disabled={salvando || rotaAtiva.length === 0}>
                         <Save size={18} /> {editandoId ? 'Atualizar' : 'Salvar Rota'}
                     </button>
                     {!editandoId && (
@@ -205,7 +221,30 @@ const Roteirizacao = () => {
                     <style>{`.leaflet-routing-container { display: none !important; }`}</style>
                     <MapContainer center={[-23.5, -46.6]} zoom={6} style={{ height: '100%', width: '100%' }}>
                         <TileLayer url="https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" subdomains={['mt0', 'mt1', 'mt2', 'mt3']} />
-                        {rotaAtiva.length > 0 && <RoutingMachine waypoints={rotaAtiva} setDistancia={setDistanciaAtual} />}
+                        
+                        {/* Desenha as Cercas dos Clientes no Mapa */}
+                        {clientes.map(cliente => cliente.geofence && (
+                            <Polygon 
+                                key={cliente.id}
+                                positions={cliente.geofence.coordenadas}
+                                pathOptions={{ 
+                                    color: (pontoA?.id === cliente.id || pontoB?.id === cliente.id) ? '#FFD700' : '#444', 
+                                    weight: 2,
+                                    fillOpacity: 0.2
+                                }}
+                            >
+                                <Popup>{cliente.cliente}</Popup>
+                            </Polygon>
+                        ))}
+
+                        {/* Motor de Rota */}
+                        {rotaAtiva.length > 0 && (
+                            <RoutingMachine 
+                                key={JSON.stringify(rotaAtiva)} 
+                                waypoints={rotaAtiva} 
+                                setDistancia={setDistanciaAtual} 
+                            />
+                        )}
                     </MapContainer>
                 </div>
             </div>
