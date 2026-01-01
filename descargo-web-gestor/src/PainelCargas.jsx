@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc } from "firebase/firestore";
-import { Plus, MapPin, Truck, UserPlus, Weight, Calendar, Trash2, Navigation, Settings as SettingsIcon, ClipboardList, Clock, Container, Route, AlertTriangle } from 'lucide-react';
+import { collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc, doc, deleteDoc, getDoc } from "firebase/firestore";
+import { Plus, MapPin, Truck, UserPlus, Weight, Calendar, Trash2, Navigation, Settings as SettingsIcon, ClipboardList, Clock, Container, Route, AlertTriangle, Target, Shield, CheckCircle } from 'lucide-react';
 
 import AcoesCargas from './AcoesCargas';
 
@@ -17,11 +17,25 @@ const PainelCargas = () => {
         dt: '', peso: '', perfilVeiculo: 'Trucado', observacao: '',
         origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
         destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
-        trajeto: [] 
+        trajeto: [],
+        trajetoComInstrucoes: [],
+        // NOVOS CAMPOS PARA CERCAS VIRTUAIS
+        cercaVirtual: {
+            tipo: 'circle',
+            raio: 100,
+            centro: null,
+            coordenadas: [],
+            ativa: true
+        }
     });
 
     const [modalAberto, setModalAberto] = useState(false);
     const [cargaParaAtribuir, setCargaParaAtribuir] = useState(null);
+    const [processandoRotograma, setProcessandoRotograma] = useState(false);
+    const [buscandoCoordenadas, setBuscandoCoordenadas] = useState(false);
+
+    // Chave da API do Google Maps (use sua chave real)
+    const GOOGLE_MAPS_API_KEY = 'AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4';
 
     useEffect(() => {
         const qCargas = query(collection(db, "ordens_servico"), orderBy("criadoEm", "desc"));
@@ -62,18 +76,195 @@ const PainelCargas = () => {
         };
     }, []);
 
-    const selecionarRotograma = (rotaId) => {
+    // Função para obter coordenadas do endereço usando Google Maps
+    const obterCoordenadasDoEndereco = async (endereco) => {
+        if (!endereco) return null;
+        
+        try {
+            const response = await fetch(
+                `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(endereco)}&key=${GOOGLE_MAPS_API_KEY}`
+            );
+            
+            const data = await response.json();
+            
+            if (data.status === 'OK' && data.results.length > 0) {
+                const location = data.results[0].geometry.location;
+                return {
+                    lat: location.lat,
+                    lng: location.lng
+                };
+            }
+        } catch (error) {
+            console.error("Erro ao buscar coordenadas:", error);
+        }
+        
+        return null;
+    };
+
+    // Função para configurar geofence automática
+    const configurarGeofenceAutomatica = async (destinoCliente, destinoCidade, destinoEndereco) => {
+        if (!destinoCliente) return null;
+        
+        setBuscandoCoordenadas(true);
+        
+        try {
+            // Primeiro tenta encontrar coordenadas no cliente cadastrado
+            const cliente = clientesCadastrados.find(c => 
+                c.cliente?.toUpperCase() === destinoCliente.toUpperCase()
+            );
+            
+            let coordenadas = null;
+            
+            if (cliente?.geofence?.centro) {
+                // Usa coordenadas do cliente cadastrado
+                coordenadas = cliente.geofence.centro;
+            } else {
+                // Busca coordenadas pelo endereço usando Google Maps
+                const enderecoBusca = destinoEndereco || `${destinoCliente}, ${destinoCidade}`;
+                coordenadas = await obterCoordenadasDoEndereco(enderecoBusca);
+            }
+            
+            if (coordenadas) {
+                return {
+                    tipo: 'circle',
+                    raio: 100, // metros
+                    centro: coordenadas,
+                    coordenadas: [],
+                    ativa: true
+                };
+            }
+            
+            return {
+                tipo: 'circle',
+                raio: 100,
+                centro: null,
+                coordenadas: [],
+                ativa: true
+            };
+            
+        } catch (error) {
+            console.error("Erro ao configurar geofence:", error);
+            return null;
+        } finally {
+            setBuscandoCoordenadas(false);
+        }
+    };
+
+    const gerarInstrucoesDeRota = async (trajetoCoords) => {
+        if (!trajetoCoords || trajetoCoords.length === 0) return [];
+        
+        setProcessandoRotograma(true);
+        try {
+            const coordenadasStr = trajetoCoords.map(c => `${c.longitude},${c.latitude}`).join(';');
+            
+            const response = await fetch(
+                `https://router.project-osrm.org/route/v1/driving/${coordenadasStr}?overview=full&geometries=geojson&steps=true`
+            );
+            
+            const data = await response.json();
+            
+            if (!data.routes || data.routes.length === 0) {
+                return trajetoCoords.map((coord, index) => ({
+                    ...coord,
+                    instrucao: index === 0 ? "Inicie a viagem" : 
+                              index === trajetoCoords.length - 1 ? "Chegada ao destino" : 
+                              "Siga em frente",
+                    tipo: index === 0 ? "depart" : 
+                          index === trajetoCoords.length - 1 ? "arrive" : 
+                          "continue",
+                    distanciaAteProximo: index < trajetoCoords.length - 1 ? "500m" : "0m",
+                    duracao: "30s"
+                }));
+            }
+            
+            const legs = data.routes[0].legs;
+            const instrucoes = [];
+            
+            legs.forEach(leg => {
+                leg.steps.forEach(step => {
+                    if (step.geometry && step.geometry.coordinates.length > 0) {
+                        const [lng, lat] = step.geometry.coordinates[Math.floor(step.geometry.coordinates.length / 2)];
+                        
+                        let instrucaoPt = step.maneuver.instruction;
+                        if (instrucaoPt.includes('Turn left')) instrucaoPt = 'Vire à esquerda';
+                        if (instrucaoPt.includes('Turn right')) instrucaoPt = 'Vire à direita';
+                        if (instrucaoPt.includes('Continue')) instrucaoPt = 'Continue em frente';
+                        if (instrucaoPt.includes('arrive')) instrucaoPt = 'Chegada ao destino';
+                        
+                        instrucoes.push({
+                            latitude: lat,
+                            longitude: lng,
+                            instrucao: instrucaoPt,
+                            distanciaAteProximo: `${Math.round(step.distance)}m`,
+                            duracao: `${Math.round(step.duration)}s`,
+                            tipo: step.maneuver.type,
+                            modo: step.maneuver.modifier || 'straight'
+                        });
+                    }
+                });
+            });
+            
+            if (instrucoes.length > 0) {
+                instrucoes.push({
+                    latitude: trajetoCoords[trajetoCoords.length - 1].latitude,
+                    longitude: trajetoCoords[trajetoCoords.length - 1].longitude,
+                    instrucao: `Chegada ao destino: ${novaCarga.destinoCliente || 'Destino'}`,
+                    distanciaAteProximo: "0m",
+                    duracao: "0s",
+                    tipo: "arrive",
+                    modo: "arrive"
+                });
+            }
+            
+            return instrucoes;
+            
+        } catch (error) {
+            console.error("Erro ao gerar instruções:", error);
+            return [];
+        } finally {
+            setProcessandoRotograma(false);
+        }
+    };
+
+    const selecionarRotograma = async (rotaId) => {
         const rota = rotasPlanejadas.find(r => r.id === rotaId);
         if (rota) {
+            setProcessandoRotograma(true);
+            
+            let instrucoes = [];
+            if (rota.trajeto && rota.trajeto.length > 0) {
+                instrucoes = await gerarInstrucoesDeRota(rota.trajeto);
+            }
+            
             setNovaCarga(prev => ({
                 ...prev,
                 origemCliente: rota.origem || '',
                 destinoCliente: rota.destino || '',
                 trajeto: rota.trajeto || [],
+                trajetoComInstrucoes: instrucoes,
                 distanciaEstimada: rota.distancia || ''
             }));
+            
             handleAutoPreencher(rota.origem, 'origem');
             handleAutoPreencher(rota.destino, 'destino');
+            
+            // Configurar geofence para o destino
+            if (rota.destino) {
+                const geofenceConfig = await configurarGeofenceAutomatica(
+                    rota.destino,
+                    '',
+                    rota.destino
+                );
+                
+                if (geofenceConfig) {
+                    setNovaCarga(prev => ({
+                        ...prev,
+                        cercaVirtual: geofenceConfig
+                    }));
+                }
+            }
+            
+            setProcessandoRotograma(false);
         }
     };
 
@@ -88,46 +279,88 @@ const PainelCargas = () => {
         };
     };
 
-    const handleAutoPreencher = (valor, campo) => {
+    const handleAutoPreencher = async (valor, campo) => {
         if (!valor) return;
+        
         const campoNome = campo === 'origem' ? 'origemCliente' : 'destinoCliente';
         setNovaCarga(prev => ({ ...prev, [campoNome]: valor }));
+        
         const clienteEncontrado = clientesCadastrados.find(c => c.cliente.toUpperCase() === valor.toUpperCase());
+        
         if (clienteEncontrado) {
-            if (campo === 'origem') {
-                setNovaCarga(prev => ({
-                    ...prev,
-                    origemCliente: clienteEncontrado.cliente,
-                    origemCnpj: clienteEncontrado.cnpj || '',
-                    origemCidade: clienteEncontrado.cidade || '',
-                    origemLink: clienteEncontrado.linkGoogle || ''
-                }));
-            } else {
-                setNovaCarga(prev => ({
-                    ...prev,
-                    destinoCliente: clienteEncontrado.cliente,
-                    destinoCnpj: clienteEncontrado.cnpj || '',
-                    destinoCidade: clienteEncontrado.cidade || '',
-                    destinoLink: clienteEncontrado.linkGoogle || ''
-                }));
+            const updates = {
+                [campo === 'origem' ? 'origemCliente' : 'destinoCliente']: clienteEncontrado.cliente,
+                [campo === 'origem' ? 'origemCnpj' : 'destinoCnpj']: clienteEncontrado.cnpj || '',
+                [campo === 'origem' ? 'origemCidade' : 'destinoCidade']: clienteEncontrado.cidade || '',
+                [campo === 'origem' ? 'origemLink' : 'destinoLink']: clienteEncontrado.linkGoogle || ''
+            };
+            
+            setNovaCarga(prev => ({
+                ...prev,
+                ...updates
+            }));
+            
+            // Se for destino, configurar geofence automática
+            if (campo === 'destino') {
+                const geofenceConfig = await configurarGeofenceAutomatica(
+                    clienteEncontrado.cliente,
+                    clienteEncontrado.cidade || '',
+                    clienteEncontrado.linkGoogle || ''
+                );
+                
+                if (geofenceConfig) {
+                    setNovaCarga(prev => ({
+                        ...prev,
+                        cercaVirtual: geofenceConfig
+                    }));
+                }
             }
         }
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        // Validar campos obrigatórios
+        if (!novaCarga.destinoCliente) {
+            alert("Por favor, informe o destino da viagem.");
+            return;
+        }
+        
+        // Configurar geofence se não estiver configurada
+        let geofenceFinal = novaCarga.cercaVirtual;
+        if (!geofenceFinal || !geofenceFinal.centro) {
+            const geofenceConfig = await configurarGeofenceAutomatica(
+                novaCarga.destinoCliente,
+                novaCarga.destinoCidade || '',
+                novaCarga.destinoLink || ''
+            );
+            
+            if (geofenceConfig) {
+                geofenceFinal = geofenceConfig;
+            } else {
+                // Cria uma geofence básica
+                geofenceFinal = {
+                    tipo: 'circle',
+                    raio: 100,
+                    centro: null,
+                    coordenadas: [],
+                    ativa: true
+                };
+            }
+        }
+        
         let prefixo = tipoViagem === 'MANUTENÇÃO' ? 'MT' : tipoViagem === 'VAZIO' ? 'VZ' : 'DT';
         const dtFinal = novaCarga.dt.trim() === '' ? `${prefixo}${Date.now().toString().slice(-6)}` : novaCarga.dt;
         
-        let dadosParaSalvar = { ...novaCarga };
+        let dadosParaSalvar = { ...novaCarga, cercaVirtual: geofenceFinal };
         
-        // Ajuste automático de perfil conforme sua solicitação
         if (tipoViagem === 'VAZIO' || tipoViagem === 'MANUTENÇÃO') {
             if (!dadosParaSalvar.origemCliente) {
                 dadosParaSalvar.origemCliente = tipoViagem === 'VAZIO' ? 'PÁTIO / DESLOCAMENTO' : 'SAÍDA PARA OFICINA';
             }
             dadosParaSalvar.peso = '0'; 
-            dadosParaSalvar.perfilVeiculo = tipoViagem; // Salva como VAZIO ou MANUTENÇÃO no banco
+            dadosParaSalvar.perfilVeiculo = tipoViagem;
         }
 
         try {
@@ -138,18 +371,92 @@ const PainelCargas = () => {
                 status: 'AGUARDANDO PROGRAMAÇÃO',
                 motoristaNome: '',
                 motoristaId: '',
+                instrucaoAtual: 0,
+                // NOVOS CAMPOS PARA FLUXO DE FINALIZAÇÃO
+                chegouAoDestino: false,
+                finalizada: false,
+                confirmacaoPendente: false,
+                dataChegada: null,
+                dataFinalizacao: null,
+                dataInicioViagem: null,
                 criadoEm: serverTimestamp()
             });
+            
+            // Resetar formulário
             setNovaCarga({
                 dt: '', peso: '', perfilVeiculo: 'Trucado', observacao: '',
                 origemCnpj: '', origemCliente: '', origemCidade: '', origemLink: '', origemData: '',
                 destinoCnpj: '', destinoCliente: '', destinoCidade: '', destinoLink: '', destinoData: '',
-                trajeto: []
+                trajeto: [],
+                trajetoComInstrucoes: [],
+                cercaVirtual: {
+                    tipo: 'circle',
+                    raio: 100,
+                    centro: null,
+                    coordenadas: [],
+                    ativa: true
+                }
             });
-            alert(`Ordem de ${tipoViagem} lançada com sucesso!`);
+            
+            alert(`✅ Ordem de ${tipoViagem} lançada com sucesso! Sistema de geofence ativado.`);
+            
         } catch (error) { 
             console.error("Erro ao salvar:", error);
             alert("Erro ao salvar ordem de serviço.");
+        }
+    };
+
+    // Função para forçar finalização manual (apenas para admin/gestor)
+    const forcarFinalizacao = async (cargaId) => {
+        if (!window.confirm("Deseja forçar a finalização desta viagem?\n\nEsta ação é apenas para casos excepcionais.")) {
+            return;
+        }
+        
+        try {
+            const cargaRef = doc(db, "ordens_servico", cargaId);
+            await updateDoc(cargaRef, {
+                finalizada: true,
+                chegouAoDestino: true,
+                confirmacaoPendente: false,
+                status: 'FINALIZADA MANUALMENTE',
+                dataFinalizacao: serverTimestamp(),
+                observacaoFinalizacao: `Finalizada manualmente pelo gestor em ${new Date().toLocaleString()}`
+            });
+            
+            alert("✅ Viagem finalizada manualmente!");
+        } catch (error) {
+            console.error("Erro ao forçar finalização:", error);
+            alert("Erro ao finalizar viagem.");
+        }
+    };
+
+    // Função para verificar status da viagem
+    const verificarStatusViagem = async (cargaId) => {
+        try {
+            const cargaRef = doc(db, "ordens_servico", cargaId);
+            const cargaSnap = await getDoc(cargaRef);
+            
+            if (cargaSnap.exists()) {
+                const data = cargaSnap.data();
+                
+                let mensagem = `Status: ${data.status}\n`;
+                mensagem += `Motorista: ${data.motoristaNome || 'Não atribuído'}\n`;
+                mensagem += `Chegou ao destino: ${data.chegouAoDestino ? 'SIM' : 'NÃO'}\n`;
+                mensagem += `Confirmação pendente: ${data.confirmacaoPendente ? 'SIM' : 'NÃO'}\n`;
+                mensagem += `Finalizada: ${data.finalizada ? 'SIM' : 'NÃO'}`;
+                
+                if (data.cercaVirtual?.centro) {
+                    mensagem += `\n\nGeofence ativa: SIM`;
+                    mensagem += `\nCentro: ${data.cercaVirtual.centro.lat.toFixed(6)}, ${data.cercaVirtual.centro.lng.toFixed(6)}`;
+                    mensagem += `\nRaio: ${data.cercaVirtual.raio}m`;
+                } else {
+                    mensagem += `\n\nGeofence: NÃO CONFIGURADA`;
+                }
+                
+                alert(mensagem);
+            }
+        } catch (error) {
+            console.error("Erro ao verificar status:", error);
         }
     };
 
@@ -174,7 +481,9 @@ const PainelCargas = () => {
 
             <header style={styles.header}>
                 <h2 style={styles.titulo}>LOGÍSTICA OPERACIONAL</h2>
-                <div style={styles.statsBadge}>{cargas.length} Registros Ativos</div>
+                <div style={styles.statsBadge}>
+                    {cargas.length} Registros • {cargas.filter(c => c.status === 'EM ANDAMENTO').length} Ativas
+                </div>
             </header>
 
             <div style={styles.tipoViagemSelector}>
@@ -190,6 +499,14 @@ const PainelCargas = () => {
                                 peso: '', 
                                 dt: '', 
                                 trajeto: [],
+                                trajetoComInstrucoes: [],
+                                cercaVirtual: {
+                                    tipo: 'circle',
+                                    raio: 100,
+                                    centro: null,
+                                    coordenadas: [],
+                                    ativa: true
+                                },
                                 perfilVeiculo: tipo === 'CARREGADO' ? 'Trucado' : tipo
                             }));
                         }}
@@ -221,6 +538,7 @@ const PainelCargas = () => {
                             style={styles.selectRotograma}
                             onChange={(e) => selecionarRotograma(e.target.value)}
                             value=""
+                            disabled={processandoRotograma}
                         >
                             <option value="" disabled>Selecione o trecho planejado...</option>
                             {rotasPlanejadas.map(rota => (
@@ -229,7 +547,37 @@ const PainelCargas = () => {
                                 </option>
                             ))}
                         </select>
+                        {processandoRotograma && (
+                            <div style={styles.processandoRotograma}>
+                                Gerando instruções de navegação...
+                            </div>
+                        )}
                     </div>
+
+                    {novaCarga.trajetoComInstrucoes.length > 0 && (
+                        <div style={styles.instrucoesPreview}>
+                            <div style={styles.instrucoesHeader}>
+                                <Navigation size={14} color="#FFD700" />
+                                <span style={styles.instrucoesTitle}>
+                                    {novaCarga.trajetoComInstrucoes.length} instruções de navegação geradas:
+                                </span>
+                            </div>
+                            <div style={styles.instrucoesList}>
+                                {novaCarga.trajetoComInstrucoes.slice(0, 3).map((inst, idx) => (
+                                    <div key={idx} style={styles.instrucaoItem}>
+                                        <span style={styles.instrucaoIndex}>{idx + 1}</span>
+                                        <span style={styles.instrucaoText}>{inst.instrucao}</span>
+                                        <span style={styles.instrucaoDist}>{inst.distanciaAteProximo}</span>
+                                    </div>
+                                ))}
+                                {novaCarga.trajetoComInstrucoes.length > 3 && (
+                                    <div style={styles.maisInstrucoes}>
+                                        + {novaCarga.trajetoComInstrucoes.length - 3} mais instruções...
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
 
                     <div style={{
                         ...styles.gridForm, 
@@ -239,7 +587,6 @@ const PainelCargas = () => {
                             <h4 style={styles.columnTitle}><Weight size={14}/> INFORMAÇÕES</h4>
                             <input placeholder="Nº Documento (Opcional)" value={novaCarga.dt} onChange={e => setNovaCarga({...novaCarga, dt: e.target.value})} style={styles.input} />
                             
-                            {/* LOGICA SOLICITADA: Tipo Veículo apenas em CARREGADO com opções específicas */}
                             {tipoViagem === 'CARREGADO' && (
                                 <>
                                     <input placeholder="Peso (ex: 32 Ton)" value={novaCarga.peso} onChange={e => setNovaCarga({...novaCarga, peso: e.target.value})} style={styles.input} required />
@@ -277,11 +624,95 @@ const PainelCargas = () => {
                             <input placeholder="Cidade/UF" value={novaCarga.destinoCidade} readOnly style={styles.inputReadOnly} />
                             <input type="datetime-local" value={novaCarga.destinoData} onChange={e => setNovaCarga({...novaCarga, destinoData: e.target.value})} style={styles.inputDate} required />
                         </div>
+
+                        {/* NOVA COLUNA PARA CERCAS VIRTUAIS */}
+                        <div style={styles.formColumn}>
+                            <h4 style={styles.columnTitle}>
+                                <Target size={14} color="#2ecc71"/> SISTEMA DE FINALIZAÇÃO
+                            </h4>
+                            
+                            <div style={styles.geofenceSection}>
+                                <label style={styles.geofenceLabel}>
+                                    <input 
+                                        type="checkbox" 
+                                        checked={novaCarga.cercaVirtual?.ativa || true}
+                                        onChange={e => setNovaCarga({
+                                            ...novaCarga, 
+                                            cercaVirtual: {
+                                                ...novaCarga.cercaVirtual,
+                                                ativa: e.target.checked
+                                            }
+                                        })}
+                                        style={styles.checkbox}
+                                    />
+                                    <Shield size={12} color="#2ecc71" />
+                                    Ativar cerca virtual automática
+                                </label>
+                                
+                                {novaCarga.cercaVirtual?.ativa && (
+                                    <>
+                                        <div style={styles.geofenceInfo}>
+                                            <small>
+                                                <CheckCircle size={10} color="#2ecc71" /> 
+                                                A viagem será finalizada automaticamente quando o motorista:
+                                                <br/>1. Entrar na área do destino
+                                                <br/>2. Confirmar a chegada no app
+                                            </small>
+                                        </div>
+                                        
+                                        <div style={styles.geofenceConfig}>
+                                            <label style={styles.geofenceConfigLabel}>
+                                                Raio da cerca (metros):
+                                            </label>
+                                            <input 
+                                                type="number"
+                                                value={novaCarga.cercaVirtual.raio || 100}
+                                                onChange={e => setNovaCarga({
+                                                    ...novaCarga,
+                                                    cercaVirtual: {
+                                                        ...novaCarga.cercaVirtual,
+                                                        raio: parseInt(e.target.value) || 100
+                                                    }
+                                                })}
+                                                style={styles.geofenceInput}
+                                                min="50"
+                                                max="500"
+                                            />
+                                        </div>
+                                        
+                                        {buscandoCoordenadas && (
+                                            <div style={styles.buscandoCoordenadas}>
+                                                <small>Buscando coordenadas do destino...</small>
+                                            </div>
+                                        )}
+                                        
+                                        {novaCarga.cercaVirtual.centro && (
+                                            <div style={styles.coordenadasInfo}>
+                                                <small>
+                                                    📍 Coordenadas configuradas: 
+                                                    <br/>{novaCarga.cercaVirtual.centro.lat?.toFixed(6)}, {novaCarga.cercaVirtual.centro.lng?.toFixed(6)}
+                                                </small>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </div>
                     </div>
 
                     {novaCarga.trajeto.length > 0 && (
                         <div style={styles.trajetoAviso}>
                             <Route size={12} /> Rotograma importado: {novaCarga.trajeto.length} pontos de rota.
+                            {novaCarga.trajetoComInstrucoes.length > 0 && (
+                                <span style={{color: '#2ecc71', marginLeft: '10px'}}>
+                                    🔊 {novaCarga.trajetoComInstrucoes.length} instruções de áudio
+                                </span>
+                            )}
+                            {novaCarga.cercaVirtual?.ativa && (
+                                <span style={{color: '#FFD700', marginLeft: '10px'}}>
+                                    🛡️ Cerca virtual ativa ({novaCarga.cercaVirtual.raio}m)
+                                </span>
+                            )}
                         </div>
                     )}
 
@@ -314,22 +745,68 @@ const PainelCargas = () => {
                             {cargas.map(item => {
                                 const placas = getConjuntoPlacas(item.motoristaId);
                                 const temSolicitacao = item.solicitarRota && (!item.trajeto || item.trajeto.length === 0);
+                                const temInstrucoes = item.trajetoComInstrucoes && item.trajetoComInstrucoes.length > 0;
+                                const temGeofence = item.cercaVirtual?.ativa;
+                                const chegouDestino = item.chegouAoDestino;
+                                const finalizada = item.finalizada;
+                                const confirmacaoPendente = item.confirmacaoPendente;
                                 
                                 return (
                                     <tr key={item.id} style={{
                                         ...styles.tr,
-                                        backgroundColor: temSolicitacao ? '#2a1a00' : 'transparent'
+                                        backgroundColor: chegouDestino ? '#0a1a0a' : 
+                                                       confirmacaoPendente ? '#1a1a00' : 
+                                                       finalizada ? '#0a0a0a' : 'transparent',
+                                        borderLeft: chegouDestino ? '3px solid #2ecc71' : 
+                                                   confirmacaoPendente ? '3px solid #FFD700' : 
+                                                   finalizada ? '3px solid #666' : 'none'
                                     }}>
                                         <td style={styles.td}>
                                             <div style={{...styles.statusBadge, 
-                                                backgroundColor: item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#3d2b1f' : '#1b3d2b',
-                                                color: item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : '#2ecc71',
-                                                border: `1px solid ${item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : '#2ecc71'}`
-                                            }}>{item.status === 'AGUARDANDO PROGRAMAÇÃO' ? 'AGUARDANDO' : (item.status || 'PROGRAMADA')}</div>
+                                                backgroundColor: finalizada ? '#1a1a1a' : 
+                                                              chegouDestino ? '#1a3a1a' : 
+                                                              confirmacaoPendente ? '#3d3d00' :
+                                                              item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#3d2b1f' : 
+                                                              item.status === 'EM ANDAMENTO' ? '#1b3d2b' : '#222',
+                                                color: finalizada ? '#666' : 
+                                                     chegouDestino ? '#2ecc71' : 
+                                                     confirmacaoPendente ? '#FFD700' :
+                                                     item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : 
+                                                     item.status === 'EM ANDAMENTO' ? '#2ecc71' : '#aaa',
+                                                border: `1px solid ${finalizada ? '#666' : 
+                                                       chegouDestino ? '#2ecc71' : 
+                                                       confirmacaoPendente ? '#FFD700' :
+                                                       item.status === 'AGUARDANDO PROGRAMAÇÃO' ? '#ff9f43' : 
+                                                       item.status === 'EM ANDAMENTO' ? '#2ecc71' : '#333'}`
+                                            }}>
+                                                {finalizada ? 'FINALIZADA' : 
+                                                 confirmacaoPendente ? 'AGUARDANDO CONFIRMAÇÃO' :
+                                                 chegouDestino ? 'CHEGOU AO DESTINO' : 
+                                                 item.status === 'AGUARDANDO PROGRAMAÇÃO' ? 'AGUARDANDO' : 
+                                                 (item.status || 'PROGRAMADA')}
+                                            </div>
                                             <div style={styles.dtLabel}>{item.dt}</div>
+                                            
+                                            {temGeofence && !finalizada && (
+                                                <div style={styles.geofenceBadge}>
+                                                    <Target size={10} color="#2ecc71" /> Cerca ativa
+                                                </div>
+                                            )}
+                                            
                                             {temSolicitacao && (
                                                 <div style={styles.alertaRotaPendente}>
                                                     <AlertTriangle size={10} /> ROTA SOLICITADA
+                                                </div>
+                                            )}
+                                            {temInstrucoes && (
+                                                <div style={styles.instrucoesBadge}>
+                                                    🔊 {item.trajetoComInstrucoes.length} instruções
+                                                </div>
+                                            )}
+                                            
+                                            {confirmacaoPendente && (
+                                                <div style={styles.confirmacaoPendenteBadge}>
+                                                    <AlertTriangle size={10} color="#FFD700" /> AGUARDANDO CONFIRMAÇÃO DO MOTORISTA
                                                 </div>
                                             )}
                                         </td>
@@ -339,6 +816,7 @@ const PainelCargas = () => {
                                                     {item.tipoViagem === 'MANUTENÇÃO' ? <SettingsIcon size={12}/> : item.tipoViagem === 'VAZIO' ? <Navigation size={12}/> : <Weight size={12}/>} 
                                                     {item.tipoViagem === 'CARREGADO' ? item.peso : item.tipoViagem}
                                                     {item.trajeto?.length > 0 && <Route size={12} color="#2ecc71" title="Possui Rotograma"/>}
+                                                    {temGeofence && <Target size={12} color="#2ecc71" title="Cerca virtual ativa"/>}
                                                 </span>
                                                 <span style={styles.textIcon}><Truck size={12}/> {item.perfilVeiculo}</span>
                                             </div>
@@ -361,6 +839,13 @@ const PainelCargas = () => {
                                                     </span>
                                                     <span style={styles.subDetail}>{item.destinoCidade}</span>
                                                     <span style={styles.dataDetail}><Clock size={10}/> {formatarData(item.destinoData)}</span>
+                                                    
+                                                    {temGeofence && item.cercaVirtual?.centro && (
+                                                        <span style={styles.geofenceDetail}>
+                                                            <Target size={10} color="#2ecc71"/> 
+                                                            Raio: {item.cercaVirtual.raio}m
+                                                        </span>
+                                                    )}
                                                 </div>
                                             </div>
                                         </td>
@@ -376,12 +861,30 @@ const PainelCargas = () => {
                                                             <span style={styles.placaItem} title="Placa da Carreta"><Container size={10} color="#3498db"/> {placas.carreta}</span>
                                                         </div>
                                                     )}
+                                                    {item.dataInicioViagem && (
+                                                        <div style={styles.inicioViagem}>
+                                                            <Clock size={10} color="#666"/> Início: {formatarData(item.dataInicioViagem)}
+                                                        </div>
+                                                    )}
+                                                    {finalizada && item.dataFinalizacao && (
+                                                        <div style={styles.finalizacaoViagem}>
+                                                            <CheckCircle size={10} color="#2ecc71"/> Finalizada: {formatarData(item.dataFinalizacao)}
+                                                        </div>
+                                                    )}
                                                 </div>
                                             ) : <span style={styles.semMotorista}>NÃO ATRIBUÍDO</span>}
                                         </td>
                                         <td style={styles.td}>
                                             <div style={styles.actionGroup}>
                                                 <button onClick={() => { setCargaParaAtribuir(item); setModalAberto(true); }} style={{...styles.circleBtn, backgroundColor: temSolicitacao ? '#FFD700' : '#333', color: temSolicitacao ? '#000' : '#fff'}} title="Atribuir Motorista / Editar"><UserPlus size={16} /></button>
+                                                
+                                                {!finalizada && (
+                                                    <>
+                                                        <button onClick={() => verificarStatusViagem(item.id)} style={{...styles.circleBtn, backgroundColor: '#1a73e8', color: '#fff'}} title="Verificar Status"><ClipboardList size={16} /></button>
+                                                        <button onClick={() => forcarFinalizacao(item.id)} style={{...styles.circleBtn, backgroundColor: '#e74c3c', color: '#fff'}} title="Forçar Finalização"><SettingsIcon size={16} /></button>
+                                                    </>
+                                                )}
+                                                
                                                 <button onClick={() => { if(window.confirm("Deseja realmente excluir esta ordem?")) deleteDoc(doc(db, "ordens_servico", item.id)) }} style={styles.deleteBtn} title="Excluir"><Trash2 size={16} /></button>
                                             </div>
                                         </td>
@@ -407,6 +910,16 @@ const styles = {
     rotogramaSelectorContainer: { marginBottom: '20px', padding: '15px', backgroundColor: '#000', borderRadius: '6px', border: '1px dashed #444' },
     labelRotograma: { fontSize: '11px', color: '#FFD700', marginBottom: '8px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
     selectRotograma: { width: '100%', backgroundColor: '#0a0a0a', color: '#FFD700', border: '1px solid #333', padding: '12px', borderRadius: '4px', fontSize: '13px', cursor: 'pointer', fontWeight: '500' },
+    processandoRotograma: { fontSize: '11px', color: '#FFD700', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', backgroundColor: '#1a1a00', borderRadius: '4px', fontStyle: 'italic' },
+    instrucoesPreview: { backgroundColor: '#0a0a0a', borderRadius: '6px', padding: '15px', marginBottom: '15px', border: '1px solid #333' },
+    instrucoesHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' },
+    instrucoesTitle: { fontSize: '12px', color: '#FFD700', fontWeight: 'bold' },
+    instrucoesList: { display: 'flex', flexDirection: 'column', gap: '8px' },
+    instrucaoItem: { display: 'flex', alignItems: 'center', gap: '10px', padding: '8px', backgroundColor: '#111', borderRadius: '4px', borderLeft: '3px solid #FFD700' },
+    instrucaoIndex: { backgroundColor: '#FFD700', color: '#000', width: '20px', height: '20px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', fontWeight: 'bold' },
+    instrucaoText: { flex: 1, fontSize: '11px', color: '#ccc' },
+    instrucaoDist: { fontSize: '10px', color: '#666', fontWeight: 'bold' },
+    maisInstrucoes: { fontSize: '10px', color: '#666', textAlign: 'center', padding: '5px', fontStyle: 'italic' },
     trajetoAviso: { fontSize: '11px', color: '#2ecc71', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', backgroundColor: '#0a1a0a', borderRadius: '4px', border: '1px solid #1a3a1a' },
     gridForm: { display: 'grid', gap: '20px' },
     formColumn: { display: 'flex', flexDirection: 'column', gap: '8px' },
@@ -426,24 +939,98 @@ const styles = {
     td: { padding: '15px', borderBottom: '1px solid #1a1a1a', verticalAlign: 'middle' },
     tr: { transition: '0.2s' },
     dtLabel: { fontSize: '11px', fontWeight: 'bold', marginTop: '5px', color: '#aaa' },
-    statusBadge: { padding: '4px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', width: 'fit-content' },
+    statusBadge: { padding: '4px 8px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold', width: 'fit-content', marginBottom: '5px' },
     infoCol: { display: 'flex', flexDirection: 'column', gap: '4px' },
     textIcon: { display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#ccc' },
     logisticaContainer: { display: 'flex', alignItems: 'center', gap: '15px' },
     pontoInfo: { display: 'flex', flexDirection: 'column', gap: '2px', minWidth: '150px' },
     localName: { fontSize: '13px', fontWeight: 'bold', color: '#fff' },
     subDetail: { fontSize: '10px', color: '#666' },
-    dataDetail: { fontSize: '11px', color: '#FFD700', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px' },
+    dataDetail: { fontSize: '11px', color: '#FFD700', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' },
+    geofenceDetail: { fontSize: '10px', color: '#2ecc71', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' },
     seta: { color: '#333', fontWeight: 'bold' },
     semMotorista: { color: '#444', fontSize: '11px' },
-    actionGroup: { display: 'flex', gap: '10px' },
+    actionGroup: { display: 'flex', gap: '10px', flexWrap: 'wrap' },
     circleBtn: { border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' },
     deleteBtn: { backgroundColor: '#221111', color: '#ff4444', border: 'none', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' },
     containerResponsavel: { display: 'flex', flexDirection: 'column', gap: '5px' },
     motoristaAtribuido: { color: '#2ecc71', fontSize: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '5px' },
     infoPlacas: { display: 'flex', flexDirection: 'column', gap: '2px', paddingLeft: '17px' },
     placaItem: { fontSize: '10px', color: '#999', display: 'flex', alignItems: 'center', gap: '4px' },
-    alertaRotaPendente: { color: '#FFD700', fontSize: '9px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px' }
+    inicioViagem: { fontSize: '9px', color: '#666', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' },
+    finalizacaoViagem: { fontSize: '9px', color: '#2ecc71', display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px', fontWeight: 'bold' },
+    alertaRotaPendente: { color: '#FFD700', fontSize: '9px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px' },
+    instrucoesBadge: { color: '#3498db', fontSize: '9px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px' },
+    geofenceBadge: { color: '#2ecc71', fontSize: '9px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px' },
+    confirmacaoPendenteBadge: { color: '#FFD700', fontSize: '8px', fontWeight: 'bold', marginTop: '5px', display: 'flex', alignItems: 'center', gap: '3px', backgroundColor: '#1a1a00', padding: '3px 5px', borderRadius: '3px' },
+    
+    // NOVOS ESTILOS PARA CERCAS VIRTUAIS
+    geofenceSection: {
+        backgroundColor: '#000',
+        padding: '15px',
+        borderRadius: '6px',
+        border: '1px solid #333',
+        marginTop: '10px'
+    },
+    geofenceLabel: {
+        color: '#2ecc71',
+        fontSize: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        marginBottom: '10px',
+        fontWeight: 'bold'
+    },
+    checkbox: {
+        width: '16px',
+        height: '16px',
+        accentColor: '#2ecc71'
+    },
+    geofenceInfo: {
+        fontSize: '11px',
+        color: '#888',
+        marginTop: '8px',
+        padding: '8px',
+        backgroundColor: '#111',
+        borderRadius: '4px',
+        lineHeight: '1.4'
+    },
+    geofenceConfig: {
+        marginTop: '10px'
+    },
+    geofenceConfigLabel: {
+        fontSize: '11px',
+        color: '#aaa',
+        marginBottom: '5px',
+        display: 'block'
+    },
+    geofenceInput: {
+        backgroundColor: '#111',
+        border: '1px solid #444',
+        color: '#FFF',
+        padding: '8px',
+        borderRadius: '4px',
+        fontSize: '13px',
+        width: '100%'
+    },
+    buscandoCoordenadas: {
+        fontSize: '11px',
+        color: '#FFD700',
+        marginTop: '10px',
+        padding: '5px',
+        backgroundColor: '#1a1a00',
+        borderRadius: '4px',
+        fontStyle: 'italic'
+    },
+    coordenadasInfo: {
+        fontSize: '10px',
+        color: '#2ecc71',
+        marginTop: '10px',
+        padding: '5px',
+        backgroundColor: '#0a1a0a',
+        borderRadius: '4px',
+        fontFamily: 'monospace'
+    }
 };
 
 export default PainelCargas;

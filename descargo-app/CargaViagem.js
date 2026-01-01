@@ -1,211 +1,387 @@
-import React, { useEffect, useState, memo } from 'react';
-import { 
-    View, 
-    Text, 
-    StyleSheet, 
-    TouchableOpacity, 
-    Linking, 
-    ActivityIndicator, 
-    Platform // Adicionado Platform
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  FlatList,
+  Alert,
+  ActivityIndicator,
+  RefreshControl,
+  SafeAreaView,
 } from 'react-native';
-import MapView, { Circle, Polygon, PROVIDER_GOOGLE } from 'react-native-maps';
-import { db } from "./firebase";
-import { collection, query, where, onSnapshot, limit } from "firebase/firestore"; // Adicionado limit
-import { Navigation, MapPin, Package } from 'lucide-react-native';
+import { useNavigation } from '@react-navigation/native';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
+import { db } from './firebase';
+import { collection, query, where, onSnapshot, updateDoc, doc, getDocs } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 
-const GeofenceLayer = memo(({ cerca }) => {
-    if (!cerca || !cerca.geofence) return null;
+const CargaViagem = () => {
+  const navigation = useNavigation();
+  const [viagens, setViagens] = useState([]);
+  const [carregando, setCarregando] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const auth = getAuth();
+  const user = auth.currentUser;
 
-    if (cerca.geofence.tipo === 'circle') {
-        return (
-            <Circle
-                center={{
-                    latitude: cerca.geofence.centro.lat,
-                    longitude: cerca.geofence.centro.lng
-                }}
-                radius={cerca.geofence.raio}
-                strokeColor="#FFD700"
-                fillColor="rgba(255, 215, 0, 0.2)"
-                zIndex={2}
-            />
-        );
+  useEffect(() => {
+    if (user) {
+      carregarViagens();
     }
+  }, [user]);
 
-    const coords = cerca.geofence.coordenadas.map(c => ({
-        latitude: c.lat,
-        longitude: c.lng
-    }));
+  const carregarViagens = async () => {
+    try {
+      setCarregando(true);
+      
+      // Buscar viagens disponíveis (status = 'disponivel' ou 'pendente')
+      const q = query(
+        collection(db, 'viagens'),
+        where('status', 'in', ['disponivel', 'pendente'])
+      );
+      
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const viagensData = [];
+        snapshot.forEach((doc) => {
+          viagensData.push({
+            id: doc.id,
+            ...doc.data()
+          });
+        });
+        
+        // Ordenar por data mais recente
+        viagensData.sort((a, b) => b.createdAt - a.createdAt);
+        setViagens(viagensData);
+        setCarregando(false);
+      });
+      
+      return unsubscribe;
+      
+    } catch (error) {
+      console.error('Erro ao carregar viagens:', error);
+      Alert.alert('Erro', 'Não foi possível carregar as viagens');
+      setCarregando(false);
+    }
+  };
 
+  const aceitarViagem = async (viagem) => {
+    try {
+      Alert.alert(
+        'Confirmar Viagem',
+        `Deseja aceitar a viagem para ${viagem.destinoCidade}?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          {
+            text: 'Aceitar',
+            onPress: async () => {
+              // Atualizar status da viagem
+              await updateDoc(doc(db, 'viagens', viagem.id), {
+                status: 'aceita',
+                motoristaId: user.uid,
+                motoristaNome: user.displayName || user.email,
+                aceitaEm: new Date(),
+              });
+              
+              // Navegar para tela de navegação
+              navigation.navigate('NavegacaoAudio', {
+                viagemId: viagem.id,
+                origem: {
+                  latitude: viagem.origemLat || -23.5505,
+                  longitude: viagem.origemLng || -46.6333,
+                  endereco: viagem.origemEndereco || 'São Paulo, SP'
+                },
+                destino: {
+                  latitude: viagem.destinoLat || -23.5635,
+                  longitude: viagem.destinoLng || -46.6523,
+                  endereco: viagem.destinoEndereco || 'São Paulo, SP'
+                }
+              });
+            }
+          }
+        ]
+      );
+    } catch (error) {
+      console.error('Erro ao aceitar viagem:', error);
+      Alert.alert('Erro', 'Não foi possível aceitar a viagem');
+    }
+  };
+
+  const onRefresh = () => {
+    setRefreshing(true);
+    carregarViagens().then(() => setRefreshing(false));
+  };
+
+  const renderItem = ({ item }) => (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <Text style={styles.cardTitle}>Viagem #{item.id.substring(0, 8)}</Text>
+        <View style={[
+          styles.statusBadge,
+          { backgroundColor: item.status === 'disponivel' ? '#28a745' : '#ffc107' }
+        ]}>
+          <Text style={styles.statusText}>
+            {item.status === 'disponivel' ? 'DISPONÍVEL' : 'PENDENTE'}
+          </Text>
+        </View>
+      </View>
+      
+      <View style={styles.cardBody}>
+        <View style={styles.rotaItem}>
+          <Ionicons name="location-outline" size={20} color="#1a73e8" />
+          <View style={styles.rotaTextContainer}>
+            <Text style={styles.rotaLabel}>Origem:</Text>
+            <Text style={styles.rotaValue}>{item.origemEndereco || 'Não informado'}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.separator} />
+        
+        <View style={styles.rotaItem}>
+          <Ionicons name="flag-outline" size={20} color="#dc3545" />
+          <View style={styles.rotaTextContainer}>
+            <Text style={styles.rotaLabel}>Destino:</Text>
+            <Text style={styles.rotaValue}>{item.destinoEndereco || 'Não informado'}</Text>
+          </View>
+        </View>
+        
+        <View style={styles.infoRow}>
+          <View style={styles.infoItem}>
+            <MaterialIcons name="local-shipping" size={16} color="#666" />
+            <Text style={styles.infoText}>{item.tipoCarga || 'Geral'}</Text>
+          </View>
+          <View style={styles.infoItem}>
+            <MaterialIcons name="account-balance-wallet" size={16} color="#666" />
+            <Text style={styles.infoText}>R$ {item.valor?.toFixed(2) || '0,00'}</Text>
+          </View>
+        </View>
+      </View>
+      
+      <View style={styles.cardFooter}>
+        <TouchableOpacity 
+          style={styles.botaoDetalhes}
+          onPress={() => Alert.alert('Detalhes', `Carga: ${item.descricao || 'Sem descrição'}`)}
+        >
+          <Text style={styles.botaoDetalhesTexto}>Ver Detalhes</Text>
+        </TouchableOpacity>
+        
+        <TouchableOpacity 
+          style={styles.botaoAceitar}
+          onPress={() => aceitarViagem(item)}
+          disabled={item.status !== 'disponivel'}
+        >
+          <Text style={styles.botaoAceitarTexto}>
+            {item.status === 'disponivel' ? 'ACEITAR VIAGEM' : 'AGUARDANDO'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  if (carregando && viagens.length === 0) {
     return (
-        <Polygon
-            coordinates={coords}
-            strokeColor="#FFD700"
-            fillColor="rgba(255, 215, 0, 0.2)"
-            zIndex={2}
+      <SafeAreaView style={styles.container}>
+        <ActivityIndicator size="large" color="#1a73e8" />
+        <Text style={styles.carregandoTexto}>Carregando viagens...</Text>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Cargas Disponíveis</Text>
+        <TouchableOpacity onPress={carregarViagens}>
+          <Ionicons name="refresh" size={24} color="#1a73e8" />
+        </TouchableOpacity>
+      </View>
+      
+      {viagens.length === 0 ? (
+        <View style={styles.emptyContainer}>
+          <MaterialIcons name="local-shipping" size={64} color="#ccc" />
+          <Text style={styles.emptyText}>Nenhuma viagem disponível no momento</Text>
+          <TouchableOpacity style={styles.emptyButton} onPress={carregarViagens}>
+            <Text style={styles.emptyButtonText}>Atualizar</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={viagens}
+          renderItem={renderItem}
+          keyExtractor={(item) => item.id}
+          contentContainerStyle={styles.listContainer}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              colors={['#1a73e8']}
+            />
+          }
         />
-    );
-});
-
-const CargaViagem = ({ motoristaEmail }) => {
-    const [viagemAtiva, setViagemAtiva] = useState(null);
-    const [cercaDestino, setCercaDestino] = useState(null);
-    const [loading, setLoading] = useState(true);
-    
-    const [region, setRegion] = useState({
-        latitude: -21.78,
-        longitude: -48.17,
-        latitudeDelta: 0.0922,
-        longitudeDelta: 0.0421,
-    });
-
-    useEffect(() => {
-        if (!motoristaEmail) return;
-
-        // Ajustado para buscar status "ACEITO" ou "EM VIAGEM"
-        const q = query(
-            collection(db, "ordens_servico"),
-            where("motorista_email", "==", motoristaEmail),
-            where("status", "in", ["ACEITO", "EM VIAGEM"]),
-            limit(1)
-        );
-
-        const unsubViagem = onSnapshot(q, (snapshot) => {
-            if (!snapshot.empty) {
-                const dados = snapshot.docs[0].data();
-                setViagemAtiva(dados);
-                // A função buscarCerca agora retorna seu próprio unsubscribe
-                const unsubCerca = buscarCercaNoMapa(dados.cliente_destino || dados.destinoCliente);
-                return () => unsubCerca && unsubCerca();
-            } else {
-                setViagemAtiva(null);
-                setCercaDestino(null);
-            }
-            setLoading(false);
-        }, (err) => {
-            console.error("Erro Viagem:", err);
-            setLoading(false);
-        });
-
-        return () => unsubViagem();
-    }, [motoristaEmail]);
-
-    const buscarCercaNoMapa = (nomeCliente) => {
-        if (!nomeCliente) return;
-        
-        const qCerca = query(
-            collection(db, "cadastro_clientes_pontos"),
-            where("cliente", "==", nomeCliente.toUpperCase()),
-            limit(1)
-        );
-
-        // Retornamos o unsubscribe para ser limpo pelo useEffect pai
-        return onSnapshot(qCerca, (snapshot) => {
-            if (!snapshot.empty) {
-                const dadosCerca = snapshot.docs[0].data();
-                setCercaDestino(dadosCerca);
-                
-                const geo = dadosCerca.geofence;
-                const lat = geo.tipo === 'circle' ? geo.centro.lat : geo.coordenadas[0].lat;
-                const lng = geo.tipo === 'circle' ? geo.centro.lng : geo.coordenadas[0].lng;
-
-                setRegion({
-                    latitude: lat,
-                    longitude: lng,
-                    latitudeDelta: 0.02,
-                    longitudeDelta: 0.02,
-                });
-            }
-        });
-    };
-
-    const abrirNavegacao = () => {
-        if (!viagemAtiva) return;
-        const destino = viagemAtiva.cliente_destino || viagemAtiva.destinoCliente;
-        
-        // Melhorei a URL para funcionar melhor no Google Maps e Waze
-        const url = Platform.OS === 'ios' 
-            ? `maps://0,0?q=${destino}`
-            : `geo:0,0?q=${destino}`;
-            
-        Linking.openURL(url).catch(() => {
-            Alert.alert("Erro", "Não foi possível abrir o mapa externo.");
-        });
-    };
-
-    if (loading) return (
-        <View style={styles.centered}>
-            <ActivityIndicator size="large" color="#FFD700" />
-        </View>
-    );
-
-    return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>
-                    {viagemAtiva?.status === "ACEITO" ? "VIAGEM INICIADA" : "EM ANDAMENTO"}
-                </Text>
-                {viagemAtiva && (
-                    <View style={styles.infoRow}>
-                        <Package size={16} color="#666" />
-                        <Text style={styles.text}>Carga: {viagemAtiva.produto || 'Geral'}</Text>
-                    </View>
-                )}
-            </View>
-
-            <View style={styles.mapWrapper}>
-                <MapView
-                    provider={PROVIDER_GOOGLE}
-                    style={styles.map}
-                    region={region} // Mudado de initialRegion para region para acompanhar o destino
-                    showsUserLocation={true}
-                    loadingEnabled={true}
-                    pitchEnabled={false}
-                    mapType="standard"
-                >
-                    <GeofenceLayer cerca={cercaDestino} />
-                </MapView>
-            </View>
-
-            {viagemAtiva && (
-                <View style={styles.footer}>
-                    <View style={styles.destCard}>
-                        <Text style={styles.destLabel}>DESTINO FINAL</Text>
-                        <View style={styles.infoRow}>
-                            <MapPin size={18} color="#FFD700" />
-                            <Text style={styles.destName}>
-                                {(viagemAtiva.cliente_destino || viagemAtiva.destinoCliente)?.toUpperCase()}
-                            </Text>
-                        </View>
-                    </View>
-
-                    <TouchableOpacity style={styles.navButton} onPress={abrirNavegacao}>
-                        <Navigation size={20} color="#000" />
-                        <Text style={styles.navButtonText}>INICIAR GPS EXTERNO</Text>
-                    </TouchableOpacity>
-                </View>
-            )}
-        </View>
-    );
+      )}
+    </SafeAreaView>
+  );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: '#000' },
-    centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-    header: { padding: 15, borderBottomWidth: 1, borderBottomColor: '#222', paddingTop: 40 },
-    headerTitle: { color: '#FFD700', fontSize: 16, fontWeight: 'bold' },
-    infoRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 5 },
-    text: { color: '#fff', fontSize: 14 },
-    mapWrapper: { flex: 1 },
-    map: { ...StyleSheet.absoluteFillObject },
-    footer: { padding: 20, backgroundColor: '#000', paddingBottom: 30 },
-    destCard: { backgroundColor: '#111', padding: 15, borderRadius: 10 },
-    destLabel: { color: '#666', fontSize: 10, marginBottom: 4 },
-    destName: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
-    navButton: {
-        backgroundColor: '#FFD700', marginTop: 15, padding: 15,
-        borderRadius: 10, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10
-    },
-    navButtonText: { fontWeight: 'bold', color: '#000' }
+  container: {
+    flex: 1,
+    backgroundColor: '#f5f5f5',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#fff',
+    borderBottomWidth: 1,
+    borderBottomColor: '#eee',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#333',
+  },
+  listContainer: {
+    padding: 15,
+  },
+  card: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 15,
+    paddingTop: 15,
+    paddingBottom: 10,
+  },
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#333',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  statusText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  cardBody: {
+    paddingHorizontal: 15,
+    paddingBottom: 15,
+  },
+  rotaItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginVertical: 5,
+  },
+  rotaTextContainer: {
+    flex: 1,
+    marginLeft: 10,
+  },
+  rotaLabel: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 2,
+  },
+  rotaValue: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+  },
+  separator: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginVertical: 10,
+    marginLeft: 30,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 15,
+  },
+  infoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoText: {
+    marginLeft: 5,
+    fontSize: 14,
+    color: '#666',
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: '#eee',
+    padding: 15,
+  },
+  botaoDetalhes: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    marginRight: 8,
+    borderWidth: 1,
+    borderColor: '#1a73e8',
+    borderRadius: 8,
+  },
+  botaoDetalhesTexto: {
+    color: '#1a73e8',
+    fontWeight: '600',
+  },
+  botaoAceitar: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: '#1a73e8',
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  botaoAceitarTexto: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+  },
+  emptyText: {
+    fontSize: 16,
+    color: '#666',
+    textAlign: 'center',
+    marginTop: 20,
+    marginBottom: 30,
+  },
+  emptyButton: {
+    backgroundColor: '#1a73e8',
+    paddingHorizontal: 30,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  emptyButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  carregandoTexto: {
+    marginTop: 15,
+    color: '#666',
+    fontSize: 16,
+  },
 });
 
 export default CargaViagem;

@@ -6,7 +6,6 @@
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -17,6 +16,11 @@
       "bundleIdentifier": "com.rafaelaraujo2025.descargoapp",
       "config": {
         "googleMapsApiKey": "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4"
+      },
+      "infoPlist": {
+        "UIBackgroundModes": ["location", "audio"],
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "O app precisa acessar sua localização para navegação em primeiro e segundo plano.",
+        "NSLocationWhenInUseUsageDescription": "O app precisa acessar sua localização para navegação."
       }
     },
     "android": {
@@ -29,9 +33,9 @@
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
         "VIBRATE",
         "WAKE_LOCK"
       ],
@@ -39,8 +43,7 @@
         "googleMaps": {
           "apiKey": "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4"
         }
-      },
-      "softwareKeyboardLayoutMode": "pan"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -54,8 +57,9 @@
       [
         "expo-location",
         {
-          "locationAlwaysPermission": "O app precisa acessar sua localização para rastreamento de carga mesmo em segundo plano.",
-          "isAndroidBackgroundLocationEnabled": true
+          "locationAlwaysAndWhenInUsePermission": "O app precisa acessar sua localização para navegação mesmo em segundo plano.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isIosBackgroundLocationEnabled": true
         }
       ]
     ]

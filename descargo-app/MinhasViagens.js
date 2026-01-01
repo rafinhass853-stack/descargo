@@ -15,17 +15,16 @@ import {
   where, 
   onSnapshot 
 } from 'firebase/firestore';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 
 export default function MinhasViagens({ auth, db }) {
   const [loading, setLoading] = useState(true);
   const [todasViagens, setTodasViagens] = useState([]);
-  const [filtroAtivo, setFiltroAtivo] = useState('TUDO'); // TUDO, HOJE, 7DIAS, 30DIAS
+  const [filtroAtivo, setFiltroAtivo] = useState('TUDO');
 
   useEffect(() => {
     if (!auth.currentUser) return;
 
-    // Removido o orderBy para evitar o erro de índice composto
     const q = query(
       collection(db, "ordens_servico"),
       where("motoristaId", "==", auth.currentUser.uid)
@@ -37,7 +36,6 @@ export default function MinhasViagens({ auth, db }) {
         lista.push({ id: doc.id, ...doc.data() });
       });
 
-      // Ordenação manual via JavaScript (mais seguro sem índice)
       lista.sort((a, b) => {
         const dataA = a.aceitoEm?.seconds || 0;
         const dataB = b.aceitoEm?.seconds || 0;
@@ -54,7 +52,6 @@ export default function MinhasViagens({ auth, db }) {
     return () => unsubscribe();
   }, []);
 
-  // Lógica de Filtro e Cálculo de Estatísticas
   const dadosFiltrados = useMemo(() => {
     const agora = new Date();
     const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
@@ -82,29 +79,60 @@ export default function MinhasViagens({ auth, db }) {
     return { lista: filtradas, aceitas, recusadas, taxa };
   }, [todasViagens, filtroAtivo]);
 
-  const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHeader}>
-        <Text style={styles.dtText}>DT: {item.dt || '---'}</Text>
-        <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) }]}>
-          <Text style={styles.badgeText}>{item.status}</Text>
+  const renderItem = ({ item }) => {
+    const temInstrucoes = item.trajetoComInstrucoes && item.trajetoComInstrucoes.length > 0;
+    
+    return (
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) }]}>
+            <Text style={styles.badgeText}>{item.status}</Text>
+          </View>
+          <Text style={styles.dtText}>DT: {item.dt || '---'}</Text>
+        </View>
+        
+        <Text style={styles.clienteText}>{item.destinoCliente || item.cliente_destino}</Text>
+        
+        {/* Info adicional */}
+        <View style={styles.extraInfo}>
+          <View style={styles.infoRow}>
+            <MaterialCommunityIcons name="map-marker" size={14} color="#666" />
+            <Text style={styles.extraText}>{item.destinoCidade || item.cidade_destino}</Text>
+          </View>
+          
+          {item.peso && (
+            <View style={styles.infoRow}>
+              <MaterialCommunityIcons name="weight" size={14} color="#666" />
+              <Text style={styles.extraText}>{item.peso}</Text>
+            </View>
+          )}
+          
+          {temInstrucoes && (
+            <View style={[styles.infoRow, {marginLeft: 'auto'}]}>
+              <Ionicons name="volume-high" size={14} color="#FFD700" />
+              <Text style={[styles.extraText, {color: '#FFD700'}]}>
+                {item.trajetoComInstrucoes.length} instruções
+              </Text>
+            </View>
+          )}
+        </View>
+        
+        <View style={styles.cardFooter}>
+          <MaterialCommunityIcons name="calendar-clock" size={14} color="#666" />
+          <Text style={styles.dateText}>
+            {item.aceitoEm?.toDate().toLocaleString('pt-BR') || 'Aguardando...'}
+          </Text>
         </View>
       </View>
-      <Text style={styles.clienteText}>{item.destinoCliente || item.cliente_destino}</Text>
-      <View style={styles.cardFooter}>
-        <MaterialCommunityIcons name="calendar-clock" size={14} color="#666" />
-        <Text style={styles.dateText}>
-          {item.aceitoEm?.toDate().toLocaleString('pt-BR') || 'Aguardando...'}
-        </Text>
-      </View>
-    </View>
-  );
+    );
+  };
 
   const getStatusColor = (status) => {
     switch (status) {
       case 'CONCLUÍDO': return '#2ecc71';
       case 'ACEITO': return '#FFD700';
       case 'RECUSADO': return '#ff4d4d';
+      case 'PENDENTE ACEITE': return '#3498db';
       default: return '#333';
     }
   };
@@ -136,7 +164,7 @@ export default function MinhasViagens({ auth, db }) {
         <FilterButton label="30 Dias" id="30DIAS" />
       </View>
 
-      {/* Header de Estatísticas Dinâmico */}
+      {/* Header de Estatísticas */}
       <View style={styles.statsContainer}>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{dadosFiltrados.aceitas}</Text>
@@ -205,6 +233,9 @@ const styles = StyleSheet.create({
   badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 5 },
   badgeText: { color: '#000', fontSize: 9, fontWeight: 'bold' },
   clienteText: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginBottom: 10 },
+  extraInfo: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
+  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  extraText: { color: '#666', fontSize: 11 },
   cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   dateText: { color: '#444', fontSize: 11 },
   emptyContainer: { alignItems: 'center', marginTop: 50 },
