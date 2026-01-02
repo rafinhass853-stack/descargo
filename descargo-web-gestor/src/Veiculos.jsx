@@ -88,13 +88,24 @@ export default function Veiculos() {
   const salvarVeiculo = async (e) => {
     e.preventDefault();
     if (novoVeiculo.placa.length < 8) { alert("Placa inválida!"); return; }
+
+    // --- REGRA: MOTORISTA ÚNICO POR PLACA ---
+    if (novoVeiculo.motorista_id) {
+      const motoristaOcupado = veiculos.find(v => 
+        v.motorista_id === novoVeiculo.motorista_id && v.id !== editandoId
+      );
+
+      if (motoristaOcupado) {
+        alert(`Atenção: Este motorista já está vinculado à placa ${motoristaOcupado.placa}.`);
+        return;
+      }
+    }
     
     try {
       if (editandoId) {
         await updateDoc(doc(db, "cadastro_veiculos", editandoId), novoVeiculo);
         setEditandoId(null);
       } else {
-        // Checa duplicidade apenas em novos cadastros
         const q = query(collection(db, "cadastro_veiculos"), where("placa", "==", novoVeiculo.placa));
         const querySnapshot = await getDocs(q);
         if (!querySnapshot.empty) {
@@ -102,7 +113,7 @@ export default function Veiculos() {
         }
         await addDoc(collection(db, "cadastro_veiculos"), novoVeiculo);
       }
-      // Reset form
+      
       setNovoVeiculo({ 
         placa: '', tipo: 'Truck', status: 'DISPONÍVEL', 
         motorista_id: '', motorista_nome: 'SEM MOTORISTA' 
@@ -162,7 +173,14 @@ export default function Veiculos() {
             }}
           >
             <option value="">-- Selecione --</option>
-            {motoristas.map(m => <option key={m.id} value={m.id}>{m.nome}</option>)}
+            {motoristas.map(m => {
+              const estaOcupado = veiculos.some(v => v.motorista_id === m.id && v.id !== editandoId);
+              return (
+                <option key={m.id} value={m.id} disabled={estaOcupado}>
+                  {m.nome} {estaOcupado ? '(EM OUTRA PLACA)' : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
         <button type="submit" style={{...styles.btnAdicionar, backgroundColor: editandoId ? '#2ecc71' : '#FFD700'}}>
@@ -254,7 +272,7 @@ export default function Veiculos() {
 }
 
 const styles = {
-  container: { padding: '10px', color: '#FFF', backgroundColor: '#000', minHeight: '100vh' },
+  container: { padding: '10px', color: '#FFF', backgroundColor: '#000', minHeight: '100vh', fontFamily: 'sans-serif' },
   titulo: { color: '#FFD700', fontSize: '20px', marginBottom: '20px', borderLeft: '4px solid #FFD700', paddingLeft: '10px' },
   form: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', backgroundColor: '#0a0a0a', padding: '20px', borderRadius: '12px', marginBottom: '20px', border: '1px solid #222' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
