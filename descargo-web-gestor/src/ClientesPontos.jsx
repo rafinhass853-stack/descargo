@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Circle, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Circle, Polyline, Popup } from 'react-leaflet';
 import { EditControl } from "react-leaflet-draw";
-import { LocateFixed, Save, Search, Trash2, MapPin, Edit3, Link2, Navigation, Tag } from 'lucide-react';
+import { LocateFixed, Save, Search, Trash2, MapPin, Edit3, Link2, Navigation, Tag, Route } from 'lucide-react';
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
@@ -18,7 +18,6 @@ const ChangeView = ({ center }) => {
     return null;
 };
 
-// Cores por tipo de ponto
 const TIPO_CORES = {
     'Cliente': '#2ecc71',
     'Ponto de Apoio': '#3498db',
@@ -33,6 +32,7 @@ const RenderGeofence = ({ data, tipo, nomeCliente = "" }) => {
     if (!data) return null;
     const color = TIPO_CORES[tipo] || '#FFD700';
 
+    // Renderiza Círculo
     if (data.tipo === 'circle' && data.centro) {
         return (
             <Circle 
@@ -45,6 +45,20 @@ const RenderGeofence = ({ data, tipo, nomeCliente = "" }) => {
         );
     }
 
+    // Renderiza Linha (ROTA PERSONALIZADA)
+    if (data.tipo === 'polyline' && data.coordenadas) {
+        const positions = data.coordenadas.map(c => [c.lat, c.lng]);
+        return (
+            <Polyline 
+                positions={positions} 
+                pathOptions={{ color: '#FFD700', weight: 5, opacity: 0.8 }}
+            >
+                {nomeCliente && <Popup><strong>Rota: {nomeCliente}</strong></Popup>}
+            </Polyline>
+        );
+    }
+
+    // Renderiza Polígono ou Retângulo
     if ((data.tipo === 'polygon' || data.tipo === 'rectangle') && data.coordenadas) {
         const positions = data.coordenadas.map(c => [c.lat, c.lng]);
         return (
@@ -70,7 +84,6 @@ const ClientesPontos = () => {
         obs: '' 
     });
     const [geofence, setGeofence] = useState(null);
-    const [searchQuery, setSearchQuery] = useState("");
     const [mapCenter, setMapCenter] = useState([-23.5505, -46.6333]);
     const [clientesCadastrados, setClientesCadastrados] = useState([]);
     const [mapKey, setMapKey] = useState(Date.now());
@@ -101,22 +114,20 @@ const ClientesPontos = () => {
         } catch (error) { console.error(error); }
     };
 
-    const fetchCoords = async (query) => {
-        try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`);
-            const data = await response.json();
-            if (data.length > 0) setMapCenter([parseFloat(data[0].lat), parseFloat(data[0].lon)]);
-        } catch (error) { console.error(error); }
-    };
-
     const onCreated = (e) => {
         const { layerType, layer } = e;
         let areaData = { tipo: layerType };
+        
         if (layerType === 'circle') {
             areaData.centro = { lat: layer.getLatLng().lat, lng: layer.getLatLng().lng };
             areaData.raio = layer.getRadius();
+        } else if (layerType === 'polyline') {
+            // Captura os pontos da linha (ROTA)
+            areaData.coordenadas = layer.getLatLngs().map(c => ({ lat: c.lat, lng: c.lng }));
         } else {
-            areaData.coordenadas = layer.getLatLngs()[0].map(c => ({ lat: c.lat, lng: c.lng }));
+            // Polígonos e Retângulos
+            const latlngs = layer.getLatLngs();
+            areaData.coordenadas = (Array.isArray(latlngs[0]) ? latlngs[0] : latlngs).map(c => ({ lat: c.lat, lng: c.lng }));
         }
         setGeofence(areaData);
     };
@@ -138,7 +149,7 @@ const ClientesPontos = () => {
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!geofence) return alert("Desenhe a cerca no mapa!");
+        if (!geofence) return alert("Desenhe a rota ou cerca no mapa!");
         setLoading(true);
         try {
             const dados = { ...formData, geofence, atualizadoEm: serverTimestamp() };
@@ -152,7 +163,7 @@ const ClientesPontos = () => {
             setFormData({ cliente: '', tipo: 'Cliente', cidade: '', linkGoogle: '', obs: '' });
             setGeofence(null);
             setMapKey(Date.now());
-            alert("Salvo com sucesso!");
+            alert("Ponto e Rota salvos com sucesso!");
         } catch (error) { alert(error.message); }
         setLoading(false);
     };
@@ -160,7 +171,7 @@ const ClientesPontos = () => {
     return (
         <div style={styles.container}>
             <header style={styles.header}>
-                <h2 style={styles.titulo}><LocateFixed color="#FFD700" /> {editId ? 'Editando Ponto' : 'Cadastro de Pontos e Clientes'}</h2>
+                <h2 style={styles.titulo}><LocateFixed color="#FFD700" /> {editId ? 'Editando Ponto/Rota' : 'Cadastro de Pontos e Rotas'}</h2>
                 {editId && <button onClick={() => { setEditId(null); setGeofence(null); setMapKey(Date.now()); setFormData({ cliente: '', tipo: 'Cliente', cidade: '', linkGoogle: '', obs: '' }); }} style={styles.btnCancelar}>CANCELAR EDIÇÃO</button>}
             </header>
             
@@ -173,7 +184,7 @@ const ClientesPontos = () => {
                             value={formData.tipo} 
                             onChange={e => setFormData({...formData, tipo: e.target.value})}
                         >
-                            <option value="Cliente">🏢 Cliente</option>
+                            <option value="Cliente">🏢 Cliente (Destino)</option>
                             <option value="Ponto de Apoio">🏠 Ponto de Apoio</option>
                             <option value="Abastecimento">⛽ Posto de Combustível</option>
                             <option value="Estacionamento">🅿️ Estacionamento</option>
@@ -184,7 +195,7 @@ const ClientesPontos = () => {
                     </div>
 
                     <div style={styles.field}>
-                        <label style={styles.label}>NOME DO LOCAL</label>
+                        <label style={styles.label}>NOME DO LOCAL (IGUAL À CARGA)</label>
                         <input style={styles.input} value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} required />
                     </div>
 
@@ -207,7 +218,7 @@ const ClientesPontos = () => {
                     </div>
 
                     <button type="submit" disabled={loading} style={{...styles.btn, backgroundColor: editId ? '#2ecc71' : '#FFD700'}}>
-                        <Save size={18} /> {loading ? 'SALVANDO...' : 'SALVAR PONTO'}
+                        <Save size={18} /> {loading ? 'SALVANDO...' : 'SALVAR PONTO E ROTA'}
                     </button>
                     
                     <div style={styles.listaContainer}>
@@ -216,7 +227,7 @@ const ClientesPontos = () => {
                             {clientesCadastrados.map((item) => (
                                 <div key={item.id} style={{...styles.itemCliente, borderLeft: `4px solid ${TIPO_CORES[item.tipo]}`}}>
                                     <div style={{ flex: 1 }}>
-                                        <div style={styles.itemNome}>{item.cliente} <span style={{fontSize: '9px', color: '#666'}}>[{item.codigo}]</span></div>
+                                        <div style={styles.itemNome}>{item.cliente}</div>
                                         <div style={styles.itemCidade}>{item.tipo} • {item.cidade}</div>
                                     </div>
                                     <div style={styles.itemActions}>
@@ -251,10 +262,12 @@ const ClientesPontos = () => {
                                 position="topleft" 
                                 onCreated={onCreated} 
                                 draw={{ 
-                                    polyline: false, marker: false, circlemarker: false,
-                                    polygon: { shapeOptions: { color: '#00BFFF' } },
+                                    polyline: { shapeOptions: { color: '#FFD700', weight: 4 } }, // PARA DESENHAR O TRAJETO
+                                    polygon: { shapeOptions: { color: '#00BFFF' } }, // PARA ÁREA DE CHEGADA
                                     rectangle: { shapeOptions: { color: '#00BFFF' } },
-                                    circle: { shapeOptions: { color: '#00BFFF' } }
+                                    circle: { shapeOptions: { color: '#00BFFF' } },
+                                    marker: false, 
+                                    circlemarker: false
                                 }} 
                             />
                         </FeatureGroup>

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2, Truck, Container, Volume2, Map, Target, Shield, AlertCircle } from 'lucide-react';
+import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2, Truck, Container, Target, Shield, AlertCircle } from 'lucide-react';
 import { initializeApp, getApps, getApp } from 'firebase/app';
 import { 
   getFirestore, collection, addDoc, serverTimestamp, 
@@ -47,104 +47,6 @@ const obterCoordenadasDoEndereco = async (endereco) => {
   return null;
 };
 
-// Função para gerar instruções de rota
-const gerarInstrucoesDeRota = async (trajetoCoords, origemNome, destinoNome) => {
-  if (!trajetoCoords || trajetoCoords.length === 0) return [];
-  
-  try {
-    // Converte coordenadas para string OSRM
-    const coordenadasStr = trajetoCoords.map(c => `${c.longitude},${c.latitude}`).join(';');
-    
-    // Faz requisição para OSRM
-    const response = await fetch(
-      `https://router.project-osrm.org/route/v1/driving/${coordenadasStr}?overview=full&geometries=geojson&steps=true&alternatives=false`
-    );
-    
-    const data = await response.json();
-    
-    if (!data.routes || data.routes.length === 0) {
-      return trajetoCoords.map((coord, index) => ({
-        ...coord,
-        instrucao: index === 0 ? `Inicie viagem de ${origemNome}` : 
-                  index === trajetoCoords.length - 1 ? `Chegada em ${destinoNome}` : 
-                  "Siga em frente",
-        tipo: index === 0 ? "depart" : 
-              index === trajetoCoords.length - 1 ? "arrive" : 
-              "continue",
-        distanciaAteProximo: index < trajetoCoords.length - 1 ? "500m" : "0m",
-        duracao: "30s",
-        modo: "straight"
-      }));
-    }
-    
-    const legs = data.routes[0].legs;
-    const instrucoes = [];
-    
-    // Instrução de partida
-    instrucoes.push({
-      latitude: trajetoCoords[0].latitude,
-      longitude: trajetoCoords[0].longitude,
-      instrucao: `Inicie a viagem de ${origemNome}`,
-      distanciaAteProximo: "0m",
-      duracao: "0s",
-      tipo: "depart",
-      modo: "depart"
-    });
-    
-    // Extrai instruções do OSRM
-    legs.forEach(leg => {
-      leg.steps.forEach(step => {
-        if (step.geometry && step.geometry.coordinates.length > 0) {
-          const [lng, lat] = step.geometry.coordinates[Math.floor(step.geometry.coordinates.length / 2)];
-          
-          let instrucaoPt = step.maneuver.instruction || "Continue em frente";
-          
-          // Traduções
-          if (instrucaoPt.includes('Turn left')) instrucaoPt = 'Vire à esquerda';
-          else if (instrucaoPt.includes('Turn right')) instrucaoPt = 'Vire à direita';
-          else if (instrucaoPt.includes('Continue')) instrucaoPt = 'Continue em frente';
-          else if (instrucaoPt.includes('Keep left')) instrucaoPt = 'Mantenha-se à esquerda';
-          else if (instrucaoPt.includes('Keep right')) instrucaoPt = 'Mantenha-se à direita';
-          else if (instrucaoPt.includes('sharp left')) instrucaoPt = 'Vire acentuadamente à esquerda';
-          else if (instrucaoPt.includes('sharp right')) instrucaoPt = 'Vire acentuadamente à direita';
-          else if (instrucaoPt.includes('slight left')) instrucaoPt = 'Curve suavemente à esquerda';
-          else if (instrucaoPt.includes('slight right')) instrucaoPt = 'Curve suavemente à direita';
-          else if (instrucaoPt.includes('arrive')) instrucaoPt = 'Chegada ao destino';
-          
-          instrucoes.push({
-            latitude: lat,
-            longitude: lng,
-            instrucao: instrucaoPt,
-            distanciaAteProximo: `${Math.round(step.distance)}m`,
-            duracao: `${Math.round(step.duration)}s`,
-            tipo: step.maneuver.type || "continue",
-            modo: step.maneuver.modifier || 'straight'
-          });
-        }
-      });
-    });
-    
-    // Instrução de chegada
-    if (trajetoCoords.length > 0) {
-      instrucoes.push({
-        latitude: trajetoCoords[trajetoCoords.length - 1].latitude,
-        longitude: trajetoCoords[trajetoCoords.length - 1].longitude,
-        instrucao: `Você chegou em ${destinoNome}`,
-        distanciaAteProximo: "0m",
-        duracao: "0s",
-        tipo: "arrive",
-        modo: "arrive"
-      });
-    }
-    
-    return instrucoes;
-    
-  } catch (error) {
-    console.error("Erro ao gerar instruções:", error);
-    return [];
-  }
-};
-
 const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   const [motoristas, setMotoristas] = useState([]);
   const [veiculos, setVeiculos] = useState([]);
@@ -152,7 +54,6 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   const [busca, setBusca] = useState('');
   const [processando, setProcessando] = useState(null);
   const [carregando, setCarregando] = useState(true);
-  const [gerandoInstrucoes, setGerandoInstrucoes] = useState(false);
   const [configurandoGeofence, setConfigurandoGeofence] = useState(false);
 
   useEffect(() => {
@@ -209,7 +110,7 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
         motoristaNome: "",
         status: "AGUARDANDO PROGRAMAÇÃO",
         atribuidoEm: null,
-        trajetoComInstrucoes: [],
+        trajetoComInstrucoes: [], // REMOVER INSTRUÇÕES
         instrucaoAtual: 0,
         // Resetar status de finalização
         chegouAoDestino: false,
@@ -282,7 +183,6 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
 
   const enviarCargaAoMotorista = async (motorista) => {
     setProcessando(motorista.id);
-    setGerandoInstrucoes(true);
     setConfigurandoGeofence(true);
     
     try {
@@ -293,30 +193,10 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
       // CONFIGURAR GEOFENCE PARA A CARGA
       const geofenceConfig = await configurarGeofenceParaCarga(cargaSelecionada);
       
-      // GERAR INSTRUÇÕES DA ROTA (se tiver trajeto)
-      let instrucoesRota = [];
-      let possuiRotogramaAudio = false;
-      
-      if (cargaSelecionada?.trajeto && cargaSelecionada.trajeto.length > 0) {
-        // Se já tem instruções, usa as existentes
-        if (cargaSelecionada.trajetoComInstrucoes && cargaSelecionada.trajetoComInstrucoes.length > 0) {
-          instrucoesRota = cargaSelecionada.trajetoComInstrucoes;
-          possuiRotogramaAudio = true;
-        } else {
-          // Gera novas instruções
-          instrucoesRota = await gerarInstrucoesDeRota(
-            cargaSelecionada.trajeto,
-            cargaSelecionada.origemCliente || "Origem",
-            cargaSelecionada.destinoCliente || "Destino"
-          );
-          possuiRotogramaAudio = instrucoesRota.length > 0;
-        }
-      }
-
       // Pegar placas atuais
       const conjunto = getConjuntoMotorista(motorista.id);
 
-      // SALVAR NOTIFICAÇÃO COM INSTRUÇÕES E GEOFENCE
+      // SALVAR NOTIFICAÇÃO SEM INSTRUÇÕES DE ÁUDIO
       const notificacaoRef = await addDoc(collection(db, "notificacoes_cargas"), {
         cargaId: cargaId || "N/A",
         motoristaId: motoristaUID,
@@ -334,24 +214,24 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
         tipoViagem: cargaSelecionada?.tipoViagem || "CARREGADO",
         linkColeta: cargaSelecionada?.origemLink || "",
         linkEntrega: cargaSelecionada?.destinoLink || "",
-        trajetoComInstrucoes: instrucoesRota,
-        possuiRotogramaAudio: possuiRotogramaAudio,
-        cercaVirtual: geofenceConfig, // ADICIONAR GEOFENCE
+        // REMOVIDO: trajetoComInstrucoes
+        // REMOVIDO: possuiRotogramaAudio
+        cercaVirtual: geofenceConfig,
         instrucaoAtual: 0,
         status: "pendente",
         vinculo: "FROTA",
         timestamp: serverTimestamp()
       });
 
-      // ATUALIZAR A CARGA COM INSTRUÇÕES E GEOFENCE
+      // ATUALIZAR A CARGA SEM INSTRUÇÕES DE ÁUDIO
       const cargaRef = doc(db, "ordens_servico", cargaId);
       await updateDoc(cargaRef, {
         motoristaId: motoristaUID,
         motoristaNome: motorista.nome,
         status: "PENDENTE ACEITE",
-        trajetoComInstrucoes: instrucoesRota,
-        possuiRotogramaAudio: possuiRotogramaAudio,
-        cercaVirtual: geofenceConfig, // SALVAR GEOFENCE NA CARGA
+        // REMOVIDO: trajetoComInstrucoes
+        // REMOVIDO: possuiRotogramaAudio
+        cercaVirtual: geofenceConfig,
         instrucaoAtual: 0,
         chegouAoDestino: false,
         finalizada: false,
@@ -365,16 +245,14 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
       // Montar mensagem informativa
       let mensagem = "✅ Carga enviada ao motorista!\n\n";
       
-      if (possuiRotogramaAudio) {
-        mensagem += `• ${instrucoesRota.length} instruções de navegação por áudio\n`;
-      }
-      
       if (geofenceConfig.ativa) {
         mensagem += "• Sistema de geofence ativado\n";
         if (geofenceConfig.centro) {
-          mensagem += `• Cerca virtual configurada (raio: ${geofenceConfig.raio}m)`;
+          mensagem += `• Cerca virtual configurada (raio: ${geofenceConfig.raio}m)\n`;
+          mensagem += `• Destino: ${cargaSelecionada?.destinoCliente || 'Não especificado'}`;
         } else {
-          mensagem += "• Cerca virtual básica (sem coordenadas específicas)";
+          mensagem += "• Cerca virtual básica (sem coordenadas específicas)\n";
+          mensagem += `• Destino: ${cargaSelecionada?.destinoCidade || 'Cidade não especificada'}`;
         }
       }
       
@@ -395,7 +273,6 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
       alert("❌ Erro ao enviar carga ao motorista.");
     } finally {
       setProcessando(null);
-      setGerandoInstrucoes(false);
       setConfigurandoGeofence(false);
     }
   };
@@ -405,7 +282,6 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   );
 
   const possuiTrajeto = cargaSelecionada?.trajeto && cargaSelecionada.trajeto.length > 0;
-  const possuiInstrucoes = cargaSelecionada?.trajetoComInstrucoes && cargaSelecionada.trajetoComInstrucoes.length > 0;
   const possuiGeofence = cargaSelecionada?.cercaVirtual?.ativa;
   const geofenceConfigurada = cargaSelecionada?.cercaVirtual?.centro;
 
@@ -428,18 +304,9 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
             {/* INFO DA VIAGEM */}
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {possuiTrajeto && (
-                <div className={`flex items-center gap-1 px-2 py-1 rounded ${possuiInstrucoes ? 'bg-green-500/10 text-green-400' : 'bg-yellow-500/10 text-yellow-400'}`}>
-                  {possuiInstrucoes ? (
-                    <>
-                      <Volume2 size={10} />
-                      <span className="text-[8px] font-bold">{cargaSelecionada.trajetoComInstrucoes?.length || 0} instruções de áudio</span>
-                    </>
-                  ) : (
-                    <>
-                      <Map size={10} />
-                      <span className="text-[8px] font-bold">Trajeto disponível (sem áudio)</span>
-                    </>
-                  )}
+                <div className="flex items-center gap-1 px-2 py-1 rounded bg-yellow-500/10 text-yellow-400">
+                  <Target size={10} />
+                  <span className="text-[8px] font-bold">Trajeto disponível (sem áudio)</span>
                 </div>
               )}
               
@@ -503,7 +370,7 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
             <button
               key={mot.id}
               onClick={() => enviarCargaAoMotorista(mot)}
-              disabled={processando || gerandoInstrucoes || configurandoGeofence}
+              disabled={processando || configurandoGeofence}
               className="flex items-center justify-between p-3 bg-white/[0.02] hover:bg-yellow-500/20 group rounded-xl border border-white/5 transition-all relative overflow-hidden"
             >
               {processando === mot.id && (
@@ -511,9 +378,7 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
                   <div className="text-center">
                     <div className="w-5 h-5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
                     <p className="text-[8px] text-white">
-                      {configurandoGeofence ? 'Configurando geofence...' : 
-                       gerandoInstrucoes ? 'Gerando instruções...' : 
-                       'Enviando carga...'}
+                      {configurandoGeofence ? 'Configurando geofence...' : 'Enviando carga...'}
                     </p>
                   </div>
                 </div>
@@ -562,12 +427,13 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
                   detalhes += `DT: ${cargaSelecionada.dt}\n`;
                   detalhes += `Status: ${cargaSelecionada.status}\n`;
                   detalhes += `Destino: ${cargaSelecionada.destinoCliente}\n`;
+                  detalhes += `Cidade: ${cargaSelecionada.destinoCidade}\n`;
                   
                   if (cargaSelecionada.cercaVirtual?.ativa) {
                     detalhes += `\nGeofence: ATIVA\n`;
                     detalhes += `Raio: ${cargaSelecionada.cercaVirtual.raio}m\n`;
                     if (cargaSelecionada.cercaVirtual.centro) {
-                      detalhes += `Centro: ${cargaSelecionada.cercaVirtual.centro.lat?.toFixed(6)}, ${cargaSelecionada.cercaVirtual.centro.lng?.toFixed(6)}`;
+                      detalhes += `Coordenadas: ${cargaSelecionada.cercaVirtual.centro.lat?.toFixed(6)}, ${cargaSelecionada.cercaVirtual.centro.lng?.toFixed(6)}`;
                     }
                   }
                   
