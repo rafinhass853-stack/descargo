@@ -45,12 +45,27 @@ const useMonitorarCargas = ({
         status: "EM ANDAMENTO",
         dataInicioViagem: serverTimestamp()
       });
-      const cargaIniciada = { id, ...dados, status: "EM ANDAMENTO" };
+      
+      const cargaIniciada = { 
+        id, 
+        ...dados, 
+        status: "EM ANDAMENTO",
+        // ADICIONADO: Garantir que os dados de geofence estejam presentes
+        cercaVirtual: dados.cercaVirtual || null,
+        destinoCliente: dados.destinoCliente || dados.clienteEntrega || "",
+        destinoCidade: dados.destinoCidade || dados.destino || ""
+      };
       setCargaAtiva(cargaIniciada);
       setViagemIniciada(true);
+      
       const novoStatus = dados.tipoViagem === 'VAZIO' ? 'Viagem vazio' : 'Viagem carregado';
       setStatusOperacional(novoStatus);
-      sincronizarComFirestore({ statusOperacional: novoStatus });
+      
+      // PROTEÇÃO ADICIONADA AQUI
+      if (typeof sincronizarComFirestore === 'function') {
+        sincronizarComFirestore({ statusOperacional: novoStatus });
+      }
+
       Alert.alert("🚚 VIAGEM INICIADA!", "A viagem foi iniciada automaticamente.\n\nMantenha o app aberto para rastreamento.", [{ text: "ENTENDI" }]);
     } catch (error) {
       console.error("Erro ao iniciar viagem:", error);
@@ -71,12 +86,10 @@ const useMonitorarCargas = ({
 
     const unsubscribe = onSnapshot(q, 
       (snapshot) => {
-        // Processar novas cargas
         snapshot.docChanges().forEach((change) => {
           const dados = change.doc.data();
           const id = change.doc.id;
 
-          // Nova carga ou carga pendente
           if ((change.type === "added" || change.type === "modified") && 
               (dados.status === "AGUARDANDO PROGRAMAÇÃO" || dados.status === "PENDENTE ACEITE")) {
             
@@ -88,7 +101,7 @@ const useMonitorarCargas = ({
             
             Alert.alert(
               dados.tipoViagem === 'VAZIO' ? "⚪ DESLOCAMENTO DE VAZIO" : "🔔 NOVA CARGA", 
-              `Destino: ${dados.destinoCliente || dados.cliente_destino}${mensagemGeofence}\n\nA viagem iniciará automaticamente ao ser aceita.`, 
+              `Destino: ${dados.destinoCliente || dados.clienteEntrega || 'Sem destino especificado'}${mensagemGeofence}\n\nA viagem iniciará automaticamente ao ser aceita.`, 
               [
                 { 
                   text: "RECUSAR", 
@@ -111,14 +124,20 @@ const useMonitorarCargas = ({
             );
           }
 
-          // Carga aceita - iniciar viagem automaticamente
           if (change.type === "modified" && dados.status === "ACEITO" && !viagemIniciada) {
             iniciarViagem(id, dados);
           }
 
-          // Carga em andamento
           if (dados.status === "EM ANDAMENTO" || dados.status === "AGUARDANDO CONFIRMAÇÃO") {
-            setCargaAtiva({ id, ...dados });
+            // ADICIONADO: Garantir que todos os dados necessários estejam presentes
+            const cargaCompleta = {
+              id,
+              ...dados,
+              destinoCliente: dados.destinoCliente || dados.clienteEntrega || "",
+              destinoCidade: dados.destinoCidade || dados.destino || "",
+              cercaVirtual: dados.cercaVirtual || null
+            };
+            setCargaAtiva(cargaCompleta);
             setViagemIniciada(true);
             
             if (dados.status === "AGUARDANDO CONFIRMAÇÃO") {
@@ -129,22 +148,23 @@ const useMonitorarCargas = ({
           }
         });
 
-        // Limpar carga ativa se não houver mais cargas
         if (snapshot.empty && cargaAtiva) {
           setCargaAtiva(null);
           setViagemIniciada(false);
+          // PROTEÇÃO ADICIONADA AQUI TAMBÉM
+          if (typeof sincronizarComFirestore === 'function') {
+            sincronizarComFirestore({ statusOperacional: 'Sem programação' });
+          }
         }
       },
       (error) => {
         console.error("Erro ao monitorar cargas:", error);
-        if (error.code === 'permission-denied') {
-          console.log("Permissão negada para monitorar ordens de serviço");
-        }
       }
     );
 
     return () => unsubscribe();
-  }, [user?.uid, viagemIniciada, cargaAtiva]);
+  }, [user?.uid, viagemIniciada, cargaAtiva, sincronizarComFirestore]);
+
 };
 
 export default useMonitorarCargas;
