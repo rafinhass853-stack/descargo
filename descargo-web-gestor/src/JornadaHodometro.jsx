@@ -5,10 +5,10 @@ import {
 } from "firebase/firestore";
 import { initializeApp, getApps, getApp } from "firebase/app";
 import { 
-  Gauge, MapPin, Clock, User, Search, AlertTriangle, Calendar, Edit2, Trash2
+  Gauge, MapPin, Clock, User, Search, AlertTriangle, Calendar, Edit2, Trash2, ArrowRight
 } from 'lucide-react';
 
-// Configuração Firebase
+// Configuração Firebase (Mantida a sua configuração original)
 const firebaseConfig = {
   apiKey: "AIzaSyAAANwxEopbLtRmWqF2b9mrOXbOwUf5x8M",
   authDomain: "descargo-4090a.firebaseapp.com",
@@ -48,22 +48,19 @@ export default function JornadaHodometro() {
     return () => { unsubMot(); unsubJor(); };
   }, []);
 
-  // --- FUNÇÕES DE GESTÃO ---
+  // FUNÇÃO DE EDIÇÃO DE KM (IMPORTANTE PARA CORREÇÕES)
   const editarKM = async (id, kmAtual) => {
-    const novoKM = prompt("Digite o novo valor de KM para este registro:", kmAtual);
-    if (novoKM !== null && !isNaN(novoKM)) {
+    const novoKM = prompt(`KM Atual: ${kmAtual}\nDigite o valor correto do KM:`, kmAtual);
+    if (novoKM !== null && !isNaN(novoKM) && novoKM !== "") {
       try {
         await updateDoc(doc(db, "historico_jornadas", id), { km: Number(novoKM) });
-        alert("KM atualizado com sucesso!");
-      } catch (e) { alert("Erro ao atualizar."); }
+      } catch (e) { alert("Erro ao atualizar o KM no banco de dados."); }
     }
   };
 
   const excluirRegistro = async (id) => {
-    if (window.confirm("Tem certeza que deseja excluir este registro permanentemente?")) {
-      try {
-        await deleteDoc(doc(db, "historico_jornadas", id));
-      } catch (e) { alert("Erro ao excluir."); }
+    if (window.confirm("Deseja excluir este registro permanentemente?")) {
+      try { await deleteDoc(doc(db, "historico_jornadas", id)); } catch (e) { alert("Erro ao excluir."); }
     }
   };
 
@@ -83,15 +80,11 @@ export default function JornadaHodometro() {
       const idx = historicoDoMotorista.findIndex(r => r.id === reg.id);
       const anterior = historicoDoMotorista[idx - 1];
 
-      if (anterior) {
-        if (Number(reg.km) < Number(anterior.km)) {
-          alertas.push({ tipo: 'ERRO', msg: 'KM MENOR QUE ANTERIOR' });
-        }
-        if (reg.tipo === 'INICIO' && anterior.tipo === 'FIM') {
-          const salto = Number(reg.km) - Number(anterior.km);
-          if (salto > 2) alertas.push({ tipo: 'AVISO', msg: `SALTO DE ${salto}KM` });
-        }
+      // Verificação de inconsistência de KM
+      if (anterior && Number(reg.km) < Number(anterior.km)) {
+        alertas.push({ tipo: 'ERRO', msg: 'KM MENOR QUE O ANTERIOR' });
       }
+      
       grupos[nomeReal].push({ ...reg, listaAlertas: alertas });
     });
 
@@ -103,23 +96,23 @@ export default function JornadaHodometro() {
 
   return (
     <div style={styles.container}>
-      {/* Header e Filtros (Igual ao anterior) */}
+      {/* HEADER PRINCIPAL */}
       <div style={styles.headerArea}>
         <div style={styles.brand}>
-          <div style={styles.logoIcon}><Gauge size={20} color="#000" /></div>
+          <div style={styles.logoIcon}><Gauge size={24} color="#000" /></div>
           <div>
-            <h2 style={styles.titulo}>Jornada e Hodômetro</h2>
-            <span style={styles.sub}>Painel de Auditoria e Ajustes</span>
+            <h2 style={styles.titulo}>Controle de KM e Jornada</h2>
+            <span style={styles.sub}>Auditoria de Aberturas e Fechamentos</span>
           </div>
         </div>
         <div style={styles.filterRow}>
           <div style={styles.inputGroup}>
-            <Calendar size={14} color="#FFD700" />
+            <Calendar size={16} color="#FFD700" />
             <input type="date" style={styles.dateInput} value={filtroData} onChange={(e) => setFiltroData(e.target.value)} />
           </div>
           <div style={styles.searchBox}>
-            <Search size={16} color="#555" />
-            <input style={styles.inputBusca} placeholder="Buscar motorista..." onChange={(e) => setFiltroNome(e.target.value)} />
+            <Search size={18} color="#555" />
+            <input style={styles.inputBusca} placeholder="Filtrar motorista..." onChange={(e) => setFiltroNome(e.target.value)} />
           </div>
         </div>
       </div>
@@ -128,71 +121,84 @@ export default function JornadaHodometro() {
         {nomesFiltrados.map((nome) => {
           const logs = motoristasAgrupados[nome];
           const kms = logs.map(l => Number(l.km) || 0);
-          const kmRodadoDia = Math.max(...kms) - Math.min(...kms);
+          // CÁLCULO DE KM RODADO NO DIA (DIFERENÇA ENTRE O MAIOR E MENOR REGISTRO)
+          const kmRodadoDia = kms.length > 1 ? Math.max(...kms) - Math.min(...kms) : 0;
 
           return (
             <div key={nome} style={styles.cardMotorista}>
               <div style={styles.cardHeader}>
-                <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                  <div style={styles.avatar}><User size={16} color="#000" /></div>
+                <div style={{display: 'flex', alignItems: 'center', gap: '15px'}}>
+                  <div style={styles.avatar}><User size={20} color="#000" /></div>
                   <span style={styles.nomeLabel}>{nome.toUpperCase()}</span>
                 </div>
                 <div style={styles.resumoDia}>
-                   <span style={styles.resumoLabel}>RODADO NO DIA:</span>
+                   <span style={styles.resumoLabel}>KM RODADO (CÁLCULO)</span>
                    <span style={styles.resumoValue}>{kmRodadoDia} KM</span>
                 </div>
               </div>
 
               <div style={styles.timeline}>
-                {logs.map((log, idx) => (
-                  <div key={log.id} style={styles.itemLog}>
-                    <div style={styles.statusIndicator}>
-                      <div style={{...styles.ponto, backgroundColor: log.tipo === 'INICIO' ? '#2ecc71' : '#e67e22'}} />
-                      {idx !== logs.length - 1 && <div style={styles.linha} />}
-                    </div>
+                {logs.map((log, idx) => {
+                  const isInicio = log.tipo === 'INICIO';
+                  const corAcao = isInicio ? '#2ecc71' : '#e67e22';
+                  const dataFormatada = log.timestamp?.seconds 
+                    ? new Date(log.timestamp.seconds * 1000).toLocaleDateString('pt-BR') 
+                    : '--/--/--';
+                  const horaFormatada = log.timestamp?.seconds 
+                    ? new Date(log.timestamp.seconds * 1000).toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit', second:'2-digit'}) 
+                    : '--:--:--';
 
-                    <div style={styles.contentLog}>
-                      <div style={styles.logHeader}>
-                        <div style={{display:'flex', gap: '8px', alignItems:'center'}}>
-                            <span style={{...styles.badge, color: log.tipo === 'INICIO' ? '#2ecc71' : '#e67e22'}}>
-                            {log.tipo === 'INICIO' ? 'ABERTURA' : 'FECHAMENTO'}
-                            </span>
-                            <button onClick={() => excluirRegistro(log.id)} style={styles.btnAcao} title="Excluir registro">
-                                <Trash2 size={12} color="#444" />
-                            </button>
-                        </div>
-                        
-                        <div style={{display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px'}}>
-                            {log.listaAlertas.map((a, i) => (
-                                <div key={i} style={{...styles.alertaTag, color: a.tipo === 'ERRO' ? '#ff4d4d' : '#FFD700', borderColor: a.tipo === 'ERRO' ? '#ff4d4d' : '#FFD700'}}>
-                                    <AlertTriangle size={10} />
-                                    <span>{a.msg}</span>
-                                </div>
-                            ))}
-                            <span style={styles.dataLog}>{log.timestamp?.seconds ? new Date(log.timestamp.seconds * 1000).toLocaleTimeString('pt-BR') : '...'}</span>
-                        </div>
+                  return (
+                    <div key={log.id} style={styles.itemLog}>
+                      <div style={styles.statusIndicator}>
+                        <div style={{...styles.ponto, backgroundColor: corAcao}} />
+                        {idx !== logs.length - 1 && <div style={styles.linha} />}
                       </div>
 
-                      <div style={styles.detalhes}>
-                        <div style={{...styles.detalheItem, cursor: 'pointer'}} onClick={() => editarKM(log.id, log.km)}>
-                          <Gauge size={12} color="#FFD700" />
-                          <span style={{fontWeight: 'bold', borderBottom: '1px dashed #444'}}>{log.km} KM</span>
-                          <Edit2 size={10} color="#444" />
+                      <div style={styles.contentLog}>
+                        <div style={styles.logHeader}>
+                          <div style={{display:'flex', gap: '12px', alignItems:'center'}}>
+                              <div style={{...styles.badge, backgroundColor: corAcao, color: '#000'}}>
+                                {isInicio ? 'ABERTURA' : 'FECHAMENTO'}
+                              </div>
+                              <span style={styles.dataLogText}>{dataFormatada}</span>
+                              <button onClick={() => excluirRegistro(log.id)} style={styles.btnTrash}>
+                                  <Trash2 size={16} color="#444" />
+                              </button>
+                          </div>
+                          
+                          <div style={styles.horaBadge}>
+                             <span style={{...styles.horaLabel, color: corAcao}}>{horaFormatada}</span>
+                          </div>
                         </div>
-                        <div style={styles.detalheItem}>
-                          <MapPin size={12} color="#888" />
-                          <span>{log.cidade || '---'}</span>
+
+                        {/* SEÇÃO DE KM E EDIÇÃO */}
+                        <div style={styles.dataRow}>
+                          <div style={styles.kmDisplay} onClick={() => editarKM(log.id, log.km)}>
+                            <Gauge size={16} color="#FFD700" />
+                            <div style={{display:'flex', flexDirection:'column'}}>
+                                <span style={styles.kmValue}>{log.km} KM</span>
+                                <span style={styles.editHint}>Clique para editar KM</span>
+                            </div>
+                            <Edit2 size={14} color="#FFD700" style={{marginLeft: '10px'}} />
+                          </div>
+                          
+                          <div style={styles.locInfo}>
+                            <MapPin size={16} color="#888" />
+                            <span style={styles.locText}>{log.cidade || 'Local não informado'}</span>
+                          </div>
                         </div>
-                        {log.duracaoFinal && (
-                          <div style={styles.detalheItem}>
-                            <Clock size={12} color="#2ecc71" />
-                            <span>{log.duracaoFinal}</span>
+
+                        {log.listaAlertas.length > 0 && (
+                          <div style={styles.alertBox}>
+                            <AlertTriangle size={14} color="#ff4d4d" />
+                            <span>{log.listaAlertas[0].msg}</span>
                           </div>
                         )}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           );
@@ -203,36 +209,57 @@ export default function JornadaHodometro() {
 }
 
 const styles = {
-  container: { padding: '20px', backgroundColor: '#000', minHeight: '100vh' },
-  headerArea: { display: 'flex', justifyContent: 'space-between', marginBottom: '30px' },
-  brand: { display: 'flex', gap: '12px', alignItems: 'center' },
-  logoIcon: { backgroundColor: '#FFD700', padding: '10px', borderRadius: '10px' },
-  titulo: { color: '#fff', margin: 0, fontSize: '18px' },
-  sub: { color: '#666', fontSize: '10px', textTransform: 'uppercase' },
-  filterRow: { display: 'flex', gap: '10px' },
-  inputGroup: { background: '#111', padding: '8px 15px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' },
-  dateInput: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', fontSize: '12px' },
-  searchBox: { background: '#111', padding: '8px 15px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' },
-  inputBusca: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '180px', fontSize: '12px' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(450px, 1fr))', gap: '20px' },
-  cardMotorista: { background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '16px', padding: '20px' },
-  cardHeader: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a1a1a', paddingBottom: '15px', marginBottom: '20px' },
-  avatar: { backgroundColor: '#FFD700', width: '35px', height: '35px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  nomeLabel: { color: '#fff', fontWeight: 'bold', fontSize: '14px' },
+  container: { padding: '30px', backgroundColor: '#000', minHeight: '100vh', color: '#fff' },
+  headerArea: { display: 'flex', justifyContent: 'space-between', marginBottom: '40px', alignItems: 'center' },
+  brand: { display: 'flex', gap: '15px', alignItems: 'center' },
+  logoIcon: { backgroundColor: '#FFD700', padding: '12px', borderRadius: '12px' },
+  titulo: { margin: 0, fontSize: '22px', fontWeight: 'bold' },
+  sub: { color: '#666', fontSize: '12px', textTransform: 'uppercase' },
+  filterRow: { display: 'flex', gap: '15px' },
+  inputGroup: { background: '#111', padding: '12px 18px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid #222' },
+  dateInput: { background: 'transparent', border: 'none', color: '#fff', outline: 'none' },
+  searchBox: { background: '#111', padding: '12px 18px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '10px', border: '1px solid #222' },
+  inputBusca: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '220px' },
+  
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(500px, 1fr))', gap: '30px' },
+  cardMotorista: { background: '#0a0a0a', border: '1px solid #1a1a1a', borderRadius: '24px', padding: '25px' },
+  cardHeader: { display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1a1a1a', paddingBottom: '20px', marginBottom: '25px' },
+  avatar: { backgroundColor: '#FFD700', width: '45px', height: '45px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  nomeLabel: { color: '#fff', fontWeight: 'bold', fontSize: '17px' },
   resumoDia: { textAlign: 'right' },
-  resumoLabel: { color: '#444', fontSize: '9px', fontWeight: 'bold' },
-  resumoValue: { color: '#FFD700', fontSize: '16px', fontWeight: '900' },
+  resumoLabel: { color: '#444', fontSize: '10px', fontWeight: '900' },
+  resumoValue: { color: '#FFD700', fontSize: '22px', fontWeight: '900' },
+
   timeline: { display: 'flex', flexDirection: 'column' },
-  itemLog: { display: 'flex', gap: '15px' },
+  itemLog: { display: 'flex', gap: '20px' },
   statusIndicator: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
-  ponto: { width: '8px', height: '8px', borderRadius: '50%', marginTop: '5px' },
-  linha: { width: '1px', flex: 1, backgroundColor: '#1a1a1a', margin: '5px 0' },
-  contentLog: { flex: 1, background: '#0d0d0d', padding: '15px', borderRadius: '12px', marginBottom: '15px', border: '1px solid #151515' },
-  logHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' },
-  badge: { fontSize: '10px', fontWeight: 'bold' },
-  btnAcao: { background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '2px' },
-  dataLog: { color: '#333', fontSize: '10px', fontWeight: 'bold' },
-  alertaTag: { display: 'flex', alignItems: 'center', gap: '5px', padding: '2px 6px', borderRadius: '4px', fontSize: '8px', fontWeight: '900', border: '1px solid' },
-  detalhes: { display: 'flex', gap: '20px' },
-  detalheItem: { display: 'flex', alignItems: 'center', gap: '6px', color: '#888', fontSize: '12px' }
+  ponto: { width: '12px', height: '12px', borderRadius: '50%', marginTop: '10px' },
+  linha: { width: '2px', flex: 1, backgroundColor: '#1a1a1a', margin: '10px 0' },
+  
+  contentLog: { flex: 1, background: '#111', padding: '20px', borderRadius: '20px', marginBottom: '20px', border: '1px solid #1f1f1f' },
+  logHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
+  badge: { fontSize: '10px', fontWeight: '900', padding: '5px 12px', borderRadius: '8px' },
+  dataLogText: { color: '#666', fontSize: '13px', fontWeight: 'bold' },
+  horaBadge: { background: '#000', padding: '8px 15px', borderRadius: '10px', border: '1px solid #222' },
+  horaLabel: { fontSize: '18px', fontWeight: '800', fontFamily: 'monospace' },
+  
+  dataRow: { display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  kmDisplay: { 
+    display: 'flex', 
+    alignItems: 'center', 
+    gap: '12px', 
+    cursor: 'pointer', 
+    background: '#1a1a1a', 
+    padding: '10px 15px', 
+    borderRadius: '12px',
+    border: '1px dashed #333' 
+  },
+  kmValue: { fontSize: '18px', fontWeight: 'bold', color: '#FFD700' },
+  editHint: { fontSize: '9px', color: '#555', textTransform: 'uppercase' },
+  
+  locInfo: { display: 'flex', alignItems: 'center', gap: '8px', maxWidth: '180px' },
+  locText: { color: '#888', fontSize: '13px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  
+  alertBox: { display: 'flex', alignItems: 'center', gap: '10px', marginTop: '15px', color: '#ff4d4d', fontSize: '11px', fontWeight: 'bold', background: 'rgba(255, 77, 77, 0.1)', padding: '8px 12px', borderRadius: '8px' },
+  btnTrash: { background: 'none', border: 'none', cursor: 'pointer' }
 };
