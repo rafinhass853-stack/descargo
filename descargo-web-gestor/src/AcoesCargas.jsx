@@ -1,10 +1,48 @@
 import React, { useState, useEffect } from 'react';
-// Adicionado 'Map' aos imports para evitar erro de referência
-import { X, Search, User, MapPin, Navigation, ArrowRight, Bell, Trash2, Truck, Container, Target, Shield, AlertCircle, Map, Navigation as RouteIcon } from 'lucide-react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  TextInput,
+  ActivityIndicator,
+  Alert,
+  ScrollView,
+  Linking,
+  StyleSheet,
+  Modal
+} from 'react-native';
+import {
+  X,
+  Search,
+  User,
+  MapPin,
+  Navigation,
+  ArrowRight,
+  Bell,
+  Trash2,
+  Truck,
+  Container,
+  Target,
+  Shield,
+  AlertCircle,
+  Map,
+  ExternalLink,
+  CheckCircle
+} from 'lucide-react-native';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getFirestore, collection, addDoc, serverTimestamp, 
-  onSnapshot, query, where, orderBy, getDocs, deleteDoc, doc, updateDoc 
+import {
+  getFirestore,
+  collection,
+  addDoc,
+  serverTimestamp,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  getDocs,
+  deleteDoc,
+  doc,
+  updateDoc
 } from 'firebase/firestore';
 
 // --- CONFIGURAÇÃO FIREBASE ---
@@ -22,6 +60,28 @@ const db = getFirestore(app);
 
 const GOOGLE_MAPS_API_KEY = 'AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4';
 
+// FUNÇÃO AUXILIAR: Extrai coordenadas do link do Google Maps
+const extrairCoordenadasDoLink = (url) => {
+  if (!url) return null;
+  
+  const patterns = [
+    /@(-?\d+\.\d+),(-?\d+\.\d+)/,               // Padrão: @-23.123,-46.456
+    /q=(-?\d+\.\d+),(-?\d+\.\d+)/,              // Padrão: ?q=-23.123,-46.456
+    /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/,           // Padrão: !3d-23.123!4d-46.456
+    /maps\/(?:place|search)\/[^@]+@(-?\d+\.\d+),(-?\d+\.\d+)/, // Padrão: maps/place/...@-23.123,-46.456
+  ];
+  
+  for (const pattern of patterns) {
+    const match = url.match(pattern);
+    if (match) {
+      const lat = parseFloat(match[1]);
+      const lng = parseFloat(match[2]);
+      return { lat, lng };
+    }
+  }
+  return null;
+};
+
 const obterCoordenadasDoEndereco = async (endereco) => {
   if (!endereco) return null;
   try {
@@ -29,6 +89,7 @@ const obterCoordenadasDoEndereco = async (endereco) => {
       `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(endereco)}&key=${GOOGLE_MAPS_API_KEY}`
     );
     const data = await response.json();
+    
     if (data.status === 'OK' && data.results.length > 0) {
       const location = data.results[0].geometry.location;
       return { lat: location.lat, lng: location.lng };
@@ -47,6 +108,7 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   const [processando, setProcessando] = useState(null);
   const [carregando, setCarregando] = useState(true);
   const [configurandoGeofence, setConfigurandoGeofence] = useState(false);
+  const [coordenadasExtraidas, setCoordenadasExtraidas] = useState(null);
 
   useEffect(() => {
     const qMot = query(
@@ -75,6 +137,15 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
     };
   }, []);
 
+  // Extrair coordenadas do link quando o componente carrega
+  useEffect(() => {
+    if (cargaSelecionada?.destinoLink) {
+      const coords = extrairCoordenadasDoLink(cargaSelecionada.destinoLink);
+      setCoordenadasExtraidas(coords);
+      console.log("📌 Coordenadas extraídas do link:", coords);
+    }
+  }, [cargaSelecionada]);
+
   const getConjuntoMotorista = (motoristaId) => {
     if (!motoristaId) return null;
     const cavalo = veiculos.find(v => v.motorista_id === motoristaId);
@@ -86,52 +157,90 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
   };
 
   const desvincularCarga = async () => {
-    if (!window.confirm(`Deseja remover o vínculo da DT ${cargaSelecionada?.dt}?\n\nIsso resetará o status da viagem.`)) return;
-    setProcessando('desvincular');
-    try {
-      const q = query(collection(db, "notificacoes_cargas"), where("cargaId", "==", cargaSelecionada.id));
-      const snapshot = await getDocs(q);
-      await Promise.all(snapshot.docs.map(d => deleteDoc(doc(db, "notificacoes_cargas", d.id))));
+    Alert.alert(
+      "Confirmar",
+      `Deseja remover o vínculo da DT ${cargaSelecionada?.dt}?\n\nIsso resetará o status da viagem.`,
+      [
+        { text: "Cancelar", style: "cancel" },
+        { 
+          text: "Desvincular", 
+          style: "destructive",
+          onPress: async () => {
+            setProcessando('desvincular');
+            try {
+              // Remover notificações da carga
+              const q = query(collection(db, "notificacoes_cargas"), where("cargaId", "==", cargaSelecionada.id));
+              const snapshot = await getDocs(q);
+              await Promise.all(snapshot.docs.map(d => deleteDoc(doc(db, "notificacoes_cargas", d.id))));
 
-      const cargaRef = doc(db, "ordens_servico", cargaSelecionada.id);
-      await updateDoc(cargaRef, {
-        motoristaId: "",
-        motoristaNome: "",
-        status: "AGUARDANDO PROGRAMAÇÃO",
-        atribuidoEm: null,
-        trajetoComInstrucoes: [],
-        instrucaoAtual: 0,
-        chegouAoDestino: false,
-        finalizada: false,
-        confirmacaoPendente: false,
-        dataChegada: null,
-        dataFinalizacao: null,
-        dataInicioViagem: null
-      });
+              // Resetar status da carga
+              const cargaRef = doc(db, "ordens_servico", cargaSelecionada.id);
+              await updateDoc(cargaRef, {
+                motoristaId: "",
+                motoristaNome: "",
+                status: "AGUARDANDO PROGRAMAÇÃO",
+                atribuidoEm: null,
+                trajetoComInstrucoes: [],
+                instrucaoAtual: 0,
+                chegouAoDestino: false,
+                finalizada: false,
+                confirmacaoPendente: false,
+                dataChegada: null,
+                dataFinalizacao: null,
+                dataInicioViagem: null
+              });
 
-      if (onConfirmar) await onConfirmar(null);
-      onFechar();
-      alert("✅ Vínculo removido com sucesso!");
-    } catch (e) {
-      console.error(e);
-      alert("Erro ao remover vínculo.");
-    } finally {
-      setProcessando(null);
-    }
+              if (onConfirmar) await onConfirmar(null);
+              onFechar();
+              Alert.alert("✅", "Vínculo removido com sucesso!");
+            } catch (e) {
+              console.error(e);
+              Alert.alert("Erro", "Erro ao remover vínculo.");
+            } finally {
+              setProcessando(null);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const configurarGeofenceParaCarga = async (cargaData) => {
-    if (cargaData.cercaVirtual?.centro) return cargaData.cercaVirtual;
+    // Se já tem geofence configurada, retorna ela
+    if (cargaData.cercaVirtual?.centro) {
+      console.log("Usando geofence já configurada:", cargaData.cercaVirtual.centro);
+      return cargaData.cercaVirtual;
+    }
+    
     setConfigurandoGeofence(true);
     try {
       let coordenadas = null;
-      if (cargaData.destinoLink) {
-        coordenadas = await obterCoordenadasDoEndereco(cargaData.destinoLink);
+      
+      // PRIORIDADE 1: Coordenadas já extraídas do link
+      if (coordenadasExtraidas) {
+        coordenadas = coordenadasExtraidas;
+        console.log("Usando coordenadas já extraídas do link:", coordenadas);
       }
+      // PRIORIDADE 2: Coordenadas já salvas na carga
+      else if (cargaData?.destinoCoordenadas) {
+        coordenadas = cargaData.destinoCoordenadas;
+        console.log("Usando coordenadas salvas na carga:", coordenadas);
+      }
+      // PRIORIDADE 3: Extrair do link do Google Maps
+      else if (cargaData.destinoLink) {
+        console.log("Extraindo coordenadas do link:", cargaData.destinoLink);
+        coordenadas = extrairCoordenadasDoLink(cargaData.destinoLink);
+      }
+      
+      // PRIORIDADE 4: Se não encontrou pelo link, tenta pelo endereço via geocoding
       if (!coordenadas && cargaData.destinoCidade) {
         const enderecoBusca = `${cargaData.destinoCliente || 'Destino'}, ${cargaData.destinoCidade}`;
+        console.log("Buscando coordenadas do endereço:", enderecoBusca);
         coordenadas = await obterCoordenadasDoEndereco(enderecoBusca);
       }
+      
+      console.log("Coordenadas finais encontradas:", coordenadas);
+      
       return {
         tipo: 'circle',
         raio: cargaData.cercaVirtual?.raio || 100,
@@ -141,23 +250,72 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
       };
     } catch (error) {
       console.error("Erro ao configurar geofence:", error);
-      return { tipo: 'circle', raio: 100, centro: null, coordenadas: [], ativa: true };
+      return { 
+        tipo: 'circle', 
+        raio: 100, 
+        centro: null, 
+        coordenadas: [], 
+        ativa: true 
+      };
     } finally {
       setConfigurandoGeofence(false);
     }
   };
 
   const enviarCargaAoMotorista = async (motorista) => {
+    if (!cargaSelecionada) {
+      Alert.alert("Aviso", "Nenhuma carga selecionada.");
+      return;
+    }
+
     setProcessando(motorista.id);
     setConfigurandoGeofence(true);
+    
     try {
       const emailLimpo = motorista.email_app?.toLowerCase().trim() || "";
       const cargaId = cargaSelecionada?.id;
       const motoristaUID = motorista.uid || motorista.id;
-      const geofenceConfig = await configurarGeofenceParaCarga(cargaSelecionada);
+      
+      // 1. CONFIGURAR GEOFENCE com prioridade para coordenadas do link
+      let geofenceConfig = null;
+      let coordenadasParaEnvio = null;
+      
+      // Verifica se já temos coordenadas extraídas
+      if (coordenadasExtraidas) {
+        coordenadasParaEnvio = coordenadasExtraidas;
+        console.log("📌 Usando coordenadas já extraídas:", coordenadasParaEnvio);
+      } 
+      // Verifica se a carga já tem coordenadas salvas
+      else if (cargaSelecionada?.destinoCoordenadas) {
+        coordenadasParaEnvio = cargaSelecionada.destinoCoordenadas;
+        console.log("📌 Usando coordenadas salvas na carga:", coordenadasParaEnvio);
+      }
+      // Tenta extrair do link agora
+      else if (cargaSelecionada?.destinoLink) {
+        coordenadasParaEnvio = extrairCoordenadasDoLink(cargaSelecionada.destinoLink);
+        console.log("📌 Extraindo coordenadas do link agora:", coordenadasParaEnvio);
+      }
+      
+      // Se conseguiu coordenadas, monta a geofence
+      if (coordenadasParaEnvio) {
+        geofenceConfig = {
+          tipo: 'circle',
+          raio: cargaSelecionada?.cercaVirtual?.raio || 100,
+          centro: coordenadasParaEnvio,
+          coordenadas: [],
+          ativa: true
+        };
+        console.log("🎯 Geofence configurada com coordenadas do link:", geofenceConfig);
+      } else {
+        // Fallback: configura geofence da forma antiga
+        geofenceConfig = await configurarGeofenceParaCarga(cargaSelecionada);
+        console.log("🎯 Geofence configurada via fallback:", geofenceConfig);
+      }
+      
       const conjunto = getConjuntoMotorista(motorista.id);
 
-      await addDoc(collection(db, "notificacoes_cargas"), {
+      // 2. DADOS COMPLETOS PARA ENVIAR AO MOTORISTA
+      const dadosParaEnvio = {
         cargaId: cargaId || "N/A",
         motoristaId: motoristaUID,
         motoristaEmail: emailLimpo,
@@ -170,27 +328,73 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
         destino: cargaSelecionada?.destinoCidade || "",
         clienteColeta: cargaSelecionada?.origemCliente || "",
         clienteEntrega: cargaSelecionada?.destinoCliente || "",
+        codigoOrigem: cargaSelecionada?.origemCodigo || "",
+        codigoDestino: cargaSelecionada?.destinoCodigo || "",
         observacao: cargaSelecionada?.observacao || "",
         tipoViagem: cargaSelecionada?.tipoViagem || "CARREGADO",
+        perfilVeiculo: cargaSelecionada?.perfilVeiculo || "Trucado",
+        
+        // LINKS DO GOOGLE MAPS (CRÍTICO!)
         linkColeta: cargaSelecionada?.origemLink || "",
         linkEntrega: cargaSelecionada?.destinoLink || "",
-        destinoCoordenadas: geofenceConfig.centro,
-        temRotaAutomatica: true,
+        linkGoogleMapsDestino: cargaSelecionada?.destinoLink || "",
+        
+        // COORDENADAS (ESSENCIAL PARA A ROTA!)
+        destinoCoordenadas: coordenadasParaEnvio || geofenceConfig.centro,
+        
+        // Informações completas da geofence
         cercaVirtual: geofenceConfig,
+        
+        // Dados estruturais completos para o app
+        origemCliente: cargaSelecionada?.origemCliente || "",
+        origemCidade: cargaSelecionada?.origemCidade || "",
+        origemCodigo: cargaSelecionada?.origemCodigo || "",
+        destinoCliente: cargaSelecionada?.destinoCliente || cargaSelecionada?.clienteEntrega || "",
+        destinoCidade: cargaSelecionada?.destinoCidade || cargaSelecionada?.destino || "",
+        destinoCodigo: cargaSelecionada?.destinoCodigo || cargaSelecionada?.codigoDestino || "",
+        destinoData: cargaSelecionada?.destinoData || "",
+        
+        // Flags para o app
+        temRotaAutomatica: true,
+        podeGerarRota: true,
+        coordenadasValidas: !!(coordenadasParaEnvio || geofenceConfig.centro),
         instrucaoAtual: 0,
         status: "pendente",
         vinculo: "FROTA",
-        timestamp: serverTimestamp()
-      });
+        timestamp: serverTimestamp(),
+        
+        // Status da viagem
+        chegouAoDestino: false,
+        finalizada: false,
+        confirmacaoPendente: false
+      };
 
+      console.log("📤 Enviando dados COMPLETOS para o app:", dadosParaEnvio);
+
+      // 3. Enviar notificação para o app do motorista
+      await addDoc(collection(db, "notificacoes_cargas"), dadosParaEnvio);
+
+      // 4. Atualizar a carga no sistema com TODAS as informações
       const cargaRef = doc(db, "ordens_servico", cargaId);
       await updateDoc(cargaRef, {
         motoristaId: motoristaUID,
         motoristaNome: motorista.nome,
         status: "PENDENTE ACEITE",
-        destinoCoordenadas: geofenceConfig.centro,
-        temRotaAutomatica: true,
+        
+        // GARANTIR que as coordenadas estão salvas
+        destinoCoordenadas: coordenadasParaEnvio || geofenceConfig.centro,
+        
+        // Garantir que o link está salvo
+        destinoLink: cargaSelecionada?.destinoLink || "",
+        
+        // Geofence atualizada
         cercaVirtual: geofenceConfig,
+        
+        // Flags importantes
+        temRotaAutomatica: true,
+        coordenadasValidas: !!(coordenadasParaEnvio || geofenceConfig.centro),
+        
+        // Dados de controle
         instrucaoAtual: 0,
         chegouAoDestino: false,
         finalizada: false,
@@ -198,15 +402,56 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
         dataChegada: null,
         dataFinalizacao: null,
         dataInicioViagem: null,
-        atribuidoEm: serverTimestamp()
+        atribuidoEm: serverTimestamp(),
+        
+        // Dados completos
+        origemCliente: cargaSelecionada?.origemCliente || "",
+        origemCidade: cargaSelecionada?.origemCidade || "",
+        origemCodigo: cargaSelecionada?.origemCodigo || "",
+        destinoCliente: cargaSelecionada?.destinoCliente || "",
+        destinoCidade: cargaSelecionada?.destinoCidade || "",
+        destinoCodigo: cargaSelecionada?.destinoCodigo || ""
       });
 
-      alert("✅ Carga enviada com sucesso ao motorista!");
-      if (onConfirmar) await onConfirmar({ id: motoristaUID, nome: motorista.nome });
+      // 5. MENSAGEM DE SUCESSO DETALHADA
+      const temCoordenadas = !!(coordenadasParaEnvio || geofenceConfig.centro);
+      const temLink = !!cargaSelecionada?.destinoLink;
+      
+      let mensagemSucesso = `✅ Carga ${cargaSelecionada?.dt} enviada para ${motorista.nome}!\n\n`;
+      
+      if (temCoordenadas && temLink) {
+        mensagemSucesso += `📌 Coordenadas extraídas do link\n`;
+        mensagemSucesso += `🔗 Link do Google Maps configurado\n`;
+        mensagemSucesso += `🚀 Rota automática disponível no app\n\n`;
+        mensagemSucesso += `📍 ${coordenadasParaEnvio?.lat?.toFixed(6) || geofenceConfig.centro?.lat?.toFixed(6)}, `;
+        mensagemSucesso += `${coordenadasParaEnvio?.lng?.toFixed(6) || geofenceConfig.centro?.lng?.toFixed(6)}`;
+      } else if (temCoordenadas) {
+        mensagemSucesso += `📌 Coordenadas configuradas\n`;
+        mensagemSucesso += `⚠️ Sem link do Google Maps\n`;
+        mensagemSucesso += `🚀 Rota automática disponível`;
+      } else if (temLink) {
+        mensagemSucesso += `⚠️ Não foi possível extrair coordenadas do link\n`;
+        mensagemSucesso += `🔗 Link do Google Maps configurado\n`;
+        mensagemSucesso += `❌ Motorista precisará gerar rota manualmente`;
+      } else {
+        mensagemSucesso += `❌ Sem coordenadas nem link\n`;
+        mensagemSucesso += `⚠️ Motorista pode ter problemas para gerar rota`;
+      }
+      
+      Alert.alert("Sucesso", mensagemSucesso);
+      
+      if (onConfirmar) await onConfirmar({ 
+        id: motoristaUID, 
+        nome: motorista.nome,
+        cargaId: cargaId,
+        linkDestino: cargaSelecionada?.destinoLink || "",
+        temCoordenadas: temCoordenadas
+      });
+      
       onFechar();
     } catch (e) {
-      console.error(e);
-      alert("❌ Erro ao enviar carga.");
+      console.error("Erro ao enviar carga:", e);
+      Alert.alert("❌ Erro", "Erro ao enviar carga ao motorista.\n\nVerifique o console para detalhes.");
     } finally {
       setProcessando(null);
       setConfigurandoGeofence(false);
@@ -217,116 +462,691 @@ const AcoesCargas = ({ cargaSelecionada, onFechar, onConfirmar }) => {
     m.nome?.toLowerCase().includes(busca.toLowerCase()) || m.cpf?.includes(busca)
   );
 
-  const possuiTrajeto = cargaSelecionada?.trajeto && cargaSelecionada.trajeto.length > 0;
   const possuiGeofence = cargaSelecionada?.cercaVirtual?.ativa;
   const geofenceConfigurada = cargaSelecionada?.cercaVirtual?.centro;
+  const possuiLinkDestino = cargaSelecionada?.destinoLink;
+  const possuiCoordenadasSalvas = cargaSelecionada?.destinoCoordenadas;
+  const possuiCoordenadasExtraidas = !!coordenadasExtraidas;
 
   return (
-    <div className="absolute inset-0 z-[50] flex flex-col bg-[#0a0a0a] rounded-[8px] border-2 border-yellow-500/30 overflow-hidden">
+    <View style={styles.container}>
       
-      <div className="p-4 border-b border-white/5 bg-gradient-to-r from-yellow-500/10 to-transparent flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-yellow-500 rounded-xl flex items-center justify-center">
-            <User size={20} className="text-black" />
-          </div>
-          <div>
-            <h2 className="text-white text-xs font-bold uppercase tracking-widest">Atribuir Viagem</h2>
-            <div className="flex items-center gap-2">
-               <span className="text-yellow-500 text-[10px] font-black uppercase">DT {cargaSelecionada?.dt}</span>
-               <span className="text-zinc-500 text-[10px]">➔</span>
-               <span className="text-zinc-400 text-[10px] font-bold uppercase">{cargaSelecionada?.destinoCliente}</span>
-            </div>
-          </div>
-        </div>
-        <button onClick={onFechar} className="p-2 hover:bg-white/10 rounded-full text-zinc-500">
-          <X size={20} />
-        </button>
-      </div>
+      {/* Cabeçalho */}
+      <View style={styles.header}>
+        <View style={styles.headerContent}>
+          <View style={styles.iconContainer}>
+            <User size={20} color="#000" />
+          </View>
+          <View>
+            <Text style={styles.headerTitle}>Atribuir Viagem</Text>
+            <View style={styles.headerSubtitle}>
+              <Text style={styles.dtText}>DT {cargaSelecionada?.dt}</Text>
+              <Text style={styles.arrow}>➔</Text>
+              <Text style={styles.destinoText} numberOfLines={1}>
+                {cargaSelecionada?.destinoCliente}
+              </Text>
+            </View>
+          </View>
+        </View>
+        <TouchableOpacity onPress={onFechar} style={styles.closeButton}>
+          <X size={20} color="#9ca3af" />
+        </TouchableOpacity>
+      </View>
+
+      {/* INFO DA CARGA */}
+      <View style={styles.cargaInfoContainer}>
+        <View style={styles.gridInfo}>
+          <View style={styles.infoColumn}>
+            <Text style={styles.infoLabel}>ORIGEM</Text>
+            <Text style={styles.infoValue} numberOfLines={1}>
+              {cargaSelecionada?.origemCliente || 'Não informado'}
+            </Text>
+            <Text style={styles.infoCity}>{cargaSelecionada?.origemCidade || ''}</Text>
+          </View>
+          <View style={[styles.infoColumn, styles.infoColumnRight]}>
+            <Text style={[styles.infoLabel, styles.infoLabelDestino]}>DESTINO</Text>
+            <Text style={styles.infoValue} numberOfLines={1}>
+              {cargaSelecionada?.destinoCliente || 'Não informado'}
+            </Text>
+            <Text style={styles.infoCity}>{cargaSelecionada?.destinoCidade || ''}</Text>
+          </View>
+        </View>
+        
+        {/* INFO DO LINK DO GOOGLE MAPS */}
+        {possuiLinkDestino && (
+          <View style={styles.linkContainer}>
+            <View style={styles.linkHeader}>
+              <ExternalLink size={12} color="#10b981" />
+              <Text style={styles.linkTitle}>LINK GOOGLE MAPS</Text>
+              <TouchableOpacity
+                onPress={() => Linking.openURL(cargaSelecionada.destinoLink)}
+                style={styles.linkButton}
+              >
+                <ExternalLink size={12} color="#10b981" />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.linkUrl} numberOfLines={1}>
+              {cargaSelecionada?.destinoLink}
+            </Text>
+            
+            {/* STATUS DAS COORDENADAS */}
+            <View style={styles.coordStatus}>
+              {possuiCoordenadasExtraidas ? (
+                <>
+                  <CheckCircle size={10} color="#10b981" />
+                  <Text style={styles.coordSuccess}>
+                    📌 Coordenadas extraídas com sucesso
+                  </Text>
+                  <Text style={styles.coordCoordinates}>
+                    {coordenadasExtraidas.lat.toFixed(6)}, {coordenadasExtraidas.lng.toFixed(6)}
+                  </Text>
+                </>
+              ) : possuiCoordenadasSalvas ? (
+                <>
+                  <CheckCircle size={10} color="#10b981" />
+                  <Text style={styles.coordSuccess}>
+                    ✓ Coordenadas já salvas na carga
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <AlertCircle size={10} color="#f59e0b" />
+                  <Text style={styles.coordWarning}>
+                    ⚠️ Não foi possível extrair coordenadas deste link
+                  </Text>
+                </>
+              )}
+            </View>
+          </View>
+        )}
+      </View>
 
       {/* INFO DO FLUXO */}
-      <div className="p-3 bg-gradient-to-r from-blue-500/5 to-transparent border-b border-blue-500/10">
-        <div className="flex items-start gap-2">
-          <Shield size={14} className="text-blue-400 mt-0.5" />
-          <div>
-            <h4 className="text-[10px] font-bold text-blue-400 uppercase">FLUXO AUTOMÁTICO</h4>
-            <p className="text-[9px] text-zinc-400">Finalização automática via geofence no destino.</p>
-          </div>
-        </div>
-      </div>
+      <View style={styles.fluxoContainer}>
+        <Shield size={14} color="#60a5fa" />
+        <View style={styles.fluxoContent}>
+          <Text style={styles.fluxoTitle}>FLUXO AUTOMÁTICO</Text>
+          <Text style={styles.fluxoDescription}>
+            Finalização automática via geofence no destino.
+          </Text>
+          
+          {configurandoGeofence && (
+            <View style={styles.configuringContainer}>
+              <ActivityIndicator size="small" color="#60a5fa" />
+              <Text style={styles.configuringText}>Configurando geofence...</Text>
+            </View>
+          )}
+          
+          {geofenceConfigurada && (
+            <View style={styles.geofenceConfigured}>
+              <Text style={styles.geofenceText}>
+                ✓ Geofence configurada: {cargaSelecionada?.cercaVirtual?.raio || 100}m
+              </Text>
+            </View>
+          )}
+          
+          {possuiCoordenadasExtraidas && (
+            <View style={styles.coordsAvailable}>
+              <Text style={styles.coordsAvailableText}>
+                ✓ Coordenadas do link disponíveis para rota automática
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
 
-      <div className="p-3">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-600" size={16} />
-          <input 
-            type="text"
+      {/* PESQUISA */}
+      <View style={styles.searchContainer}>
+        <View style={styles.searchInputContainer}>
+          <Search size={16} color="#6b7280" style={styles.searchIcon} />
+          <TextInput
             placeholder="Pesquisar motorista..."
-            className="w-full bg-white/[0.03] border border-white/10 rounded-lg py-2 pl-10 pr-4 text-white text-xs outline-none"
+            placeholderTextColor="#6b7280"
+            style={styles.searchInput}
             value={busca}
-            onChange={(e) => setBusca(e.target.value)}
+            onChangeText={setBusca}
           />
-        </div>
-      </div>
+        </View>
+      </View>
 
-      <div className="flex-1 overflow-y-auto px-3 pb-3 grid grid-cols-2 gap-2 custom-scrollbar">
+      {/* LISTA DE MOTORISTAS */}
+      <ScrollView style={styles.motoristasList} contentContainerStyle={styles.motoristasGrid}>
         {carregando ? (
-          <div className="col-span-2 flex justify-center py-10">
-            <div className="w-6 h-6 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
-          </div>
-        ) : filtrados.map((mot) => {
-          const conjunto = getConjuntoMotorista(mot.id);
-          return (
-            <button
-              key={mot.id}
-              onClick={() => enviarCargaAoMotorista(mot)}
-              disabled={processando || configurandoGeofence}
-              className="flex items-center justify-between p-3 bg-white/[0.02] hover:bg-yellow-500/20 group rounded-xl border border-white/5 transition-all relative"
-            >
-              <div className="text-left overflow-hidden flex-1">
-                <h4 className="text-zinc-100 font-bold text-[11px] uppercase truncate group-hover:text-yellow-400">{mot.nome}</h4>
-                <div className="flex flex-col mt-1 gap-1">
-                  <div className="flex items-center gap-1 text-[9px] text-zinc-500 group-hover:text-zinc-300 font-medium">
-                    <MapPin size={10} /> {mot.cidade || 'Base'}
-                  </div>
-                  {conjunto && (
-                    <div className="flex items-center gap-2">
-                      <span className="text-[8px] text-yellow-500/70 font-bold"><Truck size={10} className="inline mr-1"/>{conjunto.cavalo}</span>
-                      <span className="text-[8px] text-blue-400/70 font-bold"><Container size={10} className="inline mr-1"/>{conjunto.carreta}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <ArrowRight size={14} className="text-yellow-500" />
-            </button>
-          );
-        })}
-      </div>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#f59e0b" />
+          </View>
+        ) : (
+          filtrados.map((mot) => {
+            const conjunto = getConjuntoMotorista(mot.id);
+            return (
+              <TouchableOpacity
+                key={mot.id}
+                onPress={() => enviarCargaAoMotorista(mot)}
+                disabled={processando || configurandoGeofence}
+                style={styles.motoristaCard}
+              >
+                <View style={styles.motoristaInfo}>
+                  <Text style={styles.motoristaNome} numberOfLines={1}>
+                    {mot.nome}
+                  </Text>
+                  <View style={styles.motoristaDetails}>
+                    <View style={styles.motoristaDetail}>
+                      <MapPin size={10} color="#6b7280" />
+                      <Text style={styles.motoristaDetailText}>
+                        {mot.cidade || 'Base'}
+                      </Text>
+                    </View>
+                    {conjunto && (
+                      <View style={styles.veiculosContainer}>
+                        <View style={styles.veiculoItem}>
+                          <Truck size={10} color="#f59e0b" />
+                          <Text style={styles.veiculoPlaca}>{conjunto.cavalo}</Text>
+                        </View>
+                        <View style={styles.veiculoItem}>
+                          <Container size={10} color="#60a5fa" />
+                          <Text style={styles.veiculoPlaca}>{conjunto.carreta}</Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                </View>
+                {processando === mot.id ? (
+                  <ActivityIndicator size="small" color="#f59e0b" />
+                ) : (
+                  <ArrowRight size={14} color="#f59e0b" />
+                )}
+              </TouchableOpacity>
+            );
+          })
+        )}
+      </ScrollView>
 
+      {/* CARGA JÁ VINCULADA */}
       {cargaSelecionada?.motoristaNome && (
-        <div className="p-3 bg-red-500/5 border-t border-red-500/10 flex items-center justify-between">
-          <div className="flex flex-col">
-            <span className="text-[9px] text-red-500 font-black uppercase">Vinculado:</span>
-            <span className="text-[11px] text-white font-bold">{cargaSelecionada.motoristaNome}</span>
-          </div>
-          <button onClick={desvincularCarga} className="bg-red-500 text-white p-2 rounded-lg">
-            <Trash2 size={16} />
-          </button>
-        </div>
+        <View style={styles.vinculadoContainer}>
+          <View>
+            <Text style={styles.vinculadoLabel}>Vinculado:</Text>
+            <Text style={styles.vinculadoNome}>{cargaSelecionada.motoristaNome}</Text>
+            <Text style={styles.vinculadoStatus}>
+              Status: {cargaSelecionada.status || 'AGUARDANDO'}
+            </Text>
+          </View>
+          <TouchableOpacity
+            onPress={desvincularCarga}
+            disabled={processando === 'desvincular'}
+            style={styles.desvincularButton}
+          >
+            {processando === 'desvincular' ? (
+              <ActivityIndicator size="small" color="#ffffff" />
+            ) : (
+              <Trash2 size={16} color="#ffffff" />
+            )}
+          </TouchableOpacity>
+        </View>
       )}
 
-      {/* ROTA AUTOMÁTICA */}
-      <div className="p-3 bg-purple-500/5 border-t border-purple-500/10">
-        <div className="flex items-start gap-2">
-          <div className="bg-purple-500/10 p-1 rounded">
-            <Map size={12} className="text-purple-400" />
-          </div>
-          <div>
-            <h4 className="text-[10px] font-bold text-purple-400 uppercase">ROTA AUTOMÁTICA</h4>
-            <p className="text-[9px] text-zinc-400">Cálculo de trajeto automático ativado para esta viagem.</p>
-          </div>
-        </div>
-      </div>
-    </div>
+      {/* STATUS DO ENVIO */}
+      <View style={styles.envioContainer}>
+        <View style={styles.envioIconContainer}>
+          <Map size={12} color="#a78bfa" />
+        </View>
+        <View style={styles.envioContent}>
+          <Text style={styles.envioTitle}>INFORMAÇÕES PARA ENVIO</Text>
+          <View style={styles.envioGrid}>
+            <Text style={styles.envioGridLabel}>Tipo:</Text>
+            <Text style={styles.envioGridValue}>
+              {cargaSelecionada?.tipoViagem || 'CARREGADO'}
+            </Text>
+            
+            <Text style={styles.envioGridLabel}>Peso:</Text>
+            <Text style={styles.envioGridValue}>
+              {cargaSelecionada?.peso || '0'} Ton
+            </Text>
+            
+            <Text style={styles.envioGridLabel}>Código Destino:</Text>
+            <Text style={styles.envioGridValue}>
+              {cargaSelecionada?.destinoCodigo || '---'}
+            </Text>
+            
+            <Text style={styles.envioGridLabel}>Data Entrega:</Text>
+            <Text style={styles.envioGridValue}>
+              {cargaSelecionada?.destinoData ? new Date(cargaSelecionada.destinoData).toLocaleDateString() : '---'}
+            </Text>
+            
+            <Text style={styles.envioGridLabel}>Coordenadas:</Text>
+            <Text style={styles.envioGridValue}>
+              {possuiCoordenadasExtraidas ? '✓ Extraídas do link' : 
+               possuiCoordenadasSalvas ? '✓ Salvas na carga' : 
+               '❌ Não disponíveis'}
+            </Text>
+            
+            <Text style={styles.envioGridLabel}>Link Maps:</Text>
+            <Text style={styles.envioGridValue}>
+              {possuiLinkDestino ? '✓ Disponível' : '❌ Não informado'}
+            </Text>
+          </View>
+          
+          {possuiLinkDestino && (
+            <View style={styles.envioLinkAvailable}>
+              <Text style={styles.envioLinkAvailableText}>
+                ✓ Link do Google Maps será enviado ao app do motorista
+              </Text>
+            </View>
+          )}
+          
+          {possuiCoordenadasExtraidas && (
+            <View style={styles.envioCoordsAvailable}>
+              <Text style={styles.envioCoordsAvailableText}>
+                ✓ Coordenadas extraídas permitem rota automática
+              </Text>
+            </View>
+          )}
+          
+          {!possuiCoordenadasExtraidas && !possuiCoordenadasSalvas && (
+            <View style={styles.envioWarning}>
+              <Text style={styles.envioWarningText}>
+                ⚠️ Sem coordenadas disponíveis para rota automática
+              </Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </View>
   );
 };
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: 'rgba(245, 158, 11, 0.3)',
+    overflow: 'hidden'
+  },
+  header: {
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    backgroundColor: 'rgba(245, 158, 11, 0.1)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  headerContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12
+  },
+  iconContainer: {
+    width: 40,
+    height: 40,
+    backgroundColor: '#f59e0b',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  headerTitle: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    letterSpacing: 1
+  },
+  headerSubtitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  dtText: {
+    color: '#f59e0b',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  arrow: {
+    color: '#6b7280',
+    fontSize: 10
+  },
+  destinoText: {
+    color: '#d1d5db',
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+    flexShrink: 1
+  },
+  closeButton: {
+    padding: 8,
+    borderRadius: 20
+  },
+  cargaInfoContainer: {
+    padding: 12,
+    backgroundColor: 'rgba(59, 130, 246, 0.05)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(59, 130, 246, 0.1)'
+  },
+  gridInfo: {
+    flexDirection: 'row',
+    marginBottom: 8
+  },
+  infoColumn: {
+    flex: 1
+  },
+  infoColumnRight: {
+    alignItems: 'flex-end'
+  },
+  infoLabel: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#60a5fa',
+    textTransform: 'uppercase'
+  },
+  infoLabelDestino: {
+    color: '#10b981'
+  },
+  infoValue: {
+    fontSize: 10,
+    color: '#e5e7eb'
+  },
+  infoCity: {
+    fontSize: 9,
+    color: '#6b7280'
+  },
+  linkContainer: {
+    marginTop: 8,
+    padding: 8,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.3)'
+  },
+  linkHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 4
+  },
+  linkTitle: {
+    fontSize: 9,
+    fontWeight: 'bold',
+    color: '#10b981',
+    textTransform: 'uppercase',
+    flex: 1
+  },
+  linkButton: {
+    padding: 2
+  },
+  linkUrl: {
+    fontSize: 9,
+    color: '#d1d5db'
+  },
+  coordStatus: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 4
+  },
+  coordSuccess: {
+    fontSize: 9,
+    color: '#10b981',
+    fontWeight: 'bold',
+    marginLeft: 4
+  },
+  coordCoordinates: {
+    fontSize: 8,
+    color: '#6b7280',
+    fontFamily: 'monospace',
+    marginLeft: 'auto'
+  },
+  coordWarning: {
+    fontSize: 9,
+    color: '#f59e0b',
+    marginLeft: 4
+  },
+  fluxoContainer: {
+    padding: 12,
+    backgroundColor: 'rgba(59, 130, 246, 0.05)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(59, 130, 246, 0.1)',
+    flexDirection: 'row',
+    gap: 8
+  },
+  fluxoContent: {
+    flex: 1
+  },
+  fluxoTitle: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#60a5fa',
+    textTransform: 'uppercase'
+  },
+  fluxoDescription: {
+    fontSize: 9,
+    color: '#9ca3af'
+  },
+  configuringContainer: {
+    marginTop: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8
+  },
+  configuringText: {
+    fontSize: 9,
+    color: '#60a5fa'
+  },
+  geofenceConfigured: {
+    marginTop: 4,
+    padding: 4,
+    backgroundColor: 'rgba(59, 130, 246, 0.2)',
+    borderRadius: 4
+  },
+  geofenceText: {
+    fontSize: 9,
+    color: '#93c5fd'
+  },
+  coordsAvailable: {
+    marginTop: 4,
+    padding: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)'
+  },
+  coordsAvailableText: {
+    fontSize: 9,
+    color: '#a7f3d0'
+  },
+  searchContainer: {
+    padding: 12
+  },
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: 8
+  },
+  searchIcon: {
+    marginLeft: 12,
+    marginRight: 8
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 8,
+    paddingRight: 16,
+    color: '#ffffff',
+    fontSize: 12
+  },
+  motoristasList: {
+    flex: 1,
+    paddingHorizontal: 12,
+    paddingBottom: 12
+  },
+  motoristasGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8
+  },
+  loadingContainer: {
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40
+  },
+  motoristaCard: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.02)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)'
+  },
+  motoristaInfo: {
+    flex: 1,
+    marginRight: 8
+  },
+  motoristaNome: {
+    color: '#e5e7eb',
+    fontSize: 11,
+    fontWeight: 'bold',
+    textTransform: 'uppercase'
+  },
+  motoristaDetails: {
+    marginTop: 4,
+    gap: 4
+  },
+  motoristaDetail: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4
+  },
+  motoristaDetailText: {
+    fontSize: 9,
+    color: '#6b7280',
+    fontWeight: '500'
+  },
+  veiculosContainer: {
+    flexDirection: 'row',
+    gap: 8
+  },
+  veiculoItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2
+  },
+  veiculoPlaca: {
+    fontSize: 8,
+    fontWeight: 'bold',
+    color: 'rgba(245, 158, 11, 0.7)'
+  },
+  vinculadoContainer: {
+    padding: 12,
+    backgroundColor: 'rgba(239, 68, 68, 0.05)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(239, 68, 68, 0.1)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between'
+  },
+  vinculadoLabel: {
+    fontSize: 9,
+    color: '#ef4444',
+    fontWeight: '900',
+    textTransform: 'uppercase'
+  },
+  vinculadoNome: {
+    fontSize: 11,
+    color: '#ffffff',
+    fontWeight: 'bold'
+  },
+  vinculadoStatus: {
+    fontSize: 9,
+    color: '#9ca3af'
+  },
+  desvincularButton: {
+    backgroundColor: '#ef4444',
+    padding: 8,
+    borderRadius: 8
+  },
+  envioContainer: {
+    padding: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.05)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(139, 92, 246, 0.1)',
+    flexDirection: 'row',
+    gap: 8
+  },
+  envioIconContainer: {
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    padding: 4,
+    borderRadius: 4
+  },
+  envioContent: {
+    flex: 1
+  },
+  envioTitle: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#a78bfa',
+    textTransform: 'uppercase'
+  },
+  envioGrid: {
+    marginTop: 4,
+    flexDirection: 'row',
+    flexWrap: 'wrap'
+  },
+  envioGridLabel: {
+    width: '50%',
+    fontSize: 9,
+    color: '#6b7280',
+    marginTop: 2
+  },
+  envioGridValue: {
+    width: '50%',
+    fontSize: 9,
+    color: '#e5e7eb',
+    marginTop: 2,
+    fontWeight: 'bold'
+  },
+  envioLinkAvailable: {
+    marginTop: 8,
+    padding: 4,
+    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+    borderRadius: 4
+  },
+  envioLinkAvailableText: {
+    fontSize: 9,
+    color: '#c4b5fd'
+  },
+  envioCoordsAvailable: {
+    marginTop: 8,
+    padding: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)'
+  },
+  envioCoordsAvailableText: {
+    fontSize: 9,
+    color: '#a7f3d0'
+  },
+  envioWarning: {
+    marginTop: 8,
+    padding: 4,
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.2)'
+  },
+  envioWarningText: {
+    fontSize: 9,
+    color: '#fde68a'
+  }
+});
 
 export default AcoesCargas;

@@ -1,4 +1,3 @@
-// MapUtils.js
 export const getDistance = (lat1, lon1, lat2, lon2) => {
   if (!lat1 || !lon1 || !lat2 || !lon2) return 999999;
   const R = 6371e3;
@@ -23,4 +22,28 @@ export const buscarRotaOSRM = async (origem, latDest, lngDest, setRotaCoords) =>
       setRotaCoords(data.routes[0].geometry.coordinates.map(c => ({ latitude: c[1], longitude: c[0] })));
     }
   } catch (error) { console.error("Erro OSRM:", error); }
+};
+
+export const obterCoordenadasDoEndereco = async (endereco) => {
+  if (!endereco) return null;
+  
+  try {
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(endereco)}&key=AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4`
+    );
+    
+    const data = await response.json();
+    
+    if (data.status === 'OK' && data.results.length > 0) {
+      const location = data.results[0].geometry.location;
+      return {
+        lat: location.lat,
+        lng: location.lng
+      };
+    }
+  } catch (error) {
+    console.error("Erro ao buscar coordenadas:", error);
+  }
+  
+  return null;
 };

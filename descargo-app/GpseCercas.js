@@ -8,97 +8,10 @@ import {
   updateDoc, 
   serverTimestamp 
 } from 'firebase/firestore';
+
+// Importar funções do MapUtils
 import { getDistance, buscarRotaOSRM } from './MapUtils';
-
-// Função auxiliar para obter coordenadas do endereço - EXPORTADA
-export const obterCoordenadasDoEndereco = async (endereco) => {
-  if (!endereco) return null;
-  
-  try {
-    const response = await fetch(
-      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(endereco)}&key=AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4`
-    );
-    
-    const data = await response.json();
-    
-    if (data.status === 'OK' && data.results.length > 0) {
-      const location = data.results[0].geometry.location;
-      return {
-        lat: location.lat,
-        lng: location.lng
-      };
-    }
-  } catch (error) {
-    console.error("Erro ao buscar coordenadas:", error);
-  }
-  
-  return null;
-};
-
-// Função para calcular rota automática (exportada para uso em outros componentes)
-export const calcularRotaAutomatica = async (origem, destino, setRotaCoords, cargaData = null) => {
-  if (!origem || !destino) return;
-  
-  try {
-    let destinoCoords = null;
-    
-    // Se destino é um objeto com coordenadas
-    if (destino.lat && destino.lng) {
-      destinoCoords = destino;
-    }
-    // Se destino tem latitude/longitude
-    else if (destino.latitude && destino.longitude) {
-      destinoCoords = { lat: destino.latitude, lng: destino.longitude };
-    }
-    // Se destino é um endereço (string)
-    else if (typeof destino === 'string') {
-      destinoCoords = await obterCoordenadasDoEndereco(destino);
-    }
-    
-    if (!destinoCoords) {
-      console.error("Não foi possível obter coordenadas do destino");
-      return null;
-    }
-    
-    await buscarRotaOSRM(origem, destinoCoords.lat, destinoCoords.lng, setRotaCoords);
-    
-    // Retornar as coordenadas calculadas para uso posterior
-    return destinoCoords;
-    
-  } catch (error) {
-    console.error("Erro ao calcular rota automática:", error);
-    return null;
-  }
-};
-
-// Função auxiliar para calcular distância (em metros)
-export const calcularDistancia = (lat1, lon1, lat2, lon2) => {
-  const R = 6371e3; // raio da Terra em metros
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2 - lat1) * Math.PI/180;
-  const Δλ = (lon2 - lon1) * Math.PI/180;
-
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-
-  return R * c; // distância em metros
-};
-
-// Função para formatar tempo estimado
-export const formatarTempoEstimado = (distanciaKm) => {
-  const minutos = Math.round(distanciaKm * 1.5); // 1.5 min por km
-  
-  if (minutos < 60) {
-    return `${minutos} min`;
-  } else {
-    const horas = Math.floor(minutos / 60);
-    const minutosRestantes = minutos % 60;
-    return `${horas}h ${minutosRestantes}min`;
-  }
-};
+import { obterCoordenadasDoEndereco } from './MapUtils';
 
 export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, viagemIniciada) => {
   const [todasAsCercas, setTodasAsCercas] = useState([]);
@@ -159,7 +72,7 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
           // Tenta obter coordenadas do destino da carga
           let destinoCoords = null;
           
-          // Primeiro do link do Google Maps
+          // Primeiro do link do Google Maps (NOVO)
           if (cargaAtiva?.destinoLink) {
             destinoCoords = await obterCoordenadasDoEndereco(cargaAtiva.destinoLink);
           }
@@ -227,7 +140,9 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
           await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), { 
             status: 'AGUARDANDO CONFIRMAÇÃO',
             chegouAoDestino: true,
-            dataChegada: serverTimestamp()
+            dataChegada: serverTimestamp(),
+            // ADICIONADO: Código do destino no log
+            codigoDestinoConfirmacao: cargaAtiva.destinoCodigo || '---'
           });
           setChegouAoDestino(true);
           setConfirmacaoPendente(true);
@@ -249,4 +164,67 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
     setConfirmacaoPendente, 
     setRotaCoords 
   };
+};
+
+// Exportar funções auxiliares
+export const calcularDistancia = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // raio da Terra em metros
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2 - lat1) * Math.PI/180;
+  const Δλ = (lon2 - lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // distância em metros
+};
+
+export const formatarTempoEstimado = (distanciaKm) => {
+  const minutos = Math.round(distanciaKm * 1.5); // 1.5 min por km
+  
+  if (minutos < 60) {
+    return `${minutos} min`;
+  } else {
+    const horas = Math.floor(minutos / 60);
+    const minutosRestantes = minutos % 60;
+    return `${horas}h ${minutosRestantes}min`;
+  }
+};
+
+export const calcularRotaAutomatica = async (origem, destino, setRotaCoords, cargaData = null) => {
+  if (!origem || !destino) return;
+  
+  try {
+    let destinoCoords = null;
+    
+    // Se destino é um objeto com coordenadas
+    if (destino.lat && destino.lng) {
+      destinoCoords = destino;
+    }
+    // Se destino tem latitude/longitude
+    else if (destino.latitude && destino.longitude) {
+      destinoCoords = { lat: destino.latitude, lng: destino.longitude };
+    }
+    // Se destino é um endereço (string)
+    else if (typeof destino === 'string') {
+      destinoCoords = await obterCoordenadasDoEndereco(destino);
+    }
+    
+    if (!destinoCoords) {
+      console.error("Não foi possível obter coordenadas do destino");
+      return null;
+    }
+    
+    await buscarRotaOSRM(origem, destinoCoords.lat, destinoCoords.lng, setRotaCoords);
+    
+    // Retornar as coordenadas calculadas para uso posterior
+    return destinoCoords;
+    
+  } catch (error) {
+    console.error("Erro ao calcular rota automática:", error);
+    return null;
+  }
 };
