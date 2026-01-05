@@ -23,6 +23,7 @@ import TelaLogin from './TelaLogin';
 import StatusAtual from './StatusAtual';
 import useMonitorarCargas from './MonitorarCargas'; 
 import { useGpseCercas } from './GpseCercas'; // <--- Nosso novo Hook
+import BotaoRotaAutomatica from './BotaoRotaAutomatica'; // <--- Importar o botão
 
 // Firebase
 import { initializeApp, getApps, getApp } from 'firebase/app';
@@ -306,6 +307,15 @@ export default function App() {
             <StatusAtual cargaAtiva={cargaAtiva} />
             <Speedometer currentSpeed={currentSpeed} />
             <ViagemCard cargaAtiva={cargaAtiva} chegouAoDestino={chegouAoDestino} confirmacaoPendente={confirmacaoPendente} />
+            
+            {/* BOTÃO DE ROTA AUTOMÁTICA - ADICIONADO AQUI */}
+            <BotaoRotaAutomatica 
+              location={location}
+              cargaAtiva={cargaAtiva}
+              setRotaCoords={setRotaCoords}
+              disabled={!viagemIniciada}
+            />
+            
             <TouchableOpacity style={styles.floatingGps} onPress={() => webviewRef.current?.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude }))}>
               <MaterialIcons name="my-location" size={24} color="#FFD700" />
             </TouchableOpacity>

@@ -10,6 +10,96 @@ import {
 } from 'firebase/firestore';
 import { getDistance, buscarRotaOSRM } from './MapUtils';
 
+// Função auxiliar para obter coordenadas do endereço - EXPORTADA
+export const obterCoordenadasDoEndereco = async (endereco) => {
+  if (!endereco) return null;
+  
+  try {
+    const response = await fetch(
+      `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(endereco)}&key=AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4`
+    );
+    
+    const data = await response.json();
+    
+    if (data.status === 'OK' && data.results.length > 0) {
+      const location = data.results[0].geometry.location;
+      return {
+        lat: location.lat,
+        lng: location.lng
+      };
+    }
+  } catch (error) {
+    console.error("Erro ao buscar coordenadas:", error);
+  }
+  
+  return null;
+};
+
+// Função para calcular rota automática (exportada para uso em outros componentes)
+export const calcularRotaAutomatica = async (origem, destino, setRotaCoords, cargaData = null) => {
+  if (!origem || !destino) return;
+  
+  try {
+    let destinoCoords = null;
+    
+    // Se destino é um objeto com coordenadas
+    if (destino.lat && destino.lng) {
+      destinoCoords = destino;
+    }
+    // Se destino tem latitude/longitude
+    else if (destino.latitude && destino.longitude) {
+      destinoCoords = { lat: destino.latitude, lng: destino.longitude };
+    }
+    // Se destino é um endereço (string)
+    else if (typeof destino === 'string') {
+      destinoCoords = await obterCoordenadasDoEndereco(destino);
+    }
+    
+    if (!destinoCoords) {
+      console.error("Não foi possível obter coordenadas do destino");
+      return null;
+    }
+    
+    await buscarRotaOSRM(origem, destinoCoords.lat, destinoCoords.lng, setRotaCoords);
+    
+    // Retornar as coordenadas calculadas para uso posterior
+    return destinoCoords;
+    
+  } catch (error) {
+    console.error("Erro ao calcular rota automática:", error);
+    return null;
+  }
+};
+
+// Função auxiliar para calcular distância (em metros)
+export const calcularDistancia = (lat1, lon1, lat2, lon2) => {
+  const R = 6371e3; // raio da Terra em metros
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2 - lat1) * Math.PI/180;
+  const Δλ = (lon2 - lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // distância em metros
+};
+
+// Função para formatar tempo estimado
+export const formatarTempoEstimado = (distanciaKm) => {
+  const minutos = Math.round(distanciaKm * 1.5); // 1.5 min por km
+  
+  if (minutos < 60) {
+    return `${minutos} min`;
+  } else {
+    const horas = Math.floor(minutos / 60);
+    const minutosRestantes = minutos % 60;
+    return `${horas}h ${minutosRestantes}min`;
+  }
+};
+
 export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, viagemIniciada) => {
   const [todasAsCercas, setTodasAsCercas] = useState([]);
   const [geofenceAtiva, setGeofenceAtiva] = useState(null);
@@ -17,6 +107,7 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
   const [destinoCoord, setDestinoCoord] = useState(null);
   const [chegouAoDestino, setChegouAoDestino] = useState(false);
   const [confirmacaoPendente, setConfirmacaoPendente] = useState(false);
+  const [carregandoRota, setCarregandoRota] = useState(false);
   
   const ultimaLocRotaRef = useRef(null);
 
@@ -43,44 +134,88 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
     setGeofenceAtiva(encontrada?.geofence || null);
   }, [cargaAtiva, todasAsCercas]);
 
-  // 3. Lógica da Rota (Ajustada para sua observação: Origem = App)
+  // 3. Lógica da Rota Automática - MODIFICADA para iniciar automaticamente
   useEffect(() => {
-    if (!viagemIniciada || !location) return;
+    if (!viagemIniciada || !location || !cargaAtiva) return;
 
-    const processarRota = async () => {
-      // Se você desenhou uma POLYLINE no painel, ela vira o trajeto fixo
-      if (geofenceAtiva?.tipo === 'polyline' && geofenceAtiva.coordenadas?.length > 0) {
-        setRotaCoords(geofenceAtiva.coordenadas.map(p => ({
-          latitude: p.lat,
-          longitude: p.lng
-        })));
-        return; 
-      }
-
-      // Se não tem desenho de linha, calcula do seu GPS até o centro do destino
-      const destinoFinal = geofenceAtiva?.centro || destinoCoord;
-      if (destinoFinal) {
-        const dLat = destinoFinal.lat || destinoFinal.latitude;
-        const dLng = destinoFinal.lng || destinoFinal.longitude;
-
-        if (ultimaLocRotaRef.current) {
-          const d = getDistance(location.latitude, location.longitude, ultimaLocRotaRef.current.latitude, ultimaLocRotaRef.current.longitude);
-          if (d < 500) return; 
+    const iniciarRotaAutomatica = async () => {
+      setCarregandoRota(true);
+      
+      try {
+        // Se você desenhou uma POLYLINE no painel, ela vira o trajeto fixo
+        if (geofenceAtiva?.tipo === 'polyline' && geofenceAtiva.coordenadas?.length > 0) {
+          setRotaCoords(geofenceAtiva.coordenadas.map(p => ({
+            latitude: p.lat,
+            longitude: p.lng
+          })));
+          setCarregandoRota(false);
+          return; 
         }
 
-        buscarRotaOSRM(location, dLat, dLng, setRotaCoords);
-        ultimaLocRotaRef.current = location;
+        // Se não tem desenho de linha, calcula do seu GPS até o centro do destino
+        const destinoFinal = geofenceAtiva?.centro;
+        
+        if (!destinoFinal) {
+          // Tenta obter coordenadas do destino da carga
+          let destinoCoords = null;
+          
+          // Primeiro do link do Google Maps
+          if (cargaAtiva?.destinoLink) {
+            destinoCoords = await obterCoordenadasDoEndereco(cargaAtiva.destinoLink);
+          }
+          
+          // Se não, tenta pelo nome do cliente + cidade
+          if (!destinoCoords && cargaAtiva?.destinoCliente && cargaAtiva?.destinoCidade) {
+            const enderecoBusca = `${cargaAtiva.destinoCliente}, ${cargaAtiva.destinoCidade}`;
+            destinoCoords = await obterCoordenadasDoEndereco(enderecoBusca);
+          }
+          
+          if (destinoCoords) {
+            setDestinoCoord(destinoCoords);
+            
+            if (ultimaLocRotaRef.current) {
+              const d = getDistance(location.latitude, location.longitude, ultimaLocRotaRef.current.latitude, ultimaLocRotaRef.current.longitude);
+              if (d < 500) {
+                setCarregandoRota(false);
+                return;
+              }
+            }
+
+            await buscarRotaOSRM(location, destinoCoords.lat, destinoCoords.lng, setRotaCoords);
+            ultimaLocRotaRef.current = location;
+          }
+        } else {
+          // Usa as coordenadas do geofence
+          const dLat = destinoFinal.lat;
+          const dLng = destinoFinal.lng;
+
+          if (ultimaLocRotaRef.current) {
+            const d = getDistance(location.latitude, location.longitude, ultimaLocRotaRef.current.latitude, ultimaLocRotaRef.current.longitude);
+            if (d < 500) {
+              setCarregandoRota(false);
+              return;
+            }
+          }
+
+          await buscarRotaOSRM(location, dLat, dLng, setRotaCoords);
+          ultimaLocRotaRef.current = location;
+        }
+      } catch (error) {
+        console.error("Erro ao calcular rota automática:", error);
+      } finally {
+        setCarregandoRota(false);
       }
     };
 
-    processarRota();
-  }, [viagemIniciada, geofenceAtiva, location?.latitude]);
+    // Inicia a rota automaticamente quando a viagem começa
+    iniciarRotaAutomatica();
+  }, [viagemIniciada, geofenceAtiva, location?.latitude, cargaAtiva?.id]);
 
   // 4. Verificação de Chegada
   useEffect(() => {
     if (!viagemIniciada || !location || chegouAoDestino) return;
 
-    const alvo = geofenceAtiva?.centro || (destinoCoord ? { lat: destinoCoord.latitude, lng: destinoCoord.longitude } : null);
+    const alvo = geofenceAtiva?.centro || destinoCoord;
     if (!alvo) return;
 
     const raio = geofenceAtiva?.raio || 300;
@@ -101,7 +236,17 @@ export const useGpseCercas = (db, user, location, cargaAtiva, setCargaAtiva, via
       };
       salvarChegada();
     }
-  }, [location?.latitude, geofenceAtiva, viagemIniciada]);
+  }, [location?.latitude, geofenceAtiva, viagemIniciada, destinoCoord]);
 
-  return { geofenceAtiva, rotaCoords, destinoCoord, chegouAoDestino, confirmacaoPendente, setChegouAoDestino, setConfirmacaoPendente, setRotaCoords };
+  return { 
+    geofenceAtiva, 
+    rotaCoords, 
+    destinoCoord, 
+    chegouAoDestino, 
+    confirmacaoPendente,
+    carregandoRota,
+    setChegouAoDestino, 
+    setConfirmacaoPendente, 
+    setRotaCoords 
+  };
 };
