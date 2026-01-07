@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
-import { Alert, Vibration } from 'react-native';
+import { Alert, Vibration, Platform } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { 
   collection, 
   query, 
@@ -10,6 +11,15 @@ import {
   serverTimestamp,
   and 
 } from 'firebase/firestore';
+
+// Configuração de como as notificações aparecem com o app aberto
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldVibrate: true,
+  }),
+});
 
 const useMonitorarCargas = ({
   db,
@@ -24,15 +34,34 @@ const useMonitorarCargas = ({
   setStatusOperacional,
   sincronizarComFirestore
 }) => {
-  
+
+  // Função para disparar alerta sonoro e visual "impossível de ignorar"
+  const dispararAlertaCarga = async (dados) => {
+    // 1. Notificação no sistema (aparece na barra de tarefas e faz barulho)
+    await Notifications.scheduleNotificationAsync({
+      content: {
+        title: dados.tipoViagem === 'VAZIO' ? "⚪ DESLOCAMENTO DE VAZIO" : "🔔 NOVA CARGA DISPONÍVEL!",
+        body: `Destino: ${dados.destinoCliente || dados.clienteEntrega || 'Ver no app'}.`,
+        sound: 'default',
+        priority: Notifications.AndroidNotificationPriority.MAX,
+      },
+      trigger: null,
+    });
+
+    // 2. Inicia vibração em loop (500ms vibra, 500ms para...)
+    // O 'true' no final faz o loop infinito até Vibration.cancel()
+    Vibration.vibrate([0, 500, 500, 500], true);
+  };
+
   const aceitarCarga = async (id, dados) => {
     try {
+      Vibration.cancel(); // Para a vibração ao clicar
       await updateDoc(doc(db, "ordens_servico", id), { 
         status: "ACEITO", 
         aceitoEm: serverTimestamp(),
         dataInicioViagem: serverTimestamp()
       });
-      Alert.alert("✅ CARGA ACEITA!", "A viagem será iniciada automaticamente em alguns segundos.", [{ text: "OK" }]);
+      Alert.alert("✅ CARGA ACEITA!", "A viagem será iniciada automaticamente.");
     } catch (error) {
       console.error("Erro ao aceitar carga:", error);
       Alert.alert("Erro", "Não foi possível aceitar a carga.");
@@ -50,7 +79,6 @@ const useMonitorarCargas = ({
         id, 
         ...dados, 
         status: "EM ANDAMENTO",
-        // ADICIONADO: Garantir que os dados de geofence estejam presentes
         cercaVirtual: dados.cercaVirtual || null,
         destinoCliente: dados.destinoCliente || dados.clienteEntrega || "",
         destinoCidade: dados.destinoCidade || dados.destino || ""
@@ -61,20 +89,28 @@ const useMonitorarCargas = ({
       const novoStatus = dados.tipoViagem === 'VAZIO' ? 'Viagem vazio' : 'Viagem carregado';
       setStatusOperacional(novoStatus);
       
-      // PROTEÇÃO ADICIONADA AQUI
       if (typeof sincronizarComFirestore === 'function') {
         sincronizarComFirestore({ statusOperacional: novoStatus });
       }
 
-      Alert.alert("🚚 VIAGEM INICIADA!", "A viagem foi iniciada automaticamente.\n\nMantenha o app aberto para rastreamento.", [{ text: "ENTENDI" }]);
+      Alert.alert("🚚 VIAGEM INICIADA!", "Mantenha o app aberto para rastreamento.");
     } catch (error) {
       console.error("Erro ao iniciar viagem:", error);
-      Alert.alert("Erro", "Não foi possível iniciar a viagem.");
     }
   };
 
   useEffect(() => {
     if (!user?.uid) return;
+
+    // Criar canal de notificação para Android
+    if (Platform.OS === 'android') {
+      Notifications.setNotificationChannelAsync('cargas', {
+        name: 'Alertas de Carga',
+        importance: Notifications.AndroidImportance.MAX,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#FFD700',
+      });
+    }
 
     const q = query(
       collection(db, "ordens_servico"), 
@@ -84,83 +120,76 @@ const useMonitorarCargas = ({
       )
     );
 
-    const unsubscribe = onSnapshot(q, 
-      (snapshot) => {
-        snapshot.docChanges().forEach((change) => {
-          const dados = change.doc.data();
-          const id = change.doc.id;
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        const dados = change.doc.data();
+        const id = change.doc.id;
 
-          if ((change.type === "added" || change.type === "modified") && 
-              (dados.status === "AGUARDANDO PROGRAMAÇÃO" || dados.status === "PENDENTE ACEITE")) {
-            
-            Vibration.vibrate([0, 500, 500, 500], true);
-            const temGeofence = dados.cercaVirtual?.ativa;
-            const mensagemGeofence = temGeofence 
-              ? `\n📍 Sistema de geofence ativo (${dados.cercaVirtual.raio}m)` 
-              : '';
-            
-            Alert.alert(
-              dados.tipoViagem === 'VAZIO' ? "⚪ DESLOCAMENTO DE VAZIO" : "🔔 NOVA CARGA", 
-              `Destino: ${dados.destinoCliente || dados.clienteEntrega || 'Sem destino especificado'}${mensagemGeofence}\n\nA viagem iniciará automaticamente ao ser aceita.`, 
-              [
-                { 
-                  text: "RECUSAR", 
-                  style: "cancel", 
-                  onPress: async () => { 
-                    Vibration.cancel(); 
-                    await updateDoc(doc(db, "ordens_servico", id), { 
-                      status: "RECUSADO" 
-                    }); 
-                  }
-                },
-                { 
-                  text: "ACEITAR", 
-                  onPress: () => { 
-                    Vibration.cancel(); 
-                    aceitarCarga(id, dados); 
-                  }
+        // Se houver uma carga nova ou modificada para pendente
+        if ((change.type === "added" || change.type === "modified") && 
+            (dados.status === "AGUARDANDO PROGRAMAÇÃO" || dados.status === "PENDENTE ACEITE")) {
+          
+          dispararAlertaCarga(dados);
+
+          const temGeofence = dados.cercaVirtual?.ativa;
+          const mensagemGeofence = temGeofence ? `\n📍 Geofence ativo (${dados.cercaVirtual.raio}m)` : '';
+          
+          Alert.alert(
+            dados.tipoViagem === 'VAZIO' ? "⚪ DESLOCAMENTO DE VAZIO" : "🔔 NOVA CARGA", 
+            `Destino: ${dados.destinoCliente || dados.clienteEntrega}${mensagemGeofence}`, 
+            [
+              { 
+                text: "RECUSAR", 
+                style: "cancel", 
+                onPress: async () => { 
+                  Vibration.cancel(); 
+                  await updateDoc(doc(db, "ordens_servico", id), { status: "RECUSADO" }); 
                 }
-              ]
-            );
-          }
+              },
+              { 
+                text: "ACEITAR", 
+                onPress: () => { 
+                  Vibration.cancel(); 
+                  aceitarCarga(id, dados); 
+                }
+              }
+            ],
+            { cancelable: false } // Impede fechar clicando fora
+          );
+        }
 
-          if (change.type === "modified" && dados.status === "ACEITO" && !viagemIniciada) {
-            iniciarViagem(id, dados);
-          }
+        if (change.type === "modified" && dados.status === "ACEITO" && !viagemIniciada) {
+          iniciarViagem(id, dados);
+        }
 
-          if (dados.status === "EM ANDAMENTO" || dados.status === "AGUARDANDO CONFIRMAÇÃO") {
-            // ADICIONADO: Garantir que todos os dados necessários estejam presentes
-            const cargaCompleta = {
-              id,
-              ...dados,
-              destinoCliente: dados.destinoCliente || dados.clienteEntrega || "",
-              destinoCidade: dados.destinoCidade || dados.destino || "",
-              cercaVirtual: dados.cercaVirtual || null
-            };
-            setCargaAtiva(cargaCompleta);
-            setViagemIniciada(true);
-            
-            if (dados.status === "AGUARDANDO CONFIRMAÇÃO") {
-              setChegouAoDestino(true);
-              setConfirmacaoPendente(true);
-              setShowConfirmacaoModal(true);
-            }
-          }
-        });
-
-        if (snapshot.empty && cargaAtiva) {
-          setCargaAtiva(null);
-          setViagemIniciada(false);
-          // PROTEÇÃO ADICIONADA AQUI TAMBÉM
-          if (typeof sincronizarComFirestore === 'function') {
-            sincronizarComFirestore({ statusOperacional: 'Sem programação' });
+        if (dados.status === "EM ANDAMENTO" || dados.status === "AGUARDANDO CONFIRMAÇÃO") {
+          const cargaCompleta = {
+            id,
+            ...dados,
+            destinoCliente: dados.destinoCliente || dados.clienteEntrega || "",
+            destinoCidade: dados.destinoCidade || dados.destino || "",
+            cercaVirtual: dados.cercaVirtual || null
+          };
+          setCargaAtiva(cargaCompleta);
+          setViagemIniciada(true);
+          
+          if (dados.status === "AGUARDANDO CONFIRMAÇÃO") {
+            setChegouAoDestino(true);
+            setConfirmacaoPendente(true);
+            setShowConfirmacaoModal(true);
+            Vibration.vibrate(1000); // Alerta curto de chegada
           }
         }
-      },
-      (error) => {
-        console.error("Erro ao monitorar cargas:", error);
+      });
+
+      if (snapshot.empty && cargaAtiva) {
+        setCargaAtiva(null);
+        setViagemIniciada(false);
+        if (typeof sincronizarComFirestore === 'function') {
+          sincronizarComFirestore({ statusOperacional: 'Sem programação' });
+        }
       }
-    );
+    });
 
     return () => unsubscribe();
   }, [user?.uid, viagemIniciada, cargaAtiva, sincronizarComFirestore]);

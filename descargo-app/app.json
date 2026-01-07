@@ -18,7 +18,7 @@
         "googleMapsApiKey": "AIzaSyDT5OptLHwnCVPuevN5Ie8SFWxm4mRPAl4"
       },
       "infoPlist": {
-        "UIBackgroundModes": ["location", "audio"],
+        "UIBackgroundModes": ["location", "audio", "remote-notification"],
         "NSLocationAlwaysAndWhenInUseUsageDescription": "O app precisa acessar sua localização para navegação em primeiro e segundo plano.",
         "NSLocationWhenInUseUsageDescription": "O app precisa acessar sua localização para navegação."
       }
@@ -37,7 +37,8 @@
         "FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "VIBRATE",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "RECEIVE_BOOT_COMPLETED"
       ],
       "config": {
         "googleMaps": {
@@ -60,6 +61,13 @@
           "locationAlwaysAndWhenInUsePermission": "O app precisa acessar sua localização para navegação mesmo em segundo plano.",
           "isAndroidBackgroundLocationEnabled": true,
           "isIosBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#FFD700"
         }
       ]
     ]
