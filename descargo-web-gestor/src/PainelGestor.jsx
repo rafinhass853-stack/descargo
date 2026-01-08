@@ -5,7 +5,7 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
     Truck, Users, LayoutDashboard, ClipboardList, 
     LogOut, Fuel, Settings, UserCheck, Bell, Container,
-    MapPin, FileText, Route, CalendarDays, Gauge // Adicionado Gauge aqui
+    MapPin, FileText, Route, CalendarDays, Gauge 
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -18,7 +18,7 @@ import ClientesPontos from './ClientesPontos';
 import Folgas from './Folgas';
 import Roteirizacao from './Roteirizacao';
 import Escala from './Escala';
-import JornadaHodometro from './JornadaHodometro'; // Importado aqui
+import JornadaHodometro from './JornadaHodometro';
 
 // Importação dos Dashboards
 import DashboardGeral from './DashboardGeral';
@@ -70,7 +70,7 @@ const PainelGestor = () => {
             case 'escala':
                 return <Escala />;
             
-            case 'jornada_hodometro': // Adicionado o caso para a nova tela
+            case 'jornada_hodometro':
                 return <JornadaHodometro />;
             
             case 'cargas': return <PainelCargas />;
@@ -97,28 +97,35 @@ const PainelGestor = () => {
                         <CalendarDays size={18} /> Escala Motoristas
                     </div>
 
-                    {/* Novo item de menu: Jornada e Hodômetro */}
                     <div onClick={() => setMenuAtivo('jornada_hodometro')} style={menuAtivo === 'jornada_hodometro' ? styles.navItemAtivo : styles.navItem}>
                         <Gauge size={18} /> Jornada e Hodômetro
                     </div>
 
+                    {/* ITEM OCULTO: Relatório de Viagens 
                     <div onClick={() => setMenuAtivo('relatorio_viagens')} style={menuAtivo === 'relatorio_viagens' ? styles.navItemAtivo : styles.navItem}>
                         <FileText size={18} /> Relatório de Viagens
                     </div>
+                    */}
 
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
 
+                    {/* ITEM OCULTO: Roteirização 
                     <div onClick={() => setMenuAtivo('roteirizacao')} style={menuAtivo === 'roteirizacao' ? styles.navItemAtivo : styles.navItem}>
                         <Route size={18} /> Roteirização
                     </div>
+                    */}
 
+                    {/* ITEM OCULTO: Painel de Cargas 
                     <div onClick={() => setMenuAtivo('cargas')} style={menuAtivo === 'cargas' ? styles.navItemAtivo : styles.navItem}>
                         <ClipboardList size={18} /> Painel de Cargas
                     </div>
+                    */}
 
+                    {/* ITEM OCULTO: Clientes e Pontos 
                     <div onClick={() => setMenuAtivo('clientes_pontos')} style={menuAtivo === 'clientes_pontos' ? styles.navItemAtivo : styles.navItem}>
                         <MapPin size={18} /> Clientes e Pontos
                     </div>
+                    */}
 
                     <div onClick={() => setMenuAtivo('veiculos')} style={menuAtivo === 'veiculos' ? styles.navItemAtivo : styles.navItem}>
                         <Truck size={18} /> Veículos
@@ -132,12 +139,16 @@ const PainelGestor = () => {
                     
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
 
+                    {/* ITENS OCULTOS: Dash Combustível e Manutenções 
                     <div style={styles.navItem}><Fuel size={18} /> Dash Combustível</div>
                     <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
+                    */}
                     
+                    {/* ITEM OCULTO: Folgas 
                     <div onClick={() => setMenuAtivo('folgas')} style={menuAtivo === 'folgas' ? styles.navItemAtivo : styles.navItem}>
                         <UserCheck size={18} />Folgas
                     </div>
+                    */}
                     
                     <div onClick={() => setMenuAtivo('notificacoes')} style={menuAtivo === 'notificacoes' ? styles.navItemAtivo : styles.navItem}>
                         <Bell size={18} />Notificações
