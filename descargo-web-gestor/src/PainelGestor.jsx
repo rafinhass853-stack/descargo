@@ -77,7 +77,7 @@ const PainelGestor = () => {
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
-            case 'clientes_pontos': return <ClientesPontos />;
+            case 'clientes_pontos': return <ClientesPontos />; // REATIVADO
             case 'notificacoes': return <Notificacoes />;
             case 'folgas': return <Folgas />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
@@ -101,31 +101,12 @@ const PainelGestor = () => {
                         <Gauge size={18} /> Jornada e Hodômetro
                     </div>
 
-                    {/* ITEM OCULTO: Relatório de Viagens 
-                    <div onClick={() => setMenuAtivo('relatorio_viagens')} style={menuAtivo === 'relatorio_viagens' ? styles.navItemAtivo : styles.navItem}>
-                        <FileText size={18} /> Relatório de Viagens
-                    </div>
-                    */}
-
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
 
-                    {/* ITEM OCULTO: Roteirização 
-                    <div onClick={() => setMenuAtivo('roteirizacao')} style={menuAtivo === 'roteirizacao' ? styles.navItemAtivo : styles.navItem}>
-                        <Route size={18} /> Roteirização
-                    </div>
-                    */}
-
-                    {/* ITEM OCULTO: Painel de Cargas 
-                    <div onClick={() => setMenuAtivo('cargas')} style={menuAtivo === 'cargas' ? styles.navItemAtivo : styles.navItem}>
-                        <ClipboardList size={18} /> Painel de Cargas
-                    </div>
-                    */}
-
-                    {/* ITEM OCULTO: Clientes e Pontos 
+                    {/* MENU REATIVADO ABAIXO */}
                     <div onClick={() => setMenuAtivo('clientes_pontos')} style={menuAtivo === 'clientes_pontos' ? styles.navItemAtivo : styles.navItem}>
                         <MapPin size={18} /> Clientes e Pontos
                     </div>
-                    */}
 
                     <div onClick={() => setMenuAtivo('veiculos')} style={menuAtivo === 'veiculos' ? styles.navItemAtivo : styles.navItem}>
                         <Truck size={18} /> Veículos
@@ -138,17 +119,6 @@ const PainelGestor = () => {
                     </div>
                     
                     <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
-
-                    {/* ITENS OCULTOS: Dash Combustível e Manutenções 
-                    <div style={styles.navItem}><Fuel size={18} /> Dash Combustível</div>
-                    <div style={styles.navItem}><Settings size={18} /> Manutenções</div>
-                    */}
-                    
-                    {/* ITEM OCULTO: Folgas 
-                    <div onClick={() => setMenuAtivo('folgas')} style={menuAtivo === 'folgas' ? styles.navItemAtivo : styles.navItem}>
-                        <UserCheck size={18} />Folgas
-                    </div>
-                    */}
                     
                     <div onClick={() => setMenuAtivo('notificacoes')} style={menuAtivo === 'notificacoes' ? styles.navItemAtivo : styles.navItem}>
                         <Bell size={18} />Notificações

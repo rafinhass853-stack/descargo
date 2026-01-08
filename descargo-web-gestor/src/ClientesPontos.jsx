@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db } from "./firebase";
 import { collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, deleteDoc, doc, updateDoc } from "firebase/firestore";
-import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Circle, Polyline, Popup } from 'react-leaflet';
+import { MapContainer, TileLayer, FeatureGroup, LayersControl, useMap, Polygon, Popup } from 'react-leaflet';
 import { EditControl } from "react-leaflet-draw";
 import { LocateFixed, Save, Trash2, Edit3, Navigation } from 'lucide-react';
+import L from 'leaflet'; // Importação necessária para manipulação de camadas
 
 import 'leaflet/dist/leaflet.css';
 import 'leaflet-draw/dist/leaflet.draw.css';
@@ -20,58 +21,39 @@ const ChangeView = ({ center }) => {
 
 const TIPO_CORES = {
     'Cliente': '#2ecc71',
-    'Ponto de Apoio': '#3498db',
-    'Abastecimento': '#f1c40f',
+    'Filial': '#3498db',
+    'Posto de Gasolina': '#f1c40f',
     'Estacionamento': '#9b59b6',
-    'Borracharia': '#e67e22',
-    'Restaurante': '#e74c3c',
-    'Oficina': '#95a5a6'
+    'Ponto de Apoio': '#e67e22',
+    'Outros': '#95a5a6'
 };
 
-const RenderGeofence = ({ data, tipo, nomeCliente = "" }) => {
-    if (!data) return null;
+const RenderGeofence = ({ data, tipo, nomeCliente = "", id, editId }) => {
+    // Não renderiza aqui se este for o polígono que estamos editando (para não duplicar)
+    if (!data || !data.coordenadas || id === editId) return null;
     const color = TIPO_CORES[tipo] || '#FFD700';
 
-    if (data.tipo === 'circle' && data.centro) {
-        return (
-            <Circle 
-                center={[data.centro.lat, data.centro.lng]} 
-                radius={data.raio} 
-                pathOptions={{ color, fillColor: color, fillOpacity: 0.3 }}
-            >
-                {nomeCliente && <Popup><strong>{nomeCliente}</strong><br/>{tipo}</Popup>}
-            </Circle>
-        );
-    }
-
-    if (data.tipo === 'polyline' && data.coordenadas) {
-        return (
-            <Polyline 
-                positions={data.coordenadas.map(c => [c.lat, c.lng])} 
-                pathOptions={{ color: '#FFD700', weight: 5, opacity: 0.8 }}
-            >
-                {nomeCliente && <Popup><strong>Rota: {nomeCliente}</strong></Popup>}
-            </Polyline>
-        );
-    }
-
-    if ((data.tipo === 'polygon' || data.tipo === 'rectangle') && data.coordenadas) {
-        return (
-            <Polygon 
-                positions={data.coordenadas.map(c => [c.lat, c.lng])} 
-                pathOptions={{ color, fillColor: color, fillOpacity: 0.3 }}
-            >
-                {nomeCliente && <Popup><strong>{nomeCliente}</strong><br/>{tipo}</Popup>}
-            </Polygon>
-        );
-    }
-    return null;
+    return (
+        <Polygon 
+            positions={data.coordenadas.map(c => [c.lat, c.lng])} 
+            pathOptions={{ color, fillColor: color, fillOpacity: 0.3 }}
+        >
+            {nomeCliente && (
+                <Popup>
+                    <div style={{color: '#000'}}>
+                        <strong>{nomeCliente}</strong><br/>
+                        <small>{tipo}</small>
+                    </div>
+                </Popup>
+            )}
+        </Polygon>
+    );
 };
 
 const ClientesPontos = () => {
     const [loading, setLoading] = useState(false);
     const [editId, setEditId] = useState(null);
-    const featureGroupRef = useRef(); // Referência para gerenciar o desenho
+    const featureGroupRef = useRef();
     
     const [formData, setFormData] = useState({ 
         cliente: '', tipo: 'Cliente', cidade: '', linkGoogle: '', obs: '' 
@@ -108,7 +90,7 @@ const ClientesPontos = () => {
 
     const handleExtractLink = async () => {
         const url = formData.linkGoogle;
-        if (!url) return alert("Insira o link.");
+        if (!url) return alert("Insira o link do Google Maps.");
         const regexLong = /@(-?\d+\.\d+),(-?\d+\.\d+)/;
         const match = url.match(regexLong);
         if (match) {
@@ -117,28 +99,27 @@ const ClientesPontos = () => {
             setMapCenter([lat, lng]);
             await fetchAddress(lat, lng);
         } else {
-            alert("Não foi possível extrair coordenadas deste link.");
+            alert("Certifique-se que o link contém @latitude,longitude");
         }
     };
 
     const onCreated = (e) => {
-        const { layerType, layer } = e;
-        let areaData = { tipo: layerType };
+        const { layer } = e;
+        const latlngs = layer.getLatLngs();
+        const coords = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
         
-        if (layerType === 'circle') {
-            areaData.centro = { lat: layer.getLatLng().lat, lng: layer.getLatLng().lng };
-            areaData.raio = layer.getRadius();
-        } else if (layerType === 'polyline') {
-            areaData.coordenadas = layer.getLatLngs().map(c => ({ lat: c.lat, lng: c.lng }));
-        } else {
-            const latlngs = layer.getLatLngs();
-            const coords = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
-            areaData.coordenadas = coords.map(c => ({ lat: c.lat, lng: c.lng }));
-        }
-        setGeofence(areaData);
+        setGeofence({
+            tipo: 'polygon',
+            coordenadas: coords.map(c => ({ lat: c.lat, lng: c.lng }))
+        });
     };
 
     const handleEdit = (item) => {
+        // 1. Limpa desenhos atuais do FeatureGroup antes de carregar o novo
+        if (featureGroupRef.current) {
+            featureGroupRef.current.clearLayers();
+        }
+
         setEditId(item.id);
         setFormData({
             cliente: item.cliente,
@@ -148,29 +129,63 @@ const ClientesPontos = () => {
             obs: item.obs || ''
         });
         setGeofence(item.geofence);
-        setMapKey(Date.now()); // Reseta o FeatureGroup para modo edição
-        if (item.geofence?.centro) setMapCenter([item.geofence.centro.lat, item.geofence.centro.lng]);
-        else if (item.geofence?.coordenadas?.[0]) setMapCenter([item.geofence.coordenadas[0].lat, item.geofence.coordenadas[0].lng]);
+
+        // 2. Desenha o polígono no FeatureGroup para ele ficar editável imediatamente
+        if (item.geofence?.coordenadas && featureGroupRef.current) {
+            const latlngs = item.geofence.coordenadas.map(c => [c.lat, c.lng]);
+            const polygon = L.polygon(latlngs, { 
+                color: TIPO_CORES[item.tipo] || '#FFD700',
+                fillOpacity: 0.5 
+            });
+            featureGroupRef.current.addLayer(polygon);
+            
+            // Centraliza o mapa no polígono
+            setMapCenter([item.geofence.coordenadas[0].lat, item.geofence.coordenadas[0].lng]);
+        }
+        
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-        if (!geofence) return alert("Desenhe o polígono ou rota no mapa!");
+        
+        // Verifica se há camadas no FeatureGroup para pegar a versão mais recente (caso tenha editado)
+        if (featureGroupRef.current) {
+            const layers = featureGroupRef.current.getLayers();
+            if (layers.length > 0) {
+                const layer = layers[layers.length - 1]; // pega a última camada criada/editada
+                const latlngs = layer.getLatLngs();
+                const coords = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+                
+                const currentGeofence = {
+                    tipo: 'polygon',
+                    coordenadas: coords.map(c => ({ lat: c.lat, lng: c.lng }))
+                };
+                
+                executarSalvamento(currentGeofence);
+            } else {
+                alert("Desenhe o polígono no mapa!");
+            }
+        }
+    };
+
+    const executarSalvamento = async (geo) => {
         setLoading(true);
         try {
-            const dados = { ...formData, geofence, atualizadoEm: serverTimestamp() };
+            const dados = { ...formData, geofence: geo, atualizadoEm: serverTimestamp() };
             if (editId) {
                 await updateDoc(doc(db, "cadastro_clientes_pontos", editId), dados);
             } else {
                 await addDoc(collection(db, "cadastro_clientes_pontos"), { ...dados, criadoEm: serverTimestamp() });
             }
-            // Reset Total
+            
+            // Reseta tudo após salvar
             setEditId(null);
             setFormData({ cliente: '', tipo: 'Cliente', cidade: '', linkGoogle: '', obs: '' });
             setGeofence(null);
-            setMapKey(Date.now()); // Isso limpa o desenho da tela
-            alert("Salvo com sucesso!");
+            if (featureGroupRef.current) featureGroupRef.current.clearLayers();
+            setMapKey(Date.now());
+            alert("Cerca salva com sucesso!");
         } catch (error) { alert(error.message); }
         setLoading(false);
     };
@@ -178,53 +193,56 @@ const ClientesPontos = () => {
     return (
         <div style={styles.container}>
             <header style={styles.header}>
-                <h2 style={styles.titulo}><LocateFixed color="#FFD700" /> Cadastro de Áreas e Clientes</h2>
+                <h2 style={styles.titulo}><LocateFixed color="#FFD700" /> Clientes e Pontos Operacionais</h2>
             </header>
             
-            <form onSubmit={handleSubmit} style={styles.formGrid}>
+            <div style={styles.formGrid}>
                 <div style={styles.sidebar}>
                     <div style={styles.field}>
                         <label style={styles.label}>LINK GOOGLE MAPS</label>
                         <div style={{ display: 'flex', gap: '5px' }}>
-                            <input style={styles.input} value={formData.linkGoogle} onChange={(e) => setFormData({...formData, linkGoogle: e.target.value})} />
-                            <button onClick={handleExtractLink} type="button" style={styles.btnLink}><Navigation size={16} /></button>
+                            <input style={styles.input} placeholder="Cole o link aqui..." value={formData.linkGoogle} onChange={(e) => setFormData({...formData, linkGoogle: e.target.value})} />
+                            <button onClick={handleExtractLink} type="button" style={styles.btnLink} title="Localizar no mapa"><Navigation size={16} /></button>
                         </div>
                     </div>
 
                     <div style={styles.field}>
                         <label style={styles.label}>CIDADE / UF</label>
-                        <input style={{...styles.input, color: '#FFD700'}} value={formData.cidade} readOnly />
+                        <input style={{...styles.input, color: '#FFD700', backgroundColor: '#050505'}} value={formData.cidade} readOnly />
                     </div>
 
                     <div style={styles.field}>
-                        <label style={styles.label}>NOME DO LOCAL</label>
+                        <label style={styles.label}>NOME DO LOCAL / CLIENTE</label>
                         <input style={styles.input} value={formData.cliente} onChange={e => setFormData({...formData, cliente: e.target.value})} required />
                     </div>
 
                     <div style={styles.field}>
-                        <label style={styles.label}>TIPO</label>
+                        <label style={styles.label}>TIPO DE PONTO</label>
                         <select style={styles.input} value={formData.tipo} onChange={e => setFormData({...formData, tipo: e.target.value})}>
                             <option value="Cliente">🏢 Cliente</option>
+                            <option value="Filial">🏭 Filial da Empresa</option>
+                            <option value="Posto de Gasolina">⛽ Posto de Gasolina</option>
+                            <option value="Estacionamento">🅿️ Estacionamento</option>
                             <option value="Ponto de Apoio">🏠 Ponto de Apoio</option>
-                            {/* ... outras opções ... */}
+                            <option value="Outros">📍 Outros</option>
                         </select>
                     </div>
 
-                    <button type="submit" disabled={loading} style={{...styles.btn, backgroundColor: '#FFD700'}}>
-                        <Save size={18} /> {loading ? 'SALVANDO...' : 'SALVAR CADASTRO'}
+                    <button onClick={handleSubmit} disabled={loading} style={{...styles.btn, backgroundColor: '#FFD700'}}>
+                        <Save size={18} /> {loading ? 'SALVANDO...' : 'SALVAR CERCA'}
                     </button>
                     
                     <div style={styles.listaContainer}>
                         <div style={styles.listaScroll}>
                             {clientesCadastrados.map((item) => (
-                                <div key={item.id} style={styles.itemCliente}>
+                                <div key={item.id} style={{...styles.itemCliente, borderLeft: `4px solid ${TIPO_CORES[item.tipo]}`}}>
                                     <div style={{ flex: 1 }}>
                                         <div style={styles.itemNome}>{item.cliente}</div>
-                                        <div style={styles.itemCidade}>{item.cidade}</div>
+                                        <div style={styles.itemCidade}>{item.tipo} - {item.cidade}</div>
                                     </div>
                                     <div style={styles.itemActions}>
                                         <button type="button" onClick={() => handleEdit(item)} style={styles.btnIconEdit}><Edit3 size={14} /></button>
-                                        <button type="button" onClick={() => { if(window.confirm("Excluir?")) deleteDoc(doc(db, "cadastro_clientes_pontos", item.id)) }} style={styles.btnIconDelete}><Trash2 size={14} /></button>
+                                        <button type="button" onClick={() => { if(window.confirm("Excluir esta cerca?")) deleteDoc(doc(db, "cadastro_clientes_pontos", item.id)) }} style={styles.btnIconDelete}><Trash2 size={14} /></button>
                                     </div>
                                 </div>
                             ))}
@@ -240,54 +258,63 @@ const ClientesPontos = () => {
                             <BaseLayer name="Mapa"><TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /></BaseLayer>
                         </LayersControl>
                         
-                        {/* Renderiza todos os polígonos já salvos no Firebase */}
                         {clientesCadastrados.map(cliente => (
                             <RenderGeofence 
                                 key={`saved-${cliente.id}`} 
+                                id={cliente.id}
+                                editId={editId}
                                 data={cliente.geofence} 
                                 tipo={cliente.tipo}
                                 nomeCliente={cliente.cliente}
                             />
                         ))}
 
-                        {/* FeatureGroup com KEY dinâmica para garantir que o desenho apareça/suma corretamente ao salvar */}
-                        <FeatureGroup key={mapKey} ref={featureGroupRef}>
+                        <FeatureGroup ref={featureGroupRef}>
                             <EditControl 
                                 position="topleft" 
-                                onCreated={onCreated} 
+                                onCreated={onCreated}
+                                onEdited={(e) => {
+                                    const layers = e.layers;
+                                    layers.eachLayer(layer => {
+                                        const latlngs = layer.getLatLngs();
+                                        const coords = Array.isArray(latlngs[0]) ? latlngs[0] : latlngs;
+                                        setGeofence({
+                                            tipo: 'polygon',
+                                            coordenadas: coords.map(c => ({ lat: c.lat, lng: c.lng }))
+                                        });
+                                    });
+                                }}
                                 draw={{ 
-                                    polyline: { shapeOptions: { color: '#FFD700' } },
-                                    polygon: { shapeOptions: { color: '#2ecc71', fillOpacity: 0.5 } },
-                                    rectangle: { shapeOptions: { color: '#2ecc71' } },
-                                    circle: { shapeOptions: { color: '#2ecc71' } },
-                                    marker: false, 
-                                    circlemarker: false
+                                    polygon: { 
+                                        allowIntersection: false,
+                                        shapeOptions: { color: TIPO_CORES[formData.tipo] || '#FFD700', fillOpacity: 0.5 } 
+                                    },
+                                    polyline: false, rectangle: false, circle: false, marker: false, circlemarker: false
                                 }} 
                             />
                         </FeatureGroup>
                     </MapContainer>
                 </div>
-            </form>
+            </div>
         </div>
     );
 };
 
-// ... estilos permanecem iguais ao anterior ...
 const styles = {
     container: { backgroundColor: '#0a0a0a', padding: '20px', minHeight: '100vh', fontFamily: 'sans-serif' },
     header: { marginBottom: '20px' },
-    titulo: { color: '#FFD700', fontSize: '18px' },
+    titulo: { color: '#FFD700', fontSize: '18px', display: 'flex', alignItems: 'center', gap: '10px' },
     formGrid: { display: 'grid', gridTemplateColumns: '340px 1fr', gap: '20px' },
     sidebar: { display: 'flex', flexDirection: 'column', gap: '12px' },
     field: { display: 'flex', flexDirection: 'column', gap: '4px' },
     label: { color: '#666', fontSize: '10px', fontWeight: 'bold' },
     input: { backgroundColor: '#111', border: '1px solid #333', padding: '10px', borderRadius: '6px', color: '#FFF', width: '100%', boxSizing: 'border-box' },
     btnLink: { backgroundColor: '#3498db', border: 'none', borderRadius: '6px', padding: '0 12px', cursor: 'pointer', color: '#FFF' },
-    btn: { color: '#000', padding: '14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', border: 'none' },
+    btn: { color: '#000', padding: '14px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
     mapWrapper: { height: '85vh', borderRadius: '12px', overflow: 'hidden', border: '1px solid #222' },
     listaContainer: { marginTop: '10px', borderTop: '1px solid #222', paddingTop: '15px' },
-    listaScroll: { maxHeight: '300px', overflowY: 'auto' },
-    itemCliente: { backgroundColor: '#0d0d0d', padding: '10px', marginBottom: '8px', borderRadius: '6px', display: 'flex' },
+    listaScroll: { maxHeight: '350px', overflowY: 'auto' },
+    itemCliente: { backgroundColor: '#0d0d0d', padding: '10px', marginBottom: '8px', borderRadius: '6px', display: 'flex', alignItems: 'center' },
     itemNome: { fontSize: '11px', fontWeight: 'bold', color: '#eee' },
     itemCidade: { fontSize: '9px', color: '#888' },
     itemActions: { display: 'flex', gap: '8px' },
