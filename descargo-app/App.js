@@ -11,7 +11,9 @@ import {
   Modal,
   Linking,
   ScrollView,
-  Platform
+  Platform,
+  TextInput,
+  KeyboardAvoidingView
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
@@ -50,7 +52,9 @@ import {
   collection,
   query,
   where,
-  getDocs 
+  getDocs,
+  onSnapshot,
+  addDoc
 } from 'firebase/firestore';
 
 const firebaseConfig = {
@@ -71,7 +75,6 @@ try {
 }
 const db = getFirestore(app);
 
-// --- TAREFA DE RASTREIO EM SEGUNDO PLANO ---
 const LOCATION_TASK_NAME = 'background-location-task';
 
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
@@ -142,18 +145,6 @@ const ConfirmacaoChegadaModal = ({ visible, onConfirm, onCancel, cargaAtiva }) =
                 <Text style={styles.detalhesLabel}>Cidade:</Text>
                 <Text style={styles.detalhesValor}>{cargaAtiva.destinoCidade || ''}</Text>
               </View>
-              <View style={styles.detalhesLinha}>
-                <Text style={styles.detalhesLabel}>Tipo:</Text>
-                <Text style={[styles.detalhesValor, { color: cargaAtiva.tipoViagem === 'CARREGADO' ? '#FFD700' : '#3498db' }]}>
-                  {cargaAtiva.tipoViagem || 'CARREGADO'}
-                </Text>
-              </View>
-              {cargaAtiva.destinoLink && (
-                <TouchableOpacity style={styles.googleMapsButton} onPress={() => Linking.openURL(cargaAtiva.destinoLink)}>
-                  <MaterialIcons name="map" size={16} color="#4285F4" />
-                  <Text style={styles.googleMapsText}>Abrir no Google Maps</Text>
-                </TouchableOpacity>
-              )}
             </View>
           )}
         </ScrollView>
@@ -162,7 +153,7 @@ const ConfirmacaoChegadaModal = ({ visible, onConfirm, onCancel, cargaAtiva }) =
             <Text style={styles.modalButtonCancelText}>AGUARDAR</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={onConfirm}>
-            <Text style={styles.modalButtonConfirmText}>CONFIRMAR CHEGADA</Text>
+            <Text style={styles.modalButtonConfirmText}>CONFIRMAR</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -170,7 +161,7 @@ const ConfirmacaoChegadaModal = ({ visible, onConfirm, onCancel, cargaAtiva }) =
   </Modal>
 );
 
-const ViagemCard = ({ cargaAtiva, chegouAoDestino, confirmacaoPendente, onOpenGoogleMaps }) => {
+const ViagemCard = ({ cargaAtiva, chegouAoDestino, onOpenGoogleMaps }) => {
   if (!cargaAtiva) return null;
   return (
     <TouchableOpacity 
@@ -182,44 +173,18 @@ const ViagemCard = ({ cargaAtiva, chegouAoDestino, confirmacaoPendente, onOpenGo
         <View style={{ flex: 1 }}>
           <View style={styles.routeHeaderTop}>
             <Text style={styles.routeLabel}>
-              {cargaAtiva.tipoViagem === 'VAZIO' ? '⚪ VAZIO' : cargaAtiva.tipoViagem === 'MANUTENÇÃO' ? '🔧 MANUTENÇÃO' : '🚚 CARREGADO'} • DT {cargaAtiva.dt || '---'}
+              {cargaAtiva.tipoViagem || 'CARREGADO'} • DT {cargaAtiva.dt || '---'}
             </Text>
-            {cargaAtiva.destinoLink && (
-              <TouchableOpacity onPress={(e) => { e.stopPropagation(); onOpenGoogleMaps(cargaAtiva.destinoLink); }} style={styles.mapIconContainer}>
-                <MaterialIcons name="map" size={16} color="#4285F4" />
-              </TouchableOpacity>
-            )}
           </View>
-          <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.clienteEntrega || 'Destino não especificado'}</Text>
-          {cargaAtiva.destinoCodigo && <Text style={styles.codigoDestino}>Código: <Text style={{fontWeight: 'bold'}}>{cargaAtiva.destinoCodigo}</Text></Text>}
+          <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.clienteEntrega || 'Destino'}</Text>
           <View style={styles.cidadesContainer}>
-            {cargaAtiva.origemCidade && <Text style={styles.cidadeText}><MaterialIcons name="location-on" size={10} color="#FFD700" /> {cargaAtiva.origemCidade}</Text>}
+            {cargaAtiva.origemCidade && <Text style={styles.cidadeText}>{cargaAtiva.origemCidade}</Text>}
             <Text style={styles.setaCidades}> → </Text>
-            {cargaAtiva.destinoCidade && <Text style={[styles.cidadeText, {color: '#2ecc71'}]}><MaterialIcons name="location-on" size={10} color="#2ecc71" /> {cargaAtiva.destinoCidade}</Text>}
+            {cargaAtiva.destinoCidade && <Text style={[styles.cidadeText, {color: '#2ecc71'}]}>{cargaAtiva.destinoCidade}</Text>}
           </View>
-          {confirmacaoPendente && <Text style={{color: '#FFD700', fontSize: 10, fontWeight: 'bold', marginTop: 4}}>⚠️ AGUARDANDO CONFIRMAÇÃO</Text>}
         </View>
         <MaterialIcons name="location-on" size={30} color={chegouAoDestino ? "#2ecc71" : "#444"} />
       </View>
-      <TouchableOpacity 
-        style={styles.detalhesButton}
-        onPress={() => {
-          Alert.alert(
-            "Detalhes da Viagem",
-            `Documento: DT ${cargaAtiva.dt || '---'}\n` +
-            `Tipo: ${cargaAtiva.tipoViagem || 'CARREGADO'}\n` +
-            `Peso: ${cargaAtiva.peso || '0'} Ton\n` +
-            `Perfil: ${cargaAtiva.perfilVeiculo || 'Trucado'}\n` +
-            `Código Origem: ${cargaAtiva.origemCodigo || '---'}\n` +
-            `Código Destino: ${cargaAtiva.destinoCodigo || '---'}\n` +
-            `Observação: ${cargaAtiva.observacao || 'Nenhuma'}`,
-            [{ text: "OK" }]
-          );
-        }}
-      >
-        <Text style={styles.detalhesButtonText}>Ver detalhes completos</Text>
-        <MaterialIcons name="arrow-forward" size={14} color="#888" />
-      </TouchableOpacity>
     </TouchableOpacity>
   );
 };
@@ -238,7 +203,13 @@ export default function App() {
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [showConfirmacaoModal, setShowConfirmacaoModal] = useState(false);
   
+  // Controle de Bloqueio por Hodômetro
+  const [solicitacaoHodometro, setSolicitacaoHodometro] = useState(false);
+  const [hodometroInput, setHodometroInput] = useState('');
+  const [enviandoKm, setEnviandoKm] = useState(false);
+  
   const webviewRef = useRef(null);
+  const lastSolicitacaoStatus = useRef(false);
 
   // Hooks do Projeto
   const {
@@ -252,7 +223,72 @@ export default function App() {
     setStatusOperacional, sincronizarComFirestore: (extra) => sincronizarComFirestore(extra)
   });
 
-  // Configuração inicial de Notificações
+  // --- FUNÇÃO CORRIGIDA: ENVIAR KM E LIBERAR APP ---
+  const enviarKmObrigatorio = async () => {
+    if (!hodometroInput.trim()) return Alert.alert("Atenção", "Por favor, informe o KM atual.");
+    
+    setEnviandoKm(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      let cidade = "S/L";
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({});
+        const geo = await Location.reverseGeocodeAsync(loc.coords);
+        if (geo.length > 0) cidade = geo[0].subregion || geo[0].city || "Cidade";
+      }
+
+      // 1. Grava no Histórico
+      await addDoc(collection(db, 'historico_jornadas'), {
+        motoristaId: user.uid,
+        motoristaNome: motoristaProfile?.nome || user.email,
+        tipo: 'LOG_SOLICITADO',
+        timestamp: serverTimestamp(),
+        km: parseFloat(hodometroInput.replace(',', '.')),
+        cidade: cidade
+      });
+
+      // 2. DESBLOQUEIA O APP NO FIRESTORE (AÇÃO CRUCIAL)
+      await updateDoc(doc(db, "configuracoes", "controle_app"), {
+        pedirHodometro: false
+      });
+
+      setHodometroInput('');
+      Alert.alert("Sucesso", "KM enviado! O aplicativo foi liberado.");
+      
+    } catch (e) {
+      console.log(e);
+      Alert.alert("Erro", "Falha ao enviar dados e liberar aplicativo.");
+    } finally {
+      setEnviandoKm(false);
+    }
+  };
+
+  // Listener para Solicitação de Hodômetro do Gestor
+  useEffect(() => {
+    if (!user) return;
+    const unsubStatus = onSnapshot(doc(db, "configuracoes", "controle_app"), (docSnap) => {
+      if (docSnap.exists()) {
+        const isPedindo = docSnap.data().pedirHodometro;
+        setSolicitacaoHodometro(isPedindo);
+
+        if (isPedindo && !lastSolicitacaoStatus.current) {
+          Vibration.vibrate([500, 200, 500, 200, 500]);
+          Notifications.scheduleNotificationAsync({
+            content: {
+              title: "⚠️ AÇÃO OBRIGATÓRIA",
+              body: "O gestor solicitou a atualização do seu KM.",
+              sound: true,
+              priority: Notifications.AndroidNotificationPriority.MAX,
+            },
+            trigger: null,
+          });
+        }
+        lastSolicitacaoStatus.current = isPedindo;
+      }
+    });
+    return () => unsubStatus();
+  }, [user]);
+
   useEffect(() => {
     (async () => {
       const { status } = await Notifications.requestPermissionsAsync();
@@ -261,13 +297,12 @@ export default function App() {
           name: 'default',
           importance: Notifications.AndroidImportance.MAX,
           vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FF231F7C',
+          lightColor: '#FFD700',
         });
       }
     })();
   }, []);
 
-  // Auth Listener
   useEffect(() => { 
     const unsub = onAuthStateChanged(auth, async (u) => { 
       if (u) {
@@ -290,7 +325,6 @@ export default function App() {
         setMotoristaProfile(querySnapshot.docs[0].data());
         setIsLoggedIn(true);
       } else {
-        Alert.alert("Erro", "Perfil de motorista não encontrado.");
         signOut(auth);
       }
     } catch (error) { console.error("Erro busca perfil:", error); }
@@ -302,7 +336,6 @@ export default function App() {
   const monitorarLocalizacao = async () => {
     let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
     if (fgStatus !== 'granted') return;
-    let { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
     
     try {
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
@@ -312,11 +345,11 @@ export default function App() {
         showsBackgroundLocationIndicator: true,
         foregroundService: {
           notificationTitle: "Monitoramento Ativo",
-          notificationBody: "Sua viagem está sendo rastreada.",
+          notificationBody: "Sua localização está sendo transmitida.",
           notificationColor: "#FFD700"
         }
       });
-    } catch (e) { console.log("Erro start bg:", e); }
+    } catch (e) {}
 
     await Location.watchPositionAsync({ 
       accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 5 
@@ -335,7 +368,6 @@ export default function App() {
             uf = geo[0].region || "";
           }
         } catch (e) {}
-
         sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, velocidade: speedKmh, cidade, uf });
       }
     });
@@ -347,7 +379,6 @@ export default function App() {
       const dados = { 
         motoristaId: auth.currentUser.uid, 
         nomeMotorista: motoristaProfile.nome || "Não informado",
-        email: auth.currentUser.email, 
         ultimaAtualizacao: serverTimestamp(),
         latitude: extra.latitude || location?.latitude,
         longitude: extra.longitude || location?.longitude,
@@ -356,28 +387,22 @@ export default function App() {
         cidade: extra.cidade || "---",
         uf: extra.uf || "",
         statusJornada: "EM ATIVIDADE", 
-        cargaAtiva: cargaAtiva?.id || null,
         viagemIniciada: viagemIniciada
       };
       await setDoc(doc(db, "localizacao_realtime", auth.currentUser.uid), dados, { merge: true });
-    } catch (e) { console.error("Erro sincronia:", e); }
+    } catch (e) {}
   };
 
   const confirmarChegada = async () => {
     if (!cargaAtiva) return;
     setShowConfirmacaoModal(false);
     try {
-      const logId = `${Date.now()}_${cargaAtiva.id}`;
       await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), { 
         finalizada: true, confirmacaoPendente: false, status: 'FINALIZADA', 
-        dataFinalizacao: serverTimestamp(),
-        observacaoFinalizacao: `Finalizada via App. Cód Destino: ${cargaAtiva.destinoCodigo || '---'}`
-      });
-      await setDoc(doc(db, "logs_finalizacao", logId), {
-        cargaId: cargaAtiva.id, motoristaId: auth.currentUser.uid, dt: cargaAtiva.dt, finalizadoEm: serverTimestamp()
+        dataFinalizacao: serverTimestamp() 
       });
       setCargaAtiva(null); setViagemIniciada(false); setRotaCoords([]);
-      Alert.alert("✅ Viagem Finalizada", "A viagem foi registrada como concluída.");
+      Alert.alert("Sucesso", "Viagem finalizada.");
     } catch (error) { Alert.alert("Erro", "Falha ao finalizar."); }
   };
 
@@ -412,6 +437,48 @@ export default function App() {
   return (
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
+      
+      {/* MODAL DE TRAVA TOTAL (HODÔMETRO) */}
+      <Modal 
+        visible={solicitacaoHodometro} 
+        transparent={false} 
+        animationType="slide"
+        onRequestClose={() => {}}
+      >
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.lockScreen}>
+          <StatusBar barStyle="dark-content" backgroundColor="#FFD700" />
+          <View style={styles.lockContent}>
+            <MaterialCommunityIcons name="gauge" size={100} color="#000" />
+            <Text style={styles.lockTitle}>HODÔMETRO SOLICITADO</Text>
+            <Text style={styles.lockSub}>Informe o KM atual para liberar o aplicativo.</Text>
+            
+            <TextInput 
+              style={styles.lockInput}
+              placeholder="000000"
+              placeholderTextColor="#666"
+              keyboardType="numeric"
+              value={hodometroInput}
+              onChangeText={setHodometroInput}
+              autoFocus
+            />
+
+            <TouchableOpacity 
+              style={[styles.lockBtn, { opacity: enviandoKm ? 0.7 : 1 }]} 
+              onPress={enviarKmObrigatorio}
+              disabled={enviandoKm}
+            >
+              {enviandoKm ? (
+                <ActivityIndicator color="#FFD700" />
+              ) : (
+                <Text style={styles.lockBtnText}>ENVIAR AGORA</Text>
+              )}
+            </TouchableOpacity>
+
+            <Text style={styles.lockFooter}>⚠️ O uso está bloqueado até a informação do KM.</Text>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
       <View style={{flex: 1, paddingTop: activeTab === 'painel' ? 0 : 60}}>
         {activeTab === 'painel' ? (
           <View style={{flex: 1}}>
@@ -421,7 +488,7 @@ export default function App() {
               <Text style={styles.speedText}>{currentSpeed}</Text>
               <Text style={styles.speedUnit}>KM/H</Text>
             </View>
-            <ViagemCard cargaAtiva={cargaAtiva} chegouAoDestino={chegouAoDestino} confirmacaoPendente={confirmacaoPendente} onOpenGoogleMaps={(url) => Linking.openURL(url)} />
+            <ViagemCard cargaAtiva={cargaAtiva} chegouAoDestino={chegouAoDestino} onOpenGoogleMaps={(url) => Linking.openURL(url)} />
             <BotaoRotaAutomatica location={location} cargaAtiva={cargaAtiva} setRotaCoords={setRotaCoords} disabled={!viagemIniciada} onOpenGoogleMaps={(url) => Linking.openURL(url)} />
             <TouchableOpacity style={styles.floatingGps} onPress={() => webviewRef.current?.postMessage(JSON.stringify({ type: 'center', lat: location.latitude, lng: location.longitude }))}>
               <MaterialIcons name="my-location" size={24} color="#FFD700" />
@@ -433,7 +500,9 @@ export default function App() {
           activeTab === 'jornada' ? <Jornada auth={auth} db={db} /> : <Conta auth={auth} db={db} />
         )}
       </View>
+
       <ConfirmacaoChegadaModal visible={showConfirmacaoModal} onConfirm={confirmarChegada} onCancel={() => setShowConfirmacaoModal(false)} cargaAtiva={cargaAtiva} />
+
       <View style={styles.floatingNavContainer}>
         <View style={styles.floatingNav}>
           {[
@@ -448,10 +517,6 @@ export default function App() {
               <Text style={[styles.navText, { color: activeTab === key ? "#FFD700" : "#999" }]}>{label}</Text>
             </TouchableOpacity>
           ))}
-          <TouchableOpacity style={styles.navItem} onPress={() => signOut(auth)}>
-            <Ionicons name="log-out" size={24} color="#ff4d4d" />
-            <Text style={[styles.navText, { color: "#ff4d4d" }]}>Sair</Text>
-          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -461,6 +526,17 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   loadingContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
+  
+  // ESTILOS DA TRAVA
+  lockScreen: { flex: 1, backgroundColor: '#FFD700', justifyContent: 'center', alignItems: 'center', padding: 30 },
+  lockContent: { width: '100%', alignItems: 'center' },
+  lockTitle: { fontSize: 22, fontWeight: '900', color: '#000', marginTop: 20, textAlign: 'center' },
+  lockSub: { fontSize: 14, color: '#000', textAlign: 'center', marginTop: 10, marginBottom: 40, opacity: 0.8, fontWeight: '600' },
+  lockInput: { backgroundColor: '#000', color: '#FFD700', width: '100%', borderRadius: 15, padding: 20, fontSize: 40, textAlign: 'center', fontWeight: 'bold', marginBottom: 20 },
+  lockBtn: { backgroundColor: '#000', width: '100%', padding: 22, borderRadius: 15, alignItems: 'center', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5 },
+  lockBtnText: { color: '#FFD700', fontSize: 18, fontWeight: '900' },
+  lockFooter: { marginTop: 30, color: '#000', fontSize: 11, fontWeight: 'bold', opacity: 0.5 },
+
   speedometerContainer: { 
     position: 'absolute', top: 50, right: 20, width: 65, height: 65, 
     backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 35, borderWidth: 2, 
@@ -475,37 +551,31 @@ const styles = StyleSheet.create({
   },
   routeHeader: { flexDirection: 'row', alignItems: 'flex-start' },
   routeHeaderTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 },
-  routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold', flex: 1 },
-  mapIconContainer: { padding: 4, marginLeft: 8 },
+  routeLabel: { color: '#FFD700', fontSize: 9, fontWeight: 'bold' },
   routeInfo: { color: '#FFF', fontSize: 16, fontWeight: '900', marginBottom: 4 },
-  codigoDestino: { color: '#888', fontSize: 10, marginBottom: 4 },
-  cidadesContainer: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', marginBottom: 4 },
-  cidadeText: { color: '#AAA', fontSize: 10, marginRight: 4 },
+  cidadesContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 4 },
+  cidadeText: { color: '#AAA', fontSize: 10 },
   setaCidades: { color: '#666', fontSize: 10, marginHorizontal: 4 },
-  detalhesButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: '#333' },
-  detalhesButtonText: { color: '#888', fontSize: 10, marginRight: 5 },
   floatingGps: { position: 'absolute', bottom: 210, right: 20, backgroundColor: 'rgba(0,0,0,0.9)', padding: 12, borderRadius: 50, zIndex: 5 },
   floatingNavContainer: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingBottom: 20, paddingHorizontal: 10, zIndex: 100 },
   floatingNav: { flexDirection: 'row', backgroundColor: '#151515', paddingVertical: 10, borderRadius: 20, justifyContent: 'space-around' },
   navItem: { alignItems: 'center', flex: 1 },
   navText: { fontSize: 8, marginTop: 4 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#111', borderRadius: 20, padding: 20, width: '90%', borderWidth: 1, borderColor: '#FFD700', maxHeight: '80%' },
+  modalContent: { backgroundColor: '#111', borderRadius: 20, padding: 20, width: '90%', borderWidth: 1, borderColor: '#FFD700' },
   modalHeader: { alignItems: 'center', marginBottom: 15 },
   modalTitle: { color: '#2ecc71', fontSize: 18, fontWeight: 'bold', marginTop: 10 },
   modalScroll: { maxHeight: 200, marginBottom: 15 },
-  modalMessage: { color: '#FFF', textAlign: 'center', marginBottom: 20, fontSize: 14 },
+  modalMessage: { color: '#FFF', textAlign: 'center', marginBottom: 20 },
   detalhesCargaContainer: { backgroundColor: 'rgba(30,30,30,0.7)', borderRadius: 10, padding: 15, marginBottom: 15 },
   detalhesTitulo: { color: '#FFD700', fontSize: 12, fontWeight: 'bold', marginBottom: 10 },
   detalhesLinha: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 6 },
   detalhesLabel: { color: '#AAA', fontSize: 12 },
-  detalhesValor: { color: '#FFF', fontSize: 12, fontWeight: '600' },
-  googleMapsButton: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(66, 133, 244, 0.1)', padding: 12, borderRadius: 8, marginTop: 10, borderWidth: 1, borderColor: '#4285F4' },
-  googleMapsText: { color: '#4285F4', fontSize: 12, fontWeight: 'bold', marginHorizontal: 8 },
+  detalhesValor: { color: '#FFF', fontSize: 12 },
   modalButtons: { flexDirection: 'row', justifyContent: 'space-between' },
   modalButton: { flex: 1, padding: 15, borderRadius: 10, alignItems: 'center' },
   modalButtonCancel: { backgroundColor: '#333', marginRight: 10 },
   modalButtonConfirm: { backgroundColor: '#2ecc71' },
   modalButtonConfirmText: { color: '#fff', fontWeight: 'bold' },
-  modalButtonCancelText: { color: '#fff' }
+  modalButtonCancelText: { color: '#fff' },
 });
