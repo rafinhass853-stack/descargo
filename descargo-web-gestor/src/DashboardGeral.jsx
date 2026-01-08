@@ -13,7 +13,7 @@ import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
-// Ícone Personalizado do Caminhão
+// Ícone Personalizado do Caminhão (Garante que a URL seja estável)
 const caminhaoIcon = new L.Icon({
     iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png',
     iconSize: [38, 38],
@@ -72,7 +72,7 @@ const DashboardGeral = () => {
                 lat = clienteDados.geofence.coordenadas[0].lat;
                 lng = clienteDados.geofence.coordenadas[0].lng;
             }
-            if (lat && lng) linkGerado = `https://www.google.com/maps?q=${lat},${lng}`;
+            if (lat && lng) linkGerado = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
         }
 
         if (tipo === 'COLETA') {
@@ -89,15 +89,22 @@ const DashboardGeral = () => {
         return { label: 'ALTA VELÔ', color: '#e74c3c', bg: 'rgba(231, 76, 60, 0.1)' };
     };
 
+    // FUNÇÃO PARA FORÇAR GPS (Comunicando com o App)
     const forcarGPS = async (motoristaId) => {
         setLoadingGPS(motoristaId);
         try {
+            // Criamos ou atualizamos um documento de comando que o App monitora via snapshot
             await setDoc(doc(db, "comandos_gps", motoristaId), {
                 comando: "FORCE_REFRESH",
-                timestamp: serverTimestamp()
+                timestamp: serverTimestamp(),
+                origem: "DASHBOARD_GESTOR"
             }, { merge: true });
-            setTimeout(() => setLoadingGPS(null), 2000);
-        } catch (e) { setLoadingGPS(null); }
+            
+            setTimeout(() => setLoadingGPS(null), 3000);
+        } catch (e) { 
+            console.error("Erro ao enviar comando GPS:", e);
+            setLoadingGPS(null); 
+        }
     };
 
     const salvarViagem = async () => {
@@ -112,7 +119,11 @@ const DashboardGeral = () => {
                 statusOperacional: 'INICIANDO CICLO',
                 criadoEm: serverTimestamp()
             });
-            alert("Roteiro enviado!");
+            
+            // Ao salvar a viagem, já mudamos o status de escala para PROGRAMADO automaticamente
+            await alterarStatusEscala(motSelecionado.id, 'PROGRAMADO');
+            
+            alert("Roteiro enviado com sucesso!");
             setModalViagem(false);
         } catch (e) { alert("Erro ao salvar."); }
     };
@@ -137,12 +148,18 @@ const DashboardGeral = () => {
             const locs = {};
             snapshot.forEach(doc => {
                 const d = doc.data();
-                locs[doc.id] = {
-                    lat: d.latitude ? parseFloat(d.latitude) : null,
-                    lng: d.longitude ? parseFloat(d.longitude) : null,
-                    velocidade: d.velocidade || 0,
-                    ultima: d.ultimaAtualizacao?.toDate ? d.ultimaAtualizacao.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "---"
-                };
+                // Verificação rigorosa de coordenadas para não bugar o Leaflet
+                const latitude = parseFloat(d.latitude);
+                const longitude = parseFloat(d.longitude);
+                
+                if (!isNaN(latitude) && !isNaN(longitude)) {
+                    locs[doc.id] = {
+                        lat: latitude,
+                        lng: longitude,
+                        velocidade: d.velocidade || 0,
+                        ultima: d.ultimaAtualizacao?.toDate ? d.ultimaAtualizacao.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "---"
+                    };
+                }
             });
             setLocalizacoes(locs);
         });
@@ -186,7 +203,7 @@ const DashboardGeral = () => {
                 </div>
                 <div style={styles.cardHeader}>
                     <MapPin size={20} color="#2ecc71" />
-                    <div><b style={{...styles.val, color: '#2ecc71'}}>{Object.keys(localizacoes).length}</b><br/><small style={styles.label}>ONLINE</small></div>
+                    <div><b style={{...styles.val, color: '#2ecc71'}}>{Object.keys(localizacoes).length}</b><br/><small style={styles.label}>COM GPS ATIVO</small></div>
                 </div>
                 <div style={styles.cardHeader}>
                     <Truck size={20} color="#3498db" />
@@ -223,15 +240,16 @@ const DashboardGeral = () => {
                     <MarkerClusterGroup>
                         {motoristasCadastrados.map((m) => {
                             const gps = getGPS(m);
-                            if (!gps) return null;
+                            if (!gps || !gps.lat || !gps.lng) return null;
                             const placas = getPlacasMotorista(m.id);
                             return (
                                 <Marker key={m.id} position={[gps.lat, gps.lng]} icon={caminhaoIcon}>
                                     <Popup>
                                         <div style={{color: '#000', fontSize: '12px'}}>
-                                            <strong>{m.nome.toUpperCase()}</strong><br/>
-                                            {placas.cavalo}<br/>
-                                            Visto em: {gps.ultima}
+                                            <strong style={{fontSize: '14px'}}>{m.nome.toUpperCase()}</strong><br/>
+                                            <b>Placa:</b> {placas.cavalo}<br/>
+                                            <b>Velocidade:</b> {gps.velocidade} km/h<br/>
+                                            <b>Atualizado:</b> {gps.ultima}
                                         </div>
                                     </Popup>
                                 </Marker>
@@ -274,7 +292,6 @@ const DashboardGeral = () => {
                                             </div>
                                         </td>
                                         
-                                        {/* COLUNA DE STATUS ESCALA MANUAL */}
                                         <td style={styles.td}>
                                             <select 
                                                 value={m.statusEscala || "SEM PROGRAMAÇÃO"}
@@ -298,7 +315,7 @@ const DashboardGeral = () => {
                                                     <div style={{ fontSize: '11px', color: gps ? '#2ecc71' : '#e74c3c', fontWeight: 'bold' }}>{gps ? 'ONLINE' : 'OFFLINE'}</div>
                                                     <div style={{ fontSize: '9px', color: '#444' }}>{gps?.ultima || '---'}</div>
                                                 </div>
-                                                <button onClick={() => forcarGPS(m.id)} style={styles.btnForce}>
+                                                <button onClick={() => forcarGPS(m.id)} style={styles.btnForce} title="Forçar Sinal GPS">
                                                     <RefreshCcw size={12} className={loadingGPS === m.id ? 'spin' : ''} />
                                                 </button>
                                             </div>
@@ -399,7 +416,7 @@ const styles = {
     tr: { borderBottom: '1px solid #111' },
     badgePlaca: { fontSize: '10px', color: '#FFD700', backgroundColor: '#1a1a1a', padding: '3px 7px', borderRadius: '5px', fontWeight: 'bold' },
     badgeVel: { fontSize: '10px', fontWeight: '800', padding: '4px 8px', borderRadius: '4px' },
-    btnForce: { background: '#111', border: '1px solid #222', padding: '6px', borderRadius: '6px', cursor: 'pointer', color: '#fff' },
+    btnForce: { background: '#111', border: '1px solid #222', padding: '6px', borderRadius: '6px', cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center' },
     actionBtn: { border: 'none', padding: '8px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
     overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 },
     modal: { backgroundColor: '#0a0a0a', padding: '25px', borderRadius: '20px', border: '1px solid #333', width: '95%', maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto' },

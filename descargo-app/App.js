@@ -77,6 +77,7 @@ const db = getFirestore(app);
 
 const LOCATION_TASK_NAME = 'background-location-task';
 
+// --- BACKGROUND TASK ---
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   if (error) return;
   if (data) {
@@ -97,7 +98,7 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }) => {
   }
 });
 
-// --- COMPONENTES AUXILIARES ---
+// --- COMPONENTES AUXILIARES INTERNOS ---
 
 const MapViewStatic = React.memo(({ html, webviewRef }) => {
   if (!html) return (
@@ -177,11 +178,11 @@ const ViagemCard = ({ cargaAtiva, chegouAoDestino, onOpenGoogleMaps }) => {
             </Text>
           </View>
           <Text style={styles.routeInfo} numberOfLines={1}>{cargaAtiva.destinoCliente || cargaAtiva.clienteEntrega || 'Destino'}</Text>
-          <View style={styles.cidadesContainer}>
+          <div style={styles.cidadesContainer}>
             {cargaAtiva.origemCidade && <Text style={styles.cidadeText}>{cargaAtiva.origemCidade}</Text>}
             <Text style={styles.setaCidades}> → </Text>
             {cargaAtiva.destinoCidade && <Text style={[styles.cidadeText, {color: '#2ecc71'}]}>{cargaAtiva.destinoCidade}</Text>}
-          </View>
+          </div>
         </View>
         <MaterialIcons name="location-on" size={30} color={chegouAoDestino ? "#2ecc71" : "#444"} />
       </View>
@@ -203,7 +204,6 @@ export default function App() {
   const [statusOperacional, setStatusOperacional] = useState('Sem programação');
   const [showConfirmacaoModal, setShowConfirmacaoModal] = useState(false);
   
-  // Controle de Bloqueio por Hodômetro
   const [solicitacaoHodometro, setSolicitacaoHodometro] = useState(false);
   const [hodometroInput, setHodometroInput] = useState('');
   const [enviandoKm, setEnviandoKm] = useState(false);
@@ -211,168 +211,7 @@ export default function App() {
   const webviewRef = useRef(null);
   const lastSolicitacaoStatus = useRef(false);
 
-  // Hooks do Projeto
-  const {
-    geofenceAtiva, rotaCoords, chegouAoDestino, confirmacaoPendente,
-    setChegouAoDestino, setConfirmacaoPendente, setRotaCoords
-  } = useGpseCercas(db, user, location, cargaAtiva, setCargaAtiva, viagemIniciada);
-
-  useMonitorarCargas({
-    db, user, viagemIniciada, cargaAtiva, setCargaAtiva, setViagemIniciada,
-    setChegouAoDestino, setConfirmacaoPendente, setShowConfirmacaoModal,
-    setStatusOperacional, sincronizarComFirestore: (extra) => sincronizarComFirestore(extra)
-  });
-
-  // --- FUNÇÃO CORRIGIDA: ENVIAR KM E LIBERAR APP ---
-  const enviarKmObrigatorio = async () => {
-    if (!hodometroInput.trim()) return Alert.alert("Atenção", "Por favor, informe o KM atual.");
-    
-    setEnviandoKm(true);
-    try {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      let cidade = "S/L";
-      if (status === 'granted') {
-        const loc = await Location.getCurrentPositionAsync({});
-        const geo = await Location.reverseGeocodeAsync(loc.coords);
-        if (geo.length > 0) cidade = geo[0].subregion || geo[0].city || "Cidade";
-      }
-
-      // 1. Grava no Histórico
-      await addDoc(collection(db, 'historico_jornadas'), {
-        motoristaId: user.uid,
-        motoristaNome: motoristaProfile?.nome || user.email,
-        tipo: 'LOG_SOLICITADO',
-        timestamp: serverTimestamp(),
-        km: parseFloat(hodometroInput.replace(',', '.')),
-        cidade: cidade
-      });
-
-      // 2. DESBLOQUEIA O APP NO FIRESTORE (AÇÃO CRUCIAL)
-      await updateDoc(doc(db, "configuracoes", "controle_app"), {
-        pedirHodometro: false
-      });
-
-      setHodometroInput('');
-      Alert.alert("Sucesso", "KM enviado! O aplicativo foi liberado.");
-      
-    } catch (e) {
-      console.log(e);
-      Alert.alert("Erro", "Falha ao enviar dados e liberar aplicativo.");
-    } finally {
-      setEnviandoKm(false);
-    }
-  };
-
-  // Listener para Solicitação de Hodômetro do Gestor
-  useEffect(() => {
-    if (!user) return;
-    const unsubStatus = onSnapshot(doc(db, "configuracoes", "controle_app"), (docSnap) => {
-      if (docSnap.exists()) {
-        const isPedindo = docSnap.data().pedirHodometro;
-        setSolicitacaoHodometro(isPedindo);
-
-        if (isPedindo && !lastSolicitacaoStatus.current) {
-          Vibration.vibrate([500, 200, 500, 200, 500]);
-          Notifications.scheduleNotificationAsync({
-            content: {
-              title: "⚠️ AÇÃO OBRIGATÓRIA",
-              body: "O gestor solicitou a atualização do seu KM.",
-              sound: true,
-              priority: Notifications.AndroidNotificationPriority.MAX,
-            },
-            trigger: null,
-          });
-        }
-        lastSolicitacaoStatus.current = isPedindo;
-      }
-    });
-    return () => unsubStatus();
-  }, [user]);
-
-  useEffect(() => {
-    (async () => {
-      const { status } = await Notifications.requestPermissionsAsync();
-      if (status === 'granted' && Platform.OS === 'android') {
-        await Notifications.setNotificationChannelAsync('default', {
-          name: 'default',
-          importance: Notifications.AndroidImportance.MAX,
-          vibrationPattern: [0, 250, 250, 250],
-          lightColor: '#FFD700',
-        });
-      }
-    })();
-  }, []);
-
-  useEffect(() => { 
-    const unsub = onAuthStateChanged(auth, async (u) => { 
-      if (u) {
-        setUser(u);
-        await buscarPerfilMotorista(u.uid);
-      } else {
-        setUser(null);
-        setMotoristaProfile(null);
-        setIsLoggedIn(false);
-      }
-    }); 
-    return unsub;
-  }, []);
-
-  const buscarPerfilMotorista = async (uid) => {
-    try {
-      const q = query(collection(db, "cadastro_motoristas"), where("uid", "==", uid));
-      const querySnapshot = await getDocs(q);
-      if (!querySnapshot.empty) {
-        setMotoristaProfile(querySnapshot.docs[0].data());
-        setIsLoggedIn(true);
-      } else {
-        signOut(auth);
-      }
-    } catch (error) { console.error("Erro busca perfil:", error); }
-  };
-
-  useEffect(() => { if (confirmacaoPendente) setShowConfirmacaoModal(true); }, [confirmacaoPendente]);
-  useEffect(() => { if (isLoggedIn) monitorarLocalizacao(); }, [isLoggedIn]);
-
-  const monitorarLocalizacao = async () => {
-    let { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
-    if (fgStatus !== 'granted') return;
-    
-    try {
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
-        accuracy: Location.Accuracy.High,
-        timeInterval: 30000,
-        distanceInterval: 15,
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: "Monitoramento Ativo",
-          notificationBody: "Sua localização está sendo transmitida.",
-          notificationColor: "#FFD700"
-        }
-      });
-    } catch (e) {}
-
-    await Location.watchPositionAsync({ 
-      accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 5 
-    }, async (loc) => {
-      if (loc.coords) {
-        const speedKmh = loc.coords.speed ? Math.round(loc.coords.speed * 3.6) : 0;
-        setLocation(loc.coords); 
-        setCurrentSpeed(speedKmh < 0 ? 0 : speedKmh);
-        webviewRef.current?.postMessage(JSON.stringify({ type: 'updateLoc', lat: loc.coords.latitude, lng: loc.coords.longitude }));
-        
-        let cidade = "---", uf = "";
-        try {
-          const geo = await Location.reverseGeocodeAsync({ latitude: loc.coords.latitude, longitude: loc.coords.longitude });
-          if (geo.length > 0) {
-            cidade = geo[0].subregion || geo[0].city || "Desconhecido";
-            uf = geo[0].region || "";
-          }
-        } catch (e) {}
-        sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, velocidade: speedKmh, cidade, uf });
-      }
-    });
-  };
-
+  // --- SINCRONIZAÇÃO COM FIRESTORE ---
   const sincronizarComFirestore = async (extra = {}) => {
     if (!auth.currentUser || !motoristaProfile) return;
     try {
@@ -390,22 +229,125 @@ export default function App() {
         viagemIniciada: viagemIniciada
       };
       await setDoc(doc(db, "localizacao_realtime", auth.currentUser.uid), dados, { merge: true });
-    } catch (e) {}
+    } catch (e) { console.log("Erro sincronia:", e); }
   };
 
-  const confirmarChegada = async () => {
+  // --- HOOKS DE MONITORAMENTO E GPS ---
+  const {
+    geofenceAtiva, rotaCoords, chegouAoDestino, confirmacaoPendente,
+    setChegouAoDestino, setConfirmacaoPendente, setRotaCoords
+  } = useGpseCercas(db, user, location, cargaAtiva, setCargaAtiva, viagemIniciada);
+
+  useMonitorarCargas({
+    db, user, viagemIniciada, cargaAtiva, setCargaAtiva, setViagemIniciada,
+    setChegouAoDestino, setConfirmacaoPendente, setShowConfirmacaoModal,
+    setStatusOperacional, sincronizarComFirestore
+  });
+
+  // --- TRAVA DE HODÔMETRO ---
+  const enviarKmObrigatorio = async () => {
+    if (!hodometroInput.trim()) return Alert.alert("Atenção", "Informe o KM atual.");
+    setEnviandoKm(true);
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      let cidade = "S/L";
+      if (status === 'granted') {
+        const loc = await Location.getCurrentPositionAsync({});
+        const geo = await Location.reverseGeocodeAsync(loc.coords);
+        if (geo.length > 0) cidade = geo[0].subregion || geo[0].city || "Cidade";
+      }
+
+      await addDoc(collection(db, 'historico_jornadas'), {
+        motoristaId: user.uid,
+        motoristaNome: motoristaProfile?.nome || user.email,
+        tipo: 'LOG_SOLICITADO',
+        timestamp: serverTimestamp(),
+        km: parseFloat(hodometroInput.replace(',', '.')),
+        cidade: cidade
+      });
+
+      await updateDoc(doc(db, "configuracoes", "controle_app"), { pedirHodometro: false });
+      setHodometroInput('');
+      Alert.alert("Sucesso", "KM enviado! Aplicativo liberado.");
+    } catch (e) {
+      Alert.alert("Erro", "Falha ao enviar dados.");
+    } finally {
+      setEnviandoKm(false);
+    }
+  };
+
+  // --- LISTENERS DE AUTH E STATUS ---
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, async (u) => { 
+      if (u) {
+        setUser(u);
+        const q = query(collection(db, "cadastro_motoristas"), where("uid", "==", u.uid));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          setMotoristaProfile(snap.docs[0].data());
+          setIsLoggedIn(true);
+        } else { signOut(auth); }
+      } else {
+        setUser(null); setIsLoggedIn(false);
+      }
+    }); 
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const unsub = onSnapshot(doc(db, "configuracoes", "controle_app"), (docSnap) => {
+      if (docSnap.exists()) {
+        const isPedindo = docSnap.data().pedirHodometro;
+        setSolicitacaoHodometro(isPedindo);
+        if (isPedindo && !lastSolicitacaoStatus.current) {
+          Vibration.vibrate([500, 200, 500]);
+        }
+        lastSolicitacaoStatus.current = isPedindo;
+      }
+    });
+    return () => unsub();
+  }, [user]);
+
+  // --- MONITORAMENTO GPS ---
+  useEffect(() => {
+    if (isLoggedIn) {
+      (async () => {
+        let { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        
+        await Location.watchPositionAsync({ 
+          accuracy: Location.Accuracy.High, timeInterval: 5000, distanceInterval: 5 
+        }, async (loc) => {
+          const speedKmh = loc.coords.speed ? Math.round(loc.coords.speed * 3.6) : 0;
+          setLocation(loc.coords); 
+          setCurrentSpeed(speedKmh < 0 ? 0 : speedKmh);
+          webviewRef.current?.postMessage(JSON.stringify({ type: 'updateLoc', lat: loc.coords.latitude, lng: loc.coords.longitude }));
+          
+          let cidade = "---", uf = "";
+          try {
+            const geo = await Location.reverseGeocodeAsync(loc.coords);
+            if (geo.length > 0) { cidade = geo[0].city || geo[0].subregion; uf = geo[0].region; }
+          } catch (e) {}
+          sincronizarComFirestore({ latitude: loc.coords.latitude, longitude: loc.coords.longitude, velocidade: speedKmh, cidade, uf });
+        });
+      })();
+    }
+  }, [isLoggedIn]);
+
+  const confirmarChegadaFinal = async () => {
     if (!cargaAtiva) return;
     setShowConfirmacaoModal(false);
     try {
       await updateDoc(doc(db, "ordens_servico", cargaAtiva.id), { 
-        finalizada: true, confirmacaoPendente: false, status: 'FINALIZADA', 
-        dataFinalizacao: serverTimestamp() 
+        finalizada: true, status: 'FINALIZADA', dataFinalizacao: serverTimestamp() 
       });
       setCargaAtiva(null); setViagemIniciada(false); setRotaCoords([]);
-      Alert.alert("Sucesso", "Viagem finalizada.");
+      Alert.alert("Sucesso", "Viagem finalizada com sucesso!");
     } catch (error) { Alert.alert("Erro", "Falha ao finalizar."); }
   };
 
+  // --- MAP HTML ---
   const mapHtml = useMemo(() => {
     if (!location) return null;
     const dest = geofenceAtiva?.centro || (rotaCoords.length > 0 ? {lat: rotaCoords[rotaCoords.length-1].latitude, lng: rotaCoords[rotaCoords.length-1].longitude} : null);
@@ -421,7 +363,7 @@ export default function App() {
         var marker = L.marker([${location.latitude}, ${location.longitude}], {
           icon: L.divIcon({ html: '<div style="background:#FFD700; width:14px; height:14px; border-radius:50%; border:3px solid #fff;"></div>', className: '', iconSize: [14, 14] })
         }).addTo(map);
-        ${dest ? `L.circle([${dest.lat}, ${dest.lng}], { radius: ${geofenceAtiva?.raio || 300}, color: '${chegouAoDestino ? '#2ecc71' : '#FFD700'}', weight: 2, fillOpacity: 0.15 }).addTo(map);` : ''}
+        ${dest ? `L.circle([${dest.lat || dest.latitude}, ${dest.lng || dest.longitude}], { radius: ${geofenceAtiva?.raio || 300}, color: '${chegouAoDestino ? '#2ecc71' : '#FFD700'}', weight: 2, fillOpacity: 0.15 }).addTo(map);` : ''}
         ${rotaCoords.length > 0 ? `L.polyline(${JSON.stringify(rotaCoords.map(c => [c.latitude, c.longitude]))}, {color: '#FFD700', weight: 4}).addTo(map);` : ''}
         window.addEventListener('message', function(e) {
           var d = JSON.parse(e.data);
@@ -430,7 +372,7 @@ export default function App() {
         });
       </script></body></html>
     `;
-  }, [location === null, rotaCoords, chegouAoDestino]);
+  }, [location === null, rotaCoords, chegouAoDestino, geofenceAtiva]);
 
   if (!isLoggedIn) return <TelaLogin onLogin={async (e, p) => signInWithEmailAndPassword(auth, e, p)} />;
 
@@ -438,20 +380,13 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar barStyle="light-content" translucent backgroundColor="transparent" />
       
-      {/* MODAL DE TRAVA TOTAL (HODÔMETRO) */}
-      <Modal 
-        visible={solicitacaoHodometro} 
-        transparent={false} 
-        animationType="slide"
-        onRequestClose={() => {}}
-      >
+      {/* MODAL DE TRAVA HODÔMETRO */}
+      <Modal visible={solicitacaoHodometro} transparent={false} animationType="slide">
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.lockScreen}>
-          <StatusBar barStyle="dark-content" backgroundColor="#FFD700" />
           <View style={styles.lockContent}>
             <MaterialCommunityIcons name="gauge" size={100} color="#000" />
             <Text style={styles.lockTitle}>HODÔMETRO SOLICITADO</Text>
             <Text style={styles.lockSub}>Informe o KM atual para liberar o aplicativo.</Text>
-            
             <TextInput 
               style={styles.lockInput}
               placeholder="000000"
@@ -461,20 +396,9 @@ export default function App() {
               onChangeText={setHodometroInput}
               autoFocus
             />
-
-            <TouchableOpacity 
-              style={[styles.lockBtn, { opacity: enviandoKm ? 0.7 : 1 }]} 
-              onPress={enviarKmObrigatorio}
-              disabled={enviandoKm}
-            >
-              {enviandoKm ? (
-                <ActivityIndicator color="#FFD700" />
-              ) : (
-                <Text style={styles.lockBtnText}>ENVIAR AGORA</Text>
-              )}
+            <TouchableOpacity style={styles.lockBtn} onPress={enviarKmObrigatorio} disabled={enviandoKm}>
+              {enviandoKm ? <ActivityIndicator color="#FFD700" /> : <Text style={styles.lockBtnText}>ENVIAR AGORA</Text>}
             </TouchableOpacity>
-
-            <Text style={styles.lockFooter}>⚠️ O uso está bloqueado até a informação do KM.</Text>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -501,8 +425,9 @@ export default function App() {
         )}
       </View>
 
-      <ConfirmacaoChegadaModal visible={showConfirmacaoModal} onConfirm={confirmarChegada} onCancel={() => setShowConfirmacaoModal(false)} cargaAtiva={cargaAtiva} />
+      <ConfirmacaoChegadaModal visible={showConfirmacaoModal} onConfirm={confirmarChegadaFinal} onCancel={() => setShowConfirmacaoModal(false)} cargaAtiva={cargaAtiva} />
 
+      {/* NAVEGAÇÃO */}
       <View style={styles.floatingNavContainer}>
         <View style={styles.floatingNav}>
           {[
@@ -526,17 +451,13 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   loadingContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  
-  // ESTILOS DA TRAVA
   lockScreen: { flex: 1, backgroundColor: '#FFD700', justifyContent: 'center', alignItems: 'center', padding: 30 },
   lockContent: { width: '100%', alignItems: 'center' },
   lockTitle: { fontSize: 22, fontWeight: '900', color: '#000', marginTop: 20, textAlign: 'center' },
   lockSub: { fontSize: 14, color: '#000', textAlign: 'center', marginTop: 10, marginBottom: 40, opacity: 0.8, fontWeight: '600' },
   lockInput: { backgroundColor: '#000', color: '#FFD700', width: '100%', borderRadius: 15, padding: 20, fontSize: 40, textAlign: 'center', fontWeight: 'bold', marginBottom: 20 },
-  lockBtn: { backgroundColor: '#000', width: '100%', padding: 22, borderRadius: 15, alignItems: 'center', elevation: 10, shadowColor: '#000', shadowOpacity: 0.3, shadowRadius: 5 },
+  lockBtn: { backgroundColor: '#000', width: '100%', padding: 22, borderRadius: 15, alignItems: 'center', elevation: 10 },
   lockBtnText: { color: '#FFD700', fontSize: 18, fontWeight: '900' },
-  lockFooter: { marginTop: 30, color: '#000', fontSize: 11, fontWeight: 'bold', opacity: 0.5 },
-
   speedometerContainer: { 
     position: 'absolute', top: 50, right: 20, width: 65, height: 65, 
     backgroundColor: 'rgba(0,0,0,0.8)', borderRadius: 35, borderWidth: 2, 

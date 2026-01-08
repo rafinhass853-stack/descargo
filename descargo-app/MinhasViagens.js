@@ -1,243 +1,189 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  FlatList, 
-  ActivityIndicator, 
-  TouchableOpacity,
-  Dimensions,
-  Platform
+  View, Text, StyleSheet, FlatList, ActivityIndicator, 
+  SafeAreaView, StatusBar, Linking, TouchableOpacity, Alert, Image, Modal
 } from 'react-native';
-import { 
-  collection, 
-  query, 
-  where, 
-  onSnapshot 
-} from 'firebase/firestore';
-import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
+import { collection, query, onSnapshot, doc, updateDoc, where } from 'firebase/firestore';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export default function MinhasViagens({ auth, db }) {
   const [loading, setLoading] = useState(true);
-  const [todasViagens, setTodasViagens] = useState([]);
-  const [filtroAtivo, setFiltroAtivo] = useState('TUDO');
+  const [viagens, setViagens] = useState([]);
+  const [abaAtiva, setAbaAtiva] = useState('ativas'); // 'ativas' ou 'historico'
+  const [uploading, setUploading] = useState(false);
+  const [modalImagem, setModalImagem] = useState(null);
 
   useEffect(() => {
-    if (!auth.currentUser) return;
-
-    const q = query(
-      collection(db, "ordens_servico"),
-      where("motoristaId", "==", auth.currentUser.uid)
-    );
-
+    // Buscamos todas as viagens. Filtramos localmente ou por query se preferir.
+    const q = query(collection(db, "viagens_ativas"));
+    
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const lista = [];
       snapshot.forEach((doc) => {
         lista.push({ id: doc.id, ...doc.data() });
       });
-
-      lista.sort((a, b) => {
-        const dataA = a.aceitoEm?.seconds || 0;
-        const dataB = b.aceitoEm?.seconds || 0;
-        return dataB - dataA;
-      });
-
-      setTodasViagens(lista);
-      setLoading(false);
-    }, (error) => {
-      console.error("Erro ao carregar histórico:", error);
+      setViagens(lista);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  const dadosFiltrados = useMemo(() => {
-    const agora = new Date();
-    const hoje = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate()).getTime();
-    
-    const filtradas = todasViagens.filter(v => {
-      if (!v.aceitoEm) return filtroAtivo === 'TUDO';
-      const dataViagem = v.aceitoEm.toDate().getTime();
+  // Filtragem das viagens conforme a aba selecionada
+  const viagensExibidas = viagens.filter(v => {
+    if (abaAtiva === 'ativas') return !v.urlCanhoto; // Sem canhoto = Ativa
+    return !!v.urlCanhoto; // Com canhoto = Finalizada/Histórico
+  });
 
-      if (filtroAtivo === 'HOJE') return dataViagem >= hoje;
-      if (filtroAtivo === '7DIAS') return dataViagem >= (agora - 7 * 24 * 60 * 60 * 1000);
-      if (filtroAtivo === '30DIAS') return dataViagem >= (agora - 30 * 24 * 60 * 60 * 1000);
-      return true;
-    });
+  const enviarCanhoto = async (viagemId) => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert("Erro", "Precisamos de permissão para a câmera.");
+      return;
+    }
 
-    let aceitas = 0;
-    let recusadas = 0;
-    filtradas.forEach(v => {
-      if (v.status === "ACEITO" || v.status === "CONCLUÍDO") aceitas++;
-      if (v.status === "RECUSADO") recusadas++;
-    });
+    const result = await ImagePicker.launchCameraAsync({ allowsEditing: true, quality: 0.5 });
 
-    const total = aceitas + recusadas;
-    const taxa = total > 0 ? ((aceitas / total) * 100).toFixed(1) : 0;
-
-    return { lista: filtradas, aceitas, recusadas, taxa };
-  }, [todasViagens, filtroAtivo]);
-
-  const renderItem = ({ item }) => {
-    const temInstrucoes = item.trajetoComInstrucoes && item.trajetoComInstrucoes.length > 0;
-    
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) }]}>
-            <Text style={styles.badgeText}>{item.status}</Text>
-          </View>
-          <Text style={styles.dtText}>DT: {item.dt || '---'}</Text>
-        </View>
+    if (!result.canceled) {
+      setUploading(true);
+      try {
+        const response = await fetch(result.assets[0].uri);
+        const blob = await response.blob();
+        const storage = getStorage();
+        const fileRef = ref(storage, `canhotos/${viagemId}.jpg`);
         
-        <Text style={styles.clienteText}>{item.destinoCliente || item.cliente_destino}</Text>
-        
-        {/* Info adicional */}
-        <View style={styles.extraInfo}>
-          <View style={styles.infoRow}>
-            <MaterialCommunityIcons name="map-marker" size={14} color="#666" />
-            <Text style={styles.extraText}>{item.destinoCidade || item.cidade_destino}</Text>
-          </View>
-          
-          {item.peso && (
-            <View style={styles.infoRow}>
-              <MaterialCommunityIcons name="weight" size={14} color="#666" />
-              <Text style={styles.extraText}>{item.peso}</Text>
-            </View>
-          )}
-          
-          {temInstrucoes && (
-            <View style={[styles.infoRow, {marginLeft: 'auto'}]}>
-              <Ionicons name="volume-high" size={14} color="#FFD700" />
-              <Text style={[styles.extraText, {color: '#FFD700'}]}>
-                {item.trajetoComInstrucoes.length} instruções
-              </Text>
-            </View>
-          )}
-        </View>
-        
-        <View style={styles.cardFooter}>
-          <MaterialCommunityIcons name="calendar-clock" size={14} color="#666" />
-          <Text style={styles.dateText}>
-            {item.aceitoEm?.toDate().toLocaleString('pt-BR') || 'Aguardando...'}
-          </Text>
-        </View>
-      </View>
-    );
-  };
+        await uploadBytes(fileRef, blob);
+        const photoUrl = await getDownloadURL(fileRef);
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'CONCLUÍDO': return '#2ecc71';
-      case 'ACEITO': return '#FFD700';
-      case 'RECUSADO': return '#ff4d4d';
-      case 'PENDENTE ACEITE': return '#3498db';
-      default: return '#333';
+        await updateDoc(doc(db, "viagens_ativas", viagemId), {
+          urlCanhoto: photoUrl,
+          statusOperacional: "FINALIZADA",
+          dataFinalizacao: new Date().toISOString()
+        });
+
+        Alert.alert("Sucesso", "Viagem finalizada com sucesso!");
+      } catch (error) {
+        Alert.alert("Erro", "Falha no envio.");
+      } finally {
+        setUploading(false);
+      }
     }
   };
 
-  const FilterButton = ({ label, id }) => (
-    <TouchableOpacity 
-      style={[styles.filterBtn, filtroAtivo === id && styles.filterBtnActive]} 
-      onPress={() => setFiltroAtivo(id)}
-    >
-      <Text style={[styles.filterBtnText, filtroAtivo === id && styles.filterBtnTextActive]}>{label}</Text>
-    </TouchableOpacity>
+  const renderItem = ({ item }) => (
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <View style={[styles.statusBadge, { backgroundColor: item.urlCanhoto ? '#2ecc71' : '#FFD700' }]}>
+          <Text style={styles.statusText}>{item.statusOperacional}</Text>
+        </View>
+        <Text style={styles.dtLabel}>DT: {item.dt}</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>CLIENTE</Text>
+        <Text style={styles.mainInfo}>{item.clienteEntrega}</Text>
+        <Text style={styles.subInfo}>{item.destinoCidade}</Text>
+      </View>
+
+      <View style={styles.actionArea}>
+        {item.urlCanhoto ? (
+          <TouchableOpacity 
+            style={styles.btnVisualizar} 
+            onPress={() => setModalImagem(item.urlCanhoto)}
+          >
+            <MaterialCommunityIcons name="image-search" size={20} color="#FFD700" />
+            <Text style={styles.btnVisualizarText}>VER CANHOTO ENVIADO</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity 
+            style={styles.btnCanhoto} 
+            onPress={() => enviarCanhoto(item.id)}
+            disabled={uploading}
+          >
+            {uploading ? <ActivityIndicator color="#000" /> : (
+              <>
+                <MaterialCommunityIcons name="camera" size={20} color="#000" />
+                <Text style={styles.btnCanhotoText}>ENTREGAR CANHOTOS</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
   );
 
-  if (loading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator color="#FFD700" size="large" />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      {/* Seletor de Filtros */}
-      <View style={styles.filterBar}>
-        <FilterButton label="Tudo" id="TUDO" />
-        <FilterButton label="Hoje" id="HOJE" />
-        <FilterButton label="7 Dias" id="7DIAS" />
-        <FilterButton label="30 Dias" id="30DIAS" />
-      </View>
-
-      {/* Header de Estatísticas */}
-      <View style={styles.statsContainer}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>{dadosFiltrados.aceitas}</Text>
-          <Text style={styles.statLabel}>ACEITAS</Text>
-        </View>
-        <View style={[styles.statBox, styles.statDivider]}>
-          <Text style={[styles.statValue, { color: '#FFD700' }]}>{dadosFiltrados.taxa}%</Text>
-          <Text style={styles.statLabel}>TAXA ACEITE</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={[styles.statValue, { color: '#ff4d4d' }]}>{dadosFiltrados.recusadas}</Text>
-          <Text style={styles.statLabel}>RECUSADAS</Text>
+    <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      
+      {/* HEADER E ABAS */}
+      <View style={styles.header}>
+        <Text style={styles.title}>MINHAS VIAGENS</Text>
+        <View style={styles.tabBar}>
+          <TouchableOpacity 
+            style={[styles.tab, abaAtiva === 'ativas' && styles.tabAtiva]} 
+            onPress={() => setAbaAtiva('ativas')}
+          >
+            <Text style={[styles.tabText, abaAtiva === 'ativas' && styles.tabTextAtivo]}>ATIVAS</Text>
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={[styles.tab, abaAtiva === 'historico' && styles.tabAtiva]} 
+            onPress={() => setAbaAtiva('historico')}
+          >
+            <Text style={[styles.tabText, abaAtiva === 'historico' && styles.tabTextAtivo]}>HISTÓRICO</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>
-        {filtroAtivo === 'TUDO' ? 'HISTÓRICO COMPLETO' : `VIAGENS: ${filtroAtivo}`}
-      </Text>
+      {loading ? (
+        <ActivityIndicator size="large" color="#FFD700" style={{ marginTop: 50 }} />
+      ) : (
+        <FlatList
+          data={viagensExibidas}
+          keyExtractor={item => item.id}
+          renderItem={renderItem}
+          contentContainerStyle={{ padding: 15 }}
+          ListEmptyComponent={<Text style={styles.empty}>Nenhuma viagem encontrada.</Text>}
+        />
+      )}
 
-      <FlatList
-        data={dadosFiltrados.lista}
-        keyExtractor={(item) => item.id}
-        renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons name="clipboard-off-outline" size={40} color="#222" />
-            <Text style={styles.emptyText}>Nenhuma viagem neste período.</Text>
-          </View>
-        }
-      />
-    </View>
+      {/* MODAL PARA VER A FOTO AMPLIADA */}
+      <Modal visible={!!modalImagem} transparent={true} animationType="fade">
+        <View style={styles.modalContainer}>
+          <TouchableOpacity style={styles.modalClose} onPress={() => setModalImagem(null)}>
+            <MaterialCommunityIcons name="close-circle" size={40} color="#FFF" />
+          </TouchableOpacity>
+          {modalImagem && <Image source={{ uri: modalImagem }} style={styles.fullImage} resizeMode="contain" />}
+        </View>
+      </Modal>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 20 },
-  filterBar: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 15, marginBottom: 10 },
-  filterBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 20, backgroundColor: '#111', borderWidth: 1, borderColor: '#222' },
-  filterBtnActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  filterBtnText: { color: '#666', fontSize: 11, fontWeight: 'bold' },
-  filterBtnTextActive: { color: '#000' },
-  
-  statsContainer: { 
-    flexDirection: 'row', 
-    backgroundColor: '#111', 
-    borderRadius: 20, 
-    padding: 20, 
-    marginTop: 10,
-    borderWidth: 1,
-    borderColor: '#222',
-    elevation: 5
-  },
-  statBox: { flex: 1, alignItems: 'center' },
-  statDivider: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: '#222' },
-  statValue: { color: '#FFF', fontSize: 20, fontWeight: '900' },
-  statLabel: { color: '#666', fontSize: 10, fontWeight: 'bold', marginTop: 5 },
-  
-  sectionTitle: { color: '#444', fontSize: 10, fontWeight: '900', marginTop: 25, marginBottom: 15, letterSpacing: 1 },
-  listContent: { paddingBottom: 120 },
-  
-  card: { backgroundColor: '#0A0A0A', borderRadius: 15, padding: 15, marginBottom: 12, borderWidth: 1, borderColor: '#1a1a1a' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  dtText: { color: '#FFD700', fontWeight: 'bold', fontSize: 12 },
-  badge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 5 },
-  badgeText: { color: '#000', fontSize: 9, fontWeight: 'bold' },
-  clienteText: { color: '#FFF', fontSize: 15, fontWeight: 'bold', marginBottom: 10 },
-  extraInfo: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 10 },
-  infoRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  extraText: { color: '#666', fontSize: 11 },
-  cardFooter: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  dateText: { color: '#444', fontSize: 11 },
-  emptyContainer: { alignItems: 'center', marginTop: 50 },
-  emptyText: { color: '#222', textAlign: 'center', marginTop: 10, fontSize: 12 }
+  container: { flex: 1, backgroundColor: '#000' },
+  header: { backgroundColor: '#050505', borderBottomWidth: 1, borderBottomColor: '#111' },
+  title: { color: '#FFF', fontSize: 20, fontWeight: '900', padding: 20, textAlign: 'center' },
+  tabBar: { flexDirection: 'row', height: 50 },
+  tab: { flex: 1, justifyContent: 'center', alignItems: 'center', borderBottomWidth: 2, borderBottomColor: 'transparent' },
+  tabAtiva: { borderBottomColor: '#FFD700' },
+  tabText: { color: '#444', fontWeight: 'bold' },
+  tabTextAtivo: { color: '#FFD700' },
+  card: { backgroundColor: '#0A0A0A', borderRadius: 15, padding: 20, marginBottom: 20, borderWidth: 1, borderColor: '#1A1A1A' },
+  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
+  statusBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 },
+  statusText: { color: '#000', fontSize: 10, fontWeight: '900' },
+  dtLabel: { color: '#FFF', fontWeight: 'bold' },
+  mainInfo: { color: '#FFF', fontSize: 16, fontWeight: 'bold' },
+  subInfo: { color: '#888', fontSize: 13 },
+  actionArea: { marginTop: 15, borderTopWidth: 1, borderTopColor: '#111', paddingTop: 15 },
+  btnCanhoto: { backgroundColor: '#FFD700', flexDirection: 'row', justifyContent: 'center', padding: 12, borderRadius: 8, gap: 10 },
+  btnCanhotoText: { color: '#000', fontWeight: '900' },
+  btnVisualizar: { borderWidth: 1, borderColor: '#FFD700', flexDirection: 'row', justifyContent: 'center', padding: 12, borderRadius: 8, gap: 10 },
+  btnVisualizarText: { color: '#FFD700', fontWeight: 'bold' },
+  empty: { color: '#333', textAlign: 'center', marginTop: 50 },
+  modalContainer: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' },
+  modalClose: { position: 'absolute', top: 50, right: 20, zIndex: 10 },
+  fullImage: { width: '95%', height: '80%' }
 });
