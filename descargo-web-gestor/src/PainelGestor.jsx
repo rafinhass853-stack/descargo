@@ -5,7 +5,7 @@ import { collection, onSnapshot, query } from "firebase/firestore";
 import { 
     Truck, Users, LayoutDashboard, ClipboardList, 
     LogOut, Fuel, Settings, UserCheck, Bell, Container,
-    MapPin, FileText, Route, CalendarDays, Gauge 
+    MapPin, FileText, Route, CalendarDays, Gauge, History 
 } from 'lucide-react';
 
 // Importação das Telas de Operação
@@ -19,6 +19,7 @@ import Folgas from './Folgas';
 import Roteirizacao from './Roteirizacao';
 import Escala from './Escala';
 import JornadaHodometro from './JornadaHodometro';
+import HistoricoViagens from './HistoricoViagens'; // Novo componente
 
 // Importação dos Dashboards
 import DashboardGeral from './DashboardGeral';
@@ -61,6 +62,9 @@ const PainelGestor = () => {
                             styles={styles} 
                         />;
             
+            case 'historico':
+                return <HistoricoViagens />;
+            
             case 'relatorio_viagens':
                 return <DashboardCargas />;
             
@@ -77,7 +81,7 @@ const PainelGestor = () => {
             case 'veiculos': return <Veiculos />;
             case 'carretas': return <Carretas />;
             case 'motoristas': return <Motoristas />;
-            case 'clientes_pontos': return <ClientesPontos />; // REATIVADO
+            case 'clientes_pontos': return <ClientesPontos />;
             case 'notificacoes': return <Notificacoes />;
             case 'folgas': return <Folgas />;
             default: return <div style={{color: '#666', padding: '20px'}}>Em desenvolvimento...</div>;
@@ -89,8 +93,13 @@ const PainelGestor = () => {
             <aside style={styles.sidebar}>
                 <h1 style={styles.logo}>DESCARGO</h1>
                 <nav style={styles.nav}>
+                    {/* SEÇÃO PRINCIPAL */}
                     <div onClick={() => setMenuAtivo('dashboard')} style={menuAtivo === 'dashboard' ? styles.navItemAtivo : styles.navItem}>
                         <LayoutDashboard size={18} /> Monitoramento
+                    </div>
+
+                    <div onClick={() => setMenuAtivo('historico')} style={menuAtivo === 'historico' ? styles.navItemAtivo : styles.navItem}>
+                        <History size={18} /> Histórico de Viagens
                     </div>
 
                     <div onClick={() => setMenuAtivo('escala')} style={menuAtivo === 'escala' ? styles.navItemAtivo : styles.navItem}>
@@ -101,9 +110,9 @@ const PainelGestor = () => {
                         <Gauge size={18} /> Jornada e Hodômetro
                     </div>
 
-                    <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
+                    <hr style={styles.divider} />
 
-                    {/* MENU REATIVADO ABAIXO */}
+                    {/* SEÇÃO CADASTROS E FROTA */}
                     <div onClick={() => setMenuAtivo('clientes_pontos')} style={menuAtivo === 'clientes_pontos' ? styles.navItemAtivo : styles.navItem}>
                         <MapPin size={18} /> Clientes e Pontos
                     </div>
@@ -111,20 +120,26 @@ const PainelGestor = () => {
                     <div onClick={() => setMenuAtivo('veiculos')} style={menuAtivo === 'veiculos' ? styles.navItemAtivo : styles.navItem}>
                         <Truck size={18} /> Veículos
                     </div>
+
                     <div onClick={() => setMenuAtivo('carretas')} style={menuAtivo === 'carretas' ? styles.navItemAtivo : styles.navItem}>
                         <Container size={18} /> Carretas
                     </div>
+
                     <div onClick={() => setMenuAtivo('motoristas')} style={menuAtivo === 'motoristas' ? styles.navItemAtivo : styles.navItem}>
                         <Users size={18} /> Motoristas ({totalMotoristas})
                     </div>
                     
-                    <hr style={{ border: '0.1px solid #222', margin: '10px 0' }} />
+                    <hr style={styles.divider} />
                     
+                    {/* SEÇÃO SUPORTE */}
                     <div onClick={() => setMenuAtivo('notificacoes')} style={menuAtivo === 'notificacoes' ? styles.navItemAtivo : styles.navItem}>
                         <Bell size={18} />Notificações
                     </div>
                 </nav>
-                <button onClick={handleLogout} style={styles.btnSair}><LogOut size={18} /> Sair</button>
+
+                <button onClick={handleLogout} style={styles.btnSair}>
+                    <LogOut size={18} /> Sair
+                </button>
             </aside>
 
             <main style={styles.main}>
@@ -146,6 +161,7 @@ const styles = {
     nav: { flex: 1, display: 'flex', flexDirection: 'column', gap: '5px', overflowY: 'auto' },
     navItem: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', color: '#888', cursor: 'pointer', fontSize: '14px', borderRadius: '8px', transition: '0.2s' },
     navItemAtivo: { display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', color: '#000', backgroundColor: '#FFD700', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' },
+    divider: { border: '0', borderTop: '1px solid #222', margin: '10px 0' },
     btnSair: { display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', color: '#ff4d4d', border: 'none', cursor: 'pointer', padding: '10px', marginTop: 'auto' },
     main: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 },
     header: { height: '60px', borderBottom: '1px solid #222', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '0 30px', color: '#444', fontSize: '11px' },

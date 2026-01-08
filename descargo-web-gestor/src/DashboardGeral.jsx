@@ -6,8 +6,9 @@ import {
 } from 'lucide-react';
 import L from 'leaflet';
 import { db } from "./firebase";
-import { collection, onSnapshot, query, orderBy, doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
 
+// Importação de estilos CSS necessários
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
@@ -23,7 +24,9 @@ const caminhaoIcon = new L.Icon({
 const ChangeView = ({ center, zoom }) => {
     const map = useMap();
     useEffect(() => {
-        if (center && center[0] && center[1]) map.flyTo(center, zoom, { duration: 1.5 });
+        if (center && center[0] && center[1]) {
+            map.flyTo(center, zoom, { duration: 1.5 });
+        }
     }, [center, zoom, map]);
     return null;
 };
@@ -31,7 +34,6 @@ const ChangeView = ({ center, zoom }) => {
 const DashboardGeral = () => {
     const [motoristasCadastrados, setMotoristasCadastrados] = useState([]);
     const [veiculos, setVeiculos] = useState([]);
-    const [carretas, setCarretas] = useState([]);
     const [localizacoes, setLocalizacoes] = useState({});
     const [cercas, setCercas] = useState([]);
     const [mapFocus, setMapFocus] = useState({ center: [-21.78, -48.17], zoom: 6 });
@@ -41,20 +43,21 @@ const DashboardGeral = () => {
     const [modalViagem, setModalViagem] = useState(false);
     const [motSelecionado, setMotSelecionado] = useState(null);
     const [dadosViagem, setDadosViagem] = useState({
-        dt: '',
-        dataColeta: '',
-        clienteColeta: '',
-        cidadeColeta: '', // Novo campo automático
-        linkColeta: '',
-        destinoCidade: '', // Automático pelo cliente entrega
-        clienteEntrega: '',
-        dataEntrega: '',
-        linkEntrega: '',
-        observacao: '',
-        filial: '1'
+        dt: '', dataColeta: '', clienteColeta: '', cidadeColeta: '',
+        linkColeta: '', destinoCidade: '', clienteEntrega: '',
+        dataEntrega: '', linkEntrega: '', observacao: '', filial: '1'
     });
 
-    // LÓGICA DE AUTO-DADOS (LINK E CIDADE)
+    // FUNÇÃO PARA ALTERAR STATUS MANUALMENTE NO GRID
+    const alterarStatusEscala = async (motoristaId, novoStatus) => {
+        try {
+            const motRef = doc(db, "cadastro_motoristas", motoristaId);
+            await updateDoc(motRef, { statusEscala: novoStatus });
+        } catch (e) {
+            console.error("Erro ao atualizar status:", e);
+        }
+    };
+
     const aoMudarCliente = (tipo, clienteNome) => {
         const clienteDados = cercas.find(c => c.cliente === clienteNome);
         let linkGerado = '';
@@ -69,26 +72,13 @@ const DashboardGeral = () => {
                 lat = clienteDados.geofence.coordenadas[0].lat;
                 lng = clienteDados.geofence.coordenadas[0].lng;
             }
-
-            if (lat && lng) {
-                linkGerado = `https://www.google.com/maps?q=${lat},${lng}`;
-            }
+            if (lat && lng) linkGerado = `https://www.google.com/maps?q=${lat},${lng}`;
         }
 
         if (tipo === 'COLETA') {
-            setDadosViagem(prev => ({ 
-                ...prev, 
-                clienteColeta: clienteNome, 
-                linkColeta: linkGerado,
-                cidadeColeta: cidadeCadastrada 
-            }));
+            setDadosViagem(prev => ({ ...prev, clienteColeta: clienteNome, linkColeta: linkGerado, cidadeColeta: cidadeCadastrada }));
         } else {
-            setDadosViagem(prev => ({ 
-                ...prev, 
-                clienteEntrega: clienteNome, 
-                linkEntrega: linkGerado,
-                destinoCidade: cidadeCadastrada 
-            }));
+            setDadosViagem(prev => ({ ...prev, clienteEntrega: clienteNome, linkEntrega: linkGerado, destinoCidade: cidadeCadastrada }));
         }
     };
 
@@ -112,26 +102,19 @@ const DashboardGeral = () => {
 
     const salvarViagem = async () => {
         if (!motSelecionado) return;
-        if (!dadosViagem.clienteColeta || !dadosViagem.clienteEntrega) {
-            alert("Selecione os clientes cadastrados para Coleta e Entrega.");
-            return;
-        }
-
         const placas = getPlacasMotorista(motSelecionado.id);
         try {
-            const viagemRef = doc(db, "viagens_ativas", motSelecionado.id);
-            await setDoc(viagemRef, {
+            await setDoc(doc(db, "viagens_ativas", motSelecionado.id), {
                 ...dadosViagem,
                 motoristaNome: motSelecionado.nome,
                 motoristaCpf: motSelecionado.cpf,
                 cavalo: placas.cavalo || '',
-                carreta: placas.carreta || '',
                 statusOperacional: 'INICIANDO CICLO',
                 criadoEm: serverTimestamp()
             });
-            alert(`Roteiro enviado com sucesso para ${motSelecionado.nome}!`);
+            alert("Roteiro enviado!");
             setModalViagem(false);
-        } catch (e) { alert("Erro ao salvar programação."); }
+        } catch (e) { alert("Erro ao salvar."); }
     };
 
     useEffect(() => {
@@ -168,8 +151,7 @@ const DashboardGeral = () => {
 
     const getPlacasMotorista = (mId) => {
         const v = veiculos.find(v => v.motorista_id === mId);
-        const c = carretas.find(c => c.motorista_id === mId);
-        return { cavalo: v?.placa, carreta: c?.placa };
+        return { cavalo: v?.placa || 'S/ PLACA' };
     };
 
     const getGPS = (m) => localizacoes[m.id];
@@ -189,7 +171,11 @@ const DashboardGeral = () => {
                 </h2>
                 <div style={styles.searchContainer}>
                     <Search size={16} color="#FFD700" />
-                    <input placeholder="Pesquisar motorista..." style={styles.searchInput} onChange={(e) => setFiltroGrid(e.target.value)} />
+                    <input 
+                        placeholder="Pesquisar motorista..." 
+                        style={styles.searchInput} 
+                        onChange={(e) => setFiltroGrid(e.target.value)} 
+                    />
                 </div>
             </div>
             
@@ -216,13 +202,24 @@ const DashboardGeral = () => {
                 <MapContainer center={mapFocus.center} zoom={mapFocus.zoom} style={{ height: '100%', width: '100%' }}>
                     <ChangeView center={mapFocus.center} zoom={mapFocus.zoom} />
                     <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" />
+                    
                     {cercas.map(c => (
                         c.geofence?.tipo === 'circle' ? (
-                            <Circle key={c.id} center={[c.geofence.centro.lat, c.geofence.centro.lng]} radius={c.geofence.raio} pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} />
+                            <Circle 
+                                key={c.id} 
+                                center={[c.geofence.centro.lat, c.geofence.centro.lng]} 
+                                radius={c.geofence.raio} 
+                                pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} 
+                            />
                         ) : (
-                            <Polygon key={c.id} positions={c.geofence?.coordenadas?.map(co => [co.lat, co.lng]) || []} pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} />
+                            <Polygon 
+                                key={c.id} 
+                                positions={c.geofence?.coordenadas?.map(co => [co.lat, co.lng]) || []} 
+                                pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} 
+                            />
                         )
                     ))}
+
                     <MarkerClusterGroup>
                         {motoristasCadastrados.map((m) => {
                             const gps = getGPS(m);
@@ -233,7 +230,7 @@ const DashboardGeral = () => {
                                     <Popup>
                                         <div style={{color: '#000', fontSize: '12px'}}>
                                             <strong>{m.nome.toUpperCase()}</strong><br/>
-                                            {placas.cavalo} / {placas.carreta}<br/>
+                                            {placas.cavalo}<br/>
                                             Visto em: {gps.ultima}
                                         </div>
                                     </Popup>
@@ -250,6 +247,7 @@ const DashboardGeral = () => {
                         <tr style={{ borderBottom: '2px solid #111' }}>
                             <th style={styles.th}>MOTORISTA</th>
                             <th style={styles.th}>EQUIPAMENTO</th>
+                            <th style={styles.th}>STATUS ESCALA</th>
                             <th style={styles.th}>GPS STATUS</th>
                             <th style={styles.th}>VELOCIDADE</th>
                             <th style={{...styles.th, textAlign: 'right'}}>AÇÕES</th>
@@ -262,6 +260,8 @@ const DashboardGeral = () => {
                                 const gps = getGPS(m);
                                 const placas = getPlacasMotorista(m.id);
                                 const vStatus = gps ? getStatusVelocidade(gps.velocidade) : null;
+                                const isProgramado = m.statusEscala === 'PROGRAMADO';
+
                                 return (
                                     <tr key={m.id} style={styles.tr}>
                                         <td style={styles.td}>
@@ -271,16 +271,36 @@ const DashboardGeral = () => {
                                         <td style={styles.td}>
                                             <div style={{ display: 'flex', gap: '6px' }}>
                                                 {placas.cavalo && <span style={styles.badgePlaca}>{placas.cavalo}</span>}
-                                                {placas.carreta && <span style={{...styles.badgePlaca, color: '#3498db'}}>{placas.carreta}</span>}
                                             </div>
                                         </td>
+                                        
+                                        {/* COLUNA DE STATUS ESCALA MANUAL */}
+                                        <td style={styles.td}>
+                                            <select 
+                                                value={m.statusEscala || "SEM PROGRAMAÇÃO"}
+                                                onChange={(e) => alterarStatusEscala(m.id, e.target.value)}
+                                                style={{
+                                                    ...styles.selectStatus,
+                                                    backgroundColor: isProgramado ? 'rgba(46, 204, 113, 0.15)' : 'rgba(255, 215, 0, 0.05)',
+                                                    color: isProgramado ? '#2ecc71' : '#FFD700',
+                                                    borderColor: isProgramado ? '#2ecc71' : '#FFD700'
+                                                }}
+                                            >
+                                                <option value="SEM PROGRAMAÇÃO">SEM PROGRAMAÇÃO</option>
+                                                <option value="PROGRAMADO">PROGRAMADO</option>
+                                                <option value="FOLGA">FOLGA / MANUT.</option>
+                                            </select>
+                                        </td>
+
                                         <td style={styles.td}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                                 <div>
                                                     <div style={{ fontSize: '11px', color: gps ? '#2ecc71' : '#e74c3c', fontWeight: 'bold' }}>{gps ? 'ONLINE' : 'OFFLINE'}</div>
                                                     <div style={{ fontSize: '9px', color: '#444' }}>{gps?.ultima || '---'}</div>
                                                 </div>
-                                                <button onClick={() => forcarGPS(m.id)} style={styles.btnForce}><RefreshCcw size={12} className={loadingGPS === m.id ? 'spin' : ''} /></button>
+                                                <button onClick={() => forcarGPS(m.id)} style={styles.btnForce}>
+                                                    <RefreshCcw size={12} className={loadingGPS === m.id ? 'spin' : ''} />
+                                                </button>
                                             </div>
                                         </td>
                                         <td style={styles.td}>
@@ -315,55 +335,47 @@ const DashboardGeral = () => {
                                 <input style={styles.input} value={dadosViagem.dt} onChange={e => setDadosViagem({...dadosViagem, dt: e.target.value})} />
                             </div>
                             <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CLIENTE COLETA (CADASTRADOS)</label>
+                                <label style={styles.labelForm}>CLIENTE COLETA</label>
                                 <select style={styles.input} value={dadosViagem.clienteColeta} onChange={e => aoMudarCliente('COLETA', e.target.value)}>
-                                    <option value="">Selecione o Cliente...</option>
+                                    <option value="">Selecione...</option>
                                     {cercas.map(c => <option key={c.id} value={c.cliente}>{c.cliente} - {c.cidade}</option>)}
                                 </select>
                             </div>
                             <div style={styles.inputGroup}>
                                 <label style={styles.labelForm}>CIDADE COLETA (AUTO)</label>
-                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.cidadeColeta} readOnly placeholder="Cidade automática..." />
+                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.cidadeColeta} readOnly />
                             </div>
                             <div style={styles.inputGroup}>
                                 <label style={styles.labelForm}>DATA/HORA COLETA</label>
                                 <input type="datetime-local" style={styles.input} onChange={e => setDadosViagem({...dadosViagem, dataColeta: e.target.value})} />
-                            </div>
-                            <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
-                                <label style={styles.labelForm}>LINK GOOGLE MAPS COLETA (AUTO)</label>
-                                <input style={{...styles.input, color: '#3498db', fontSize: '11px'}} value={dadosViagem.linkColeta} readOnly placeholder="Link automático..." />
                             </div>
                         </div>
 
                         <div style={{...styles.sectionHeader, marginTop: '20px'}}>2. DESTINO FINAL (ENTREGA)</div>
                         <div style={styles.formGrid}>
                             <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CLIENTE ENTREGA (CADASTRADOS)</label>
+                                <label style={styles.labelForm}>CLIENTE ENTREGA</label>
                                 <select style={styles.input} value={dadosViagem.clienteEntrega} onChange={e => aoMudarCliente('ENTREGA', e.target.value)}>
-                                    <option value="">Selecione o Cliente...</option>
+                                    <option value="">Selecione...</option>
                                     {cercas.map(c => <option key={c.id} value={c.cliente}>{c.cliente} - {c.cidade}</option>)}
                                 </select>
                             </div>
                             <div style={styles.inputGroup}>
                                 <label style={styles.labelForm}>CIDADE DESTINO (AUTO)</label>
-                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.destinoCidade} readOnly placeholder="Cidade automática..." />
+                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.destinoCidade} readOnly />
                             </div>
                             <div style={styles.inputGroup}>
                                 <label style={styles.labelForm}>DATA/HORA ENTREGA</label>
                                 <input type="datetime-local" style={styles.input} onChange={e => setDadosViagem({...dadosViagem, dataEntrega: e.target.value})} />
                             </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>LINK GOOGLE MAPS ENTREGA (AUTO)</label>
-                                <input style={{...styles.input, color: '#3498db', fontSize: '11px'}} value={dadosViagem.linkEntrega} readOnly placeholder="Link automático..." />
-                            </div>
                             <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
-                                <label style={styles.labelForm}>OBSERVAÇÃO (CONSIDERAR ENDEREÇO DA NF)</label>
+                                <label style={styles.labelForm}>OBSERVAÇÃO (ENDEREÇO NF)</label>
                                 <input style={styles.input} placeholder="Instruções adicionais" onChange={e => setDadosViagem({...dadosViagem, observacao: e.target.value})} />
                             </div>
                         </div>
 
                         <button onClick={salvarViagem} style={styles.btnSalvar}>
-                            <Send size={18} /> ENVIAR ROTEIRO COMPLETO PARA O MOTORISTA
+                            <Send size={18} /> ENVIAR ROTEIRO COMPLETO
                         </button>
                     </div>
                 </div>
@@ -381,7 +393,7 @@ const styles = {
     label: { color: '#444', fontSize: '9px', fontWeight: 'bold' },
     val: { fontSize: '22px', fontWeight: '900', color: '#fff' },
     mapWrapper: { height: '380px', width: '100%', borderRadius: '15px', overflow: 'hidden', border: '1px solid #1a1a1a', marginBottom: '25px' },
-    tableWrapper: { backgroundColor: '#0a0a0a', borderRadius: '15px', border: '1px solid #1a1a1a', padding: '10px' },
+    tableWrapper: { backgroundColor: '#0a0a0a', borderRadius: '15px', border: '1px solid #1a1a1a', padding: '10px', overflowX: 'auto' },
     th: { padding: '15px', textAlign: 'left', fontSize: '11px', color: '#444', fontWeight: '700' },
     td: { padding: '12px 15px' },
     tr: { borderBottom: '1px solid #111' },
@@ -396,7 +408,18 @@ const styles = {
     inputGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
     labelForm: { fontSize: '10px', color: '#666', fontWeight: 'bold' },
     input: { backgroundColor: '#111', border: '1px solid #333', padding: '10px', borderRadius: '8px', color: '#fff', fontSize: '13px' },
-    btnSalvar: { width: '100%', marginTop: '25px', padding: '15px', backgroundColor: '#FFD700', border: 'none', borderRadius: '10px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }
+    btnSalvar: { width: '100%', marginTop: '25px', padding: '15px', backgroundColor: '#FFD700', border: 'none', borderRadius: '10px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
+    selectStatus: {
+        padding: '6px 10px',
+        borderRadius: '8px',
+        fontSize: '11px',
+        fontWeight: 'bold',
+        outline: 'none',
+        cursor: 'pointer',
+        border: '1px solid',
+        backgroundColor: '#000',
+        width: '145px'
+    }
 };
 
 export default DashboardGeral;
