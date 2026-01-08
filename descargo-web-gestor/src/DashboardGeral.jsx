@@ -6,19 +6,22 @@ import {
 } from 'lucide-react';
 import L from 'leaflet';
 import { db } from "./firebase";
-import { collection, onSnapshot, query, orderBy, doc, setDoc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { 
+    collection, onSnapshot, query, orderBy, doc, setDoc, 
+    serverTimestamp, updateDoc, where, getDocs 
+} from "firebase/firestore";
 
-// Importação de estilos CSS necessários
 import 'leaflet/dist/leaflet.css';
 import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
-// Ícone Personalizado do Caminhão (Garante que a URL seja estável)
 const caminhaoIcon = new L.Icon({
-    iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png',
-    iconSize: [38, 38],
-    iconAnchor: [19, 38],
-    popupAnchor: [0, -35],
+    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
+    iconSize: [25, 41],
+    iconAnchor: [12, 41],
+    popupAnchor: [1, -34],
+    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
+    shadowSize: [41, 41]
 });
 
 const ChangeView = ({ center, zoom }) => {
@@ -39,139 +42,276 @@ const DashboardGeral = () => {
     const [mapFocus, setMapFocus] = useState({ center: [-21.78, -48.17], zoom: 6 });
     const [filtroGrid, setFiltroGrid] = useState("");
     const [loadingGPS, setLoadingGPS] = useState(null);
-
     const [modalViagem, setModalViagem] = useState(false);
     const [motSelecionado, setMotSelecionado] = useState(null);
     const [dadosViagem, setDadosViagem] = useState({
         dt: '', dataColeta: '', clienteColeta: '', cidadeColeta: '',
         linkColeta: '', destinoCidade: '', clienteEntrega: '',
-        dataEntrega: '', linkEntrega: '', observacao: '', filial: '1'
+        dataEntrega: '', linkEntrega: '', observacao: '', filial: '1',
+        tipoViagem: 'CARREGADO', destinoCliente: '', origemCidade: '', codigoDestino: '001'
     });
 
-    // FUNÇÃO PARA ALTERAR STATUS MANUALMENTE NO GRID
+    // BUSCAR DADOS DO MOTORISTA COMPLETO
+    const buscarDadosMotorista = async (motoristaId) => {
+        try {
+            const q = query(collection(db, "cadastro_motoristas"), where("uid", "==", motoristaId));
+            const snapshot = await getDocs(q);
+            if (!snapshot.empty) {
+                return snapshot.docs[0].data();
+            }
+            return null;
+        } catch (error) {
+            console.error("Erro buscar motorista:", error);
+            return null;
+        }
+    };
+
     const alterarStatusEscala = async (motoristaId, novoStatus) => {
         try {
             const motRef = doc(db, "cadastro_motoristas", motoristaId);
             await updateDoc(motRef, { statusEscala: novoStatus });
-        } catch (e) {
-            console.error("Erro ao atualizar status:", e);
-        }
+        } catch (e) { console.error(e); }
     };
 
     const aoMudarCliente = (tipo, clienteNome) => {
         const clienteDados = cercas.find(c => c.cliente === clienteNome);
         let linkGerado = '';
         let cidadeCadastrada = clienteDados?.cidade || '';
+        let codigoDestino = clienteDados?.codigo || '001';
 
         if (clienteDados && clienteDados.geofence) {
             let lat, lng;
             if (clienteDados.geofence.tipo === 'circle') {
                 lat = clienteDados.geofence.centro.lat;
                 lng = clienteDados.geofence.centro.lng;
-            } else if (clienteDados.geofence.coordenadas && clienteDados.geofence.coordenadas.length > 0) {
+            } else if (clienteDados.geofence.coordenadas?.length > 0) {
                 lat = clienteDados.geofence.coordenadas[0].lat;
                 lng = clienteDados.geofence.coordenadas[0].lng;
             }
-            if (lat && lng) linkGerado = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+            if (lat && lng) linkGerado = `https://www.google.com/maps?q=${lat},${lng}`;
         }
 
         if (tipo === 'COLETA') {
-            setDadosViagem(prev => ({ ...prev, clienteColeta: clienteNome, linkColeta: linkGerado, cidadeColeta: cidadeCadastrada }));
+            setDadosViagem(prev => ({ 
+                ...prev, 
+                clienteColeta: clienteNome, 
+                linkColeta: linkGerado, 
+                cidadeColeta: cidadeCadastrada,
+                origemCidade: cidadeCadastrada
+            }));
         } else {
-            setDadosViagem(prev => ({ ...prev, clienteEntrega: clienteNome, linkEntrega: linkGerado, destinoCidade: cidadeCadastrada }));
+            setDadosViagem(prev => ({ 
+                ...prev, 
+                clienteEntrega: clienteNome, 
+                destinoCliente: clienteNome,
+                linkEntrega: linkGerado, 
+                destinoCidade: cidadeCadastrada,
+                codigoDestino: codigoDestino
+            }));
         }
     };
 
     const getStatusVelocidade = (vel) => {
         const v = parseFloat(vel) || 0;
         if (v <= 0) return { label: 'PARADO', color: '#7f8c8d', bg: 'rgba(127, 140, 141, 0.1)' };
-        if (v > 0 && v <= 80) return { label: 'MOVIMENTO', color: '#2ecc71', bg: 'rgba(46, 204, 113, 0.1)' };
+        if (v <= 80) return { label: 'MOVIMENTO', color: '#2ecc71', bg: 'rgba(46, 204, 113, 0.1)' };
         return { label: 'ALTA VELÔ', color: '#e74c3c', bg: 'rgba(231, 76, 60, 0.1)' };
     };
 
-    // FUNÇÃO PARA FORÇAR GPS (Comunicando com o App)
     const forcarGPS = async (motoristaId) => {
         setLoadingGPS(motoristaId);
         try {
-            // Criamos ou atualizamos um documento de comando que o App monitora via snapshot
             await setDoc(doc(db, "comandos_gps", motoristaId), {
                 comando: "FORCE_REFRESH",
                 timestamp: serverTimestamp(),
                 origem: "DASHBOARD_GESTOR"
             }, { merge: true });
-            
             setTimeout(() => setLoadingGPS(null), 3000);
-        } catch (e) { 
-            console.error("Erro ao enviar comando GPS:", e);
-            setLoadingGPS(null); 
-        }
+        } catch (e) { setLoadingGPS(null); }
     };
 
     const salvarViagem = async () => {
         if (!motSelecionado) return;
+        
+        // Buscar dados completos do motorista
+        const motoristaData = await buscarDadosMotorista(motSelecionado.id);
+        if (!motoristaData) {
+            alert("Erro: Motorista não encontrado no sistema!");
+            return;
+        }
+
         const placas = getPlacasMotorista(motSelecionado.id);
-        try {
-            await setDoc(doc(db, "viagens_ativas", motSelecionado.id), {
-                ...dadosViagem,
-                motoristaNome: motSelecionado.nome,
-                motoristaCpf: motSelecionado.cpf,
-                cavalo: placas.cavalo || '',
-                statusOperacional: 'INICIANDO CICLO',
-                criadoEm: serverTimestamp()
-            });
+        
+        // Preparar dados para o APP
+        const viagemData = {
+            // IDENTIFICAÇÃO
+            id: motSelecionado.id, // Usar ID do motorista como chave
+            motoristaId: motSelecionado.id,
+            motoristaUid: motoristaData.uid || motSelecionado.id,
+            motoristaNome: motSelecionado.nome,
+            motoristaCpf: motSelecionado.cpf,
+            motoristaEmail: motoristaData.email || '',
+            motoristaTelefone: motoristaData.telefone || '',
             
-            // Ao salvar a viagem, já mudamos o status de escala para PROGRAMADO automaticamente
+            // VEÍCULO
+            cavalo: placas.cavalo || 'S/ PLACA',
+            carreta: placas.carreta || '',
+            
+            // STATUS
+            status: 'PROGRAMADO',
+            statusOperacional: 'PROGRAMADO',
+            viagemIniciada: false,
+            finalizada: false,
+            chegouAoDestino: false,
+            confirmacaoPendente: false,
+            
+            // DATAS
+            criadoEm: serverTimestamp(),
+            atualizadoEm: serverTimestamp(),
+            dataColeta: dadosViagem.dataColeta || '',
+            dataEntrega: dadosViagem.dataEntrega || '',
+            
+            // COLETA
+            dt: dadosViagem.dt,
+            clienteColeta: dadosViagem.clienteColeta,
+            origemCidade: dadosViagem.cidadeColeta,
+            linkColeta: dadosViagem.linkColeta || '',
+            
+            // ENTREGA (PADRÃO DO APP)
+            clienteEntrega: dadosViagem.clienteEntrega,
+            destinoCliente: dadosViagem.destinoCliente || dadosViagem.clienteEntrega,
+            destinoCidade: dadosViagem.destinoCidade,
+            destinoCodigo: dadosViagem.codigoDestino || '001',
+            linkEntrega: dadosViagem.linkEntrega || '',
+            
+            // CONFIGURAÇÕES
+            tipoViagem: dadosViagem.tipoViagem || 'CARREGADO',
+            observacao: dadosViagem.observacao || '',
+            filial: dadosViagem.filial || '1',
+            empresa: motoristaData.empresa || 'Transportadora',
+            
+            // FLAGS PARA CONTROLE
+            temDesenhoRota: false,
+            distanciaEstimada: 0,
+            tempoEstimado: 0
+        };
+
+        try {
+            // 1. SALVAR NA COLEÇÃO PRINCIPAL (ordens_servico)
+            await setDoc(doc(db, "ordens_servico", motSelecionado.id), viagemData);
+            
+            // 2. SALVAR BACKUP (viagens_ativas)
+            await setDoc(doc(db, "viagens_ativas", motSelecionado.id), viagemData);
+            
+            // 3. ENVIAR COMANDO PARA O APP
+            await setDoc(doc(db, "comandos_roteiro", motSelecionado.id), {
+                ...viagemData,
+                timestamp: serverTimestamp(),
+                tipo: "NOVA_VIAGEM",
+                acao: "ATUALIZAR_ROTEIRO",
+                origem: "PAINEL_GESTOR"
+            });
+
+            // 4. ATUALIZAR STATUS DO MOTORISTA
             await alterarStatusEscala(motSelecionado.id, 'PROGRAMADO');
             
-            alert("Roteiro enviado com sucesso!");
+            // 5. LIMPAR FORMULÁRIO
+            setDadosViagem({
+                dt: '', dataColeta: '', clienteColeta: '', cidadeColeta: '',
+                linkColeta: '', destinoCidade: '', clienteEntrega: '',
+                dataEntrega: '', linkEntrega: '', observacao: '', filial: '1',
+                tipoViagem: 'CARREGADO', destinoCliente: '', origemCidade: '', codigoDestino: '001'
+            });
+            
+            alert("✅ Roteiro enviado com sucesso!");
             setModalViagem(false);
-        } catch (e) { alert("Erro ao salvar."); }
+            
+        } catch (error) {
+            console.error("Erro ao salvar viagem:", error);
+            alert(`❌ Erro ao salvar: ${error.message}`);
+        }
     };
 
+    // EFEITOS PARA CARREGAR DADOS
     useEffect(() => {
-        const unsubMot = onSnapshot(query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc")), (snapshot) => {
-            const lista = [];
-            snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
-            setMotoristasCadastrados(lista);
-        });
-        const unsubCercas = onSnapshot(collection(db, "cadastro_clientes_pontos"), (snapshot) => {
-            const lista = [];
-            snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
-            setCercas(lista);
-        });
-        const unsubVeiculos = onSnapshot(collection(db, "cadastro_veiculos"), (snapshot) => {
-            const lista = [];
-            snapshot.forEach(doc => lista.push({ id: doc.id, ...doc.data() }));
-            setVeiculos(lista);
-        });
-        const unsubLoc = onSnapshot(collection(db, "localizacao_realtime"), (snapshot) => {
-            const locs = {};
-            snapshot.forEach(doc => {
-                const d = doc.data();
-                // Verificação rigorosa de coordenadas para não bugar o Leaflet
-                const latitude = parseFloat(d.latitude);
-                const longitude = parseFloat(d.longitude);
-                
-                if (!isNaN(latitude) && !isNaN(longitude)) {
-                    locs[doc.id] = {
-                        lat: latitude,
-                        lng: longitude,
-                        velocidade: d.velocidade || 0,
-                        ultima: d.ultimaAtualizacao?.toDate ? d.ultimaAtualizacao.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : "---"
-                    };
-                }
-            });
-            setLocalizacoes(locs);
-        });
-        return () => { unsubMot(); unsubCercas(); unsubLoc(); unsubVeiculos(); };
+        // Motoristas
+        const unsubMotoristas = onSnapshot(
+            query(collection(db, "cadastro_motoristas"), orderBy("nome", "asc")), 
+            (snap) => setMotoristasCadastrados(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        );
+
+        // Clientes/Pontos
+        const unsubCercas = onSnapshot(
+            query(collection(db, "cadastro_clientes_pontos")),
+            (snap) => setCercas(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        );
+
+        // Veículos
+        const unsubVeiculos = onSnapshot(
+            collection(db, "cadastro_veiculos"),
+            (snap) => setVeiculos(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+        );
+
+        // Localizações em tempo real
+        const unsubLocalizacoes = onSnapshot(
+            collection(db, "localizacao_realtime"),
+            (snap) => {
+                const locs = {};
+                snap.forEach(doc => {
+                    const d = doc.data();
+                    const lat = parseFloat(String(d.latitude).replace(',', '.'));
+                    const lng = parseFloat(String(d.longitude).replace(',', '.'));
+                    
+                    if (!isNaN(lat) && !isNaN(lng)) {
+                        locs[doc.id] = {
+                            lat, lng,
+                            velocidade: d.velocidade || 0,
+                            ultimaFull: d.ultimaAtualizacao?.toDate?.()?.toLocaleString('pt-BR') || "---",
+                            statusOperacional: d.statusOperacional || "---"
+                        };
+                    }
+                });
+                setLocalizacoes(locs);
+            }
+        );
+
+        return () => {
+            unsubMotoristas();
+            unsubCercas();
+            unsubVeiculos();
+            unsubLocalizacoes();
+        };
     }, []);
 
     const getPlacasMotorista = (mId) => {
         const v = veiculos.find(v => v.motorista_id === mId);
-        return { cavalo: v?.placa || 'S/ PLACA' };
+        return { 
+            cavalo: v?.placa || 'S/ PLACA',
+            carreta: v?.carreta || ''
+        };
     };
 
-    const getGPS = (m) => localizacoes[m.id];
+    const getGPS = (motorista) => {
+        if (!motorista) return null;
+        
+        // Tentar por UID primeiro
+        if (motorista.uid) {
+            return localizacoes[motorista.uid] || null;
+        }
+        
+        // Tentar por ID do documento
+        if (localizacoes[motorista.id]) {
+            return localizacoes[motorista.id];
+        }
+        
+        // Tentar por CPF
+        const cpfLimpo = motorista.cpf?.replace(/\D/g, "");
+        if (cpfLimpo && localizacoes[cpfLimpo]) {
+            return localizacoes[cpfLimpo];
+        }
+        
+        return null;
+    };
 
     const focarNoMapa = (lat, lng) => {
         if (!lat || !lng) return;
@@ -179,77 +319,112 @@ const DashboardGeral = () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
+    const abrirModalViagem = (motorista) => {
+        setMotSelecionado(motorista);
+        setModalViagem(true);
+    };
+
     return (
-        <div style={{ padding: '20px', backgroundColor: '#000', minHeight: '100vh', fontFamily: 'Inter, sans-serif' }}>
-            
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-                <h2 style={{ color: '#fff', margin: 0, fontSize: '20px', fontWeight: '800' }}>
-                    LOGÍSTICA <span style={{ color: '#FFD700' }}>REAL-TIME</span>
+        <div style={styles.container}>
+            {/* HEADER */}
+            <div style={styles.header}>
+                <h2 style={styles.title}>
+                    LOGÍSTICA <span style={styles.highlight}>REAL-TIME</span>
                 </h2>
                 <div style={styles.searchContainer}>
                     <Search size={16} color="#FFD700" />
                     <input 
                         placeholder="Pesquisar motorista..." 
                         style={styles.searchInput} 
+                        value={filtroGrid}
                         onChange={(e) => setFiltroGrid(e.target.value)} 
                     />
                 </div>
             </div>
             
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '15px', marginBottom: '25px' }}>
-                <div style={styles.cardHeader}>
+            {/* CARDS RESUMO */}
+            <div style={styles.cardsGrid}>
+                <div style={styles.card}>
                     <Users size={20} color="#FFD700" />
-                    <div><b style={styles.val}>{motoristasCadastrados.length}</b><br/><small style={styles.label}>MOTORISTAS</small></div>
+                    <div>
+                        <b style={styles.cardValue}>{motoristasCadastrados.length}</b>
+                        <br/>
+                        <small style={styles.cardLabel}>MOTORISTAS</small>
+                    </div>
                 </div>
-                <div style={styles.cardHeader}>
+                <div style={styles.card}>
                     <MapPin size={20} color="#2ecc71" />
-                    <div><b style={{...styles.val, color: '#2ecc71'}}>{Object.keys(localizacoes).length}</b><br/><small style={styles.label}>COM GPS ATIVO</small></div>
+                    <div>
+                        <b style={{...styles.cardValue, color: '#2ecc71'}}>{Object.keys(localizacoes).length}</b>
+                        <br/>
+                        <small style={styles.cardLabel}>COM GPS ATIVO</small>
+                    </div>
                 </div>
-                <div style={styles.cardHeader}>
+                <div style={styles.card}>
                     <Truck size={20} color="#3498db" />
-                    <div><b style={styles.val}>{veiculos.length}</b><br/><small style={styles.label}>FROTA</small></div>
+                    <div>
+                        <b style={styles.cardValue}>{veiculos.length}</b>
+                        <br/>
+                        <small style={styles.cardLabel}>FROTA</small>
+                    </div>
                 </div>
-                <div style={styles.cardHeader}>
+                <div style={styles.card}>
                     <AlertCircle size={20} color="#e67e22" />
-                    <div><b style={styles.val}>{cercas.length}</b><br/><small style={styles.label}>PONTOS/CLIENTES</small></div>
+                    <div>
+                        <b style={styles.cardValue}>{cercas.length}</b>
+                        <br/>
+                        <small style={styles.cardLabel}>PONTOS/CLIENTES</small>
+                    </div>
                 </div>
             </div>
 
-            <div style={styles.mapWrapper}>
+            {/* MAPA */}
+            <div style={styles.mapContainer}>
                 <MapContainer center={mapFocus.center} zoom={mapFocus.zoom} style={{ height: '100%', width: '100%' }}>
                     <ChangeView center={mapFocus.center} zoom={mapFocus.zoom} />
                     <TileLayer url="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}" />
                     
-                    {cercas.map(c => (
-                        c.geofence?.tipo === 'circle' ? (
-                            <Circle 
-                                key={c.id} 
-                                center={[c.geofence.centro.lat, c.geofence.centro.lng]} 
-                                radius={c.geofence.raio} 
-                                pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} 
-                            />
-                        ) : (
-                            <Polygon 
-                                key={c.id} 
-                                positions={c.geofence?.coordenadas?.map(co => [co.lat, co.lng]) || []} 
-                                pathOptions={{ color: c.categoria === 'FILIAL' ? '#3498db' : '#FFD700', weight: 1, fillOpacity: 0.1 }} 
-                            />
-                        )
-                    ))}
-
-                    <MarkerClusterGroup>
-                        {motoristasCadastrados.map((m) => {
-                            const gps = getGPS(m);
-                            if (!gps || !gps.lat || !gps.lng) return null;
-                            const placas = getPlacasMotorista(m.id);
+                    {/* DESENHAR CERCAS */}
+                    {cercas.map(c => {
+                        if (!c.geofence) return null;
+                        
+                        if (c.geofence.tipo === 'circle') {
                             return (
-                                <Marker key={m.id} position={[gps.lat, gps.lng]} icon={caminhaoIcon}>
+                                <Circle 
+                                    key={c.id}
+                                    center={[c.geofence.centro.lat, c.geofence.centro.lng]}
+                                    radius={c.geofence.raio}
+                                    pathOptions={{ color: '#FFD700', weight: 1, fillOpacity: 0.1 }}
+                                />
+                            );
+                        } else {
+                            return (
+                                <Polygon 
+                                    key={c.id}
+                                    positions={c.geofence.coordenadas?.map(co => [co.lat, co.lng]) || []}
+                                    pathOptions={{ color: '#FFD700', weight: 1, fillOpacity: 0.1 }}
+                                />
+                            );
+                        }
+                    })}
+
+                    {/* MARCADORES DOS MOTORISTAS */}
+                    <MarkerClusterGroup>
+                        {motoristasCadastrados.map((motorista) => {
+                            const gps = getGPS(motorista);
+                            if (!gps) return null;
+                            
+                            return (
+                                <Marker key={motorista.id} position={[gps.lat, gps.lng]} icon={caminhaoIcon}>
                                     <Popup>
-                                        <div style={{color: '#000', fontSize: '12px'}}>
-                                            <strong style={{fontSize: '14px'}}>{m.nome.toUpperCase()}</strong><br/>
-                                            <b>Placa:</b> {placas.cavalo}<br/>
-                                            <b>Velocidade:</b> {gps.velocidade} km/h<br/>
-                                            <b>Atualizado:</b> {gps.ultima}
+                                        <div style={{color: '#000'}}>
+                                            <strong>{motorista.nome.toUpperCase()}</strong>
+                                            <br/>
+                                            Velocidade: {gps.velocidade} km/h
+                                            <br/>
+                                            Status: {gps.statusOperacional}
+                                            <br/>
+                                            Última atualização: {gps.ultimaFull}
                                         </div>
                                     </Popup>
                                 </Marker>
@@ -259,75 +434,129 @@ const DashboardGeral = () => {
                 </MapContainer>
             </div>
 
-            <div style={styles.tableWrapper}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            {/* TABELA DE MOTORISTAS */}
+            <div style={styles.tableContainer}>
+                <table style={styles.table}>
                     <thead>
-                        <tr style={{ borderBottom: '2px solid #111' }}>
+                        <tr>
                             <th style={styles.th}>MOTORISTA</th>
                             <th style={styles.th}>EQUIPAMENTO</th>
                             <th style={styles.th}>STATUS ESCALA</th>
-                            <th style={styles.th}>GPS STATUS</th>
+                            <th style={styles.th}>GPS / ÚLTIMA POSIÇÃO</th>
                             <th style={styles.th}>VELOCIDADE</th>
                             <th style={{...styles.th, textAlign: 'right'}}>AÇÕES</th>
                         </tr>
                     </thead>
                     <tbody>
                         {motoristasCadastrados
-                            .filter(m => m.nome.toUpperCase().includes(filtroGrid.toUpperCase()))
-                            .map((m) => {
-                                const gps = getGPS(m);
-                                const placas = getPlacasMotorista(m.id);
+                            .filter(m => 
+                                m.nome?.toUpperCase().includes(filtroGrid.toUpperCase()) ||
+                                m.cpf?.includes(filtroGrid)
+                            )
+                            .map((motorista) => {
+                                const gps = getGPS(motorista);
+                                const placas = getPlacasMotorista(motorista.id);
                                 const vStatus = gps ? getStatusVelocidade(gps.velocidade) : null;
-                                const isProgramado = m.statusEscala === 'PROGRAMADO';
-
+                                
                                 return (
-                                    <tr key={m.id} style={styles.tr}>
+                                    <tr key={motorista.id} style={styles.tr}>
                                         <td style={styles.td}>
-                                            <div style={{ fontWeight: '700', fontSize: '13px', color: '#fff' }}>{m.nome.toUpperCase()}</div>
-                                            <div style={{ fontSize: '10px', color: '#555' }}>{m.cpf}</div>
-                                        </td>
-                                        <td style={styles.td}>
-                                            <div style={{ display: 'flex', gap: '6px' }}>
-                                                {placas.cavalo && <span style={styles.badgePlaca}>{placas.cavalo}</span>}
+                                            <div style={{ fontWeight: '700', fontSize: '13px', color: '#fff' }}>
+                                                {motorista.nome?.toUpperCase() || 'NÃO INFORMADO'}
+                                            </div>
+                                            <div style={{ fontSize: '10px', color: '#555' }}>
+                                                {motorista.cpf || 'Sem CPF'}
                                             </div>
                                         </td>
-                                        
+                                        <td style={styles.td}>
+                                            <span style={styles.placaBadge}>
+                                                {placas.cavalo}
+                                            </span>
+                                        </td>
                                         <td style={styles.td}>
                                             <select 
-                                                value={m.statusEscala || "SEM PROGRAMAÇÃO"}
-                                                onChange={(e) => alterarStatusEscala(m.id, e.target.value)}
+                                                value={motorista.statusEscala || "SEM PROGRAMAÇÃO"}
+                                                onChange={(e) => alterarStatusEscala(motorista.id, e.target.value)}
                                                 style={{
-                                                    ...styles.selectStatus,
-                                                    backgroundColor: isProgramado ? 'rgba(46, 204, 113, 0.15)' : 'rgba(255, 215, 0, 0.05)',
-                                                    color: isProgramado ? '#2ecc71' : '#FFD700',
-                                                    borderColor: isProgramado ? '#2ecc71' : '#FFD700'
+                                                    ...styles.statusSelect,
+                                                    color: motorista.statusEscala === 'PROGRAMADO' ? '#2ecc71' : 
+                                                           motorista.statusEscala === 'EM ROTA' ? '#3498db' :
+                                                           motorista.statusEscala === 'FOLGA' ? '#e74c3c' : '#FFD700'
                                                 }}
                                             >
                                                 <option value="SEM PROGRAMAÇÃO">SEM PROGRAMAÇÃO</option>
                                                 <option value="PROGRAMADO">PROGRAMADO</option>
+                                                <option value="EM ROTA">EM ROTA</option>
                                                 <option value="FOLGA">FOLGA / MANUT.</option>
                                             </select>
                                         </td>
-
                                         <td style={styles.td}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                                                 <div>
-                                                    <div style={{ fontSize: '11px', color: gps ? '#2ecc71' : '#e74c3c', fontWeight: 'bold' }}>{gps ? 'ONLINE' : 'OFFLINE'}</div>
-                                                    <div style={{ fontSize: '9px', color: '#444' }}>{gps?.ultima || '---'}</div>
+                                                    <div style={{ 
+                                                        fontSize: '11px', 
+                                                        color: gps ? '#2ecc71' : '#e74c3c', 
+                                                        fontWeight: 'bold' 
+                                                    }}>
+                                                        {gps ? 'ONLINE' : 'OFFLINE'}
+                                                    </div>
+                                                    <div style={{ fontSize: '9px', color: '#888' }}>
+                                                        {gps ? gps.ultimaFull : 'Sem sinal'}
+                                                    </div>
                                                 </div>
-                                                <button onClick={() => forcarGPS(m.id)} style={styles.btnForce} title="Forçar Sinal GPS">
-                                                    <RefreshCcw size={12} className={loadingGPS === m.id ? 'spin' : ''} />
+                                                <button 
+                                                    onClick={() => forcarGPS(motorista.id)}
+                                                    style={styles.gpsButton}
+                                                    disabled={loadingGPS === motorista.id}
+                                                    title="Forçar atualização GPS"
+                                                >
+                                                    <RefreshCcw size={12} className={loadingGPS === motorista.id ? 'spin' : ''} />
                                                 </button>
                                             </div>
                                         </td>
                                         <td style={styles.td}>
-                                            {gps ? <span style={{ ...styles.badgeVel, color: vStatus.color, backgroundColor: vStatus.bg }}>{gps.velocidade} km/h</span> : '---'}
+                                            {gps ? (
+                                                <span style={{
+                                                    ...styles.velocidadeBadge,
+                                                    color: vStatus.color,
+                                                    backgroundColor: vStatus.bg
+                                                }}>
+                                                    {gps.velocidade} km/h
+                                                </span>
+                                            ) : (
+                                                <span style={{ color: '#666', fontSize: '11px' }}>---</span>
+                                            )}
                                         </td>
                                         <td style={{...styles.td, textAlign: 'right'}}>
                                             <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                                                <button onClick={() => { setMotSelecionado(m); setModalViagem(true); }} style={{...styles.actionBtn, backgroundColor: '#3498db'}} title="Lançar Ciclo"><Navigation size={16} color="#fff" /></button>
-                                                <button onClick={() => gps && focarNoMapa(gps.lat, gps.lng)} style={{...styles.actionBtn, backgroundColor: gps ? '#FFD700' : '#111'}} title="Ver no Mapa"><Eye size={16} color="#000" /></button>
-                                                <button onClick={() => window.open(`https://wa.me/55${m.telefone?.replace(/\D/g,"")}`)} style={{...styles.actionBtn, backgroundColor: '#2ecc71'}} title="WhatsApp"><MessageCircle size={16} color="#000" /></button>
+                                                <button 
+                                                    onClick={() => abrirModalViagem(motorista)}
+                                                    style={{...styles.actionButton, backgroundColor: '#3498db'}}
+                                                    title="Enviar roteiro"
+                                                >
+                                                    <Navigation size={16} color="#fff" />
+                                                </button>
+                                                <button 
+                                                    onClick={() => gps && focarNoMapa(gps.lat, gps.lng)}
+                                                    style={{
+                                                        ...styles.actionButton, 
+                                                        backgroundColor: gps ? '#FFD700' : '#111'
+                                                    }}
+                                                    disabled={!gps}
+                                                    title="Focar no mapa"
+                                                >
+                                                    <Eye size={16} color={gps ? "#000" : "#666"} />
+                                                </button>
+                                                <button 
+                                                    onClick={() => {
+                                                        const tel = motorista.telefone?.replace(/\D/g, "");
+                                                        if (tel) window.open(`https://wa.me/55${tel}`);
+                                                    }}
+                                                    style={{...styles.actionButton, backgroundColor: '#2ecc71'}}
+                                                    title="Enviar WhatsApp"
+                                                >
+                                                    <MessageCircle size={16} color="#000" />
+                                                </button>
                                             </div>
                                         </td>
                                     </tr>
@@ -337,105 +566,414 @@ const DashboardGeral = () => {
                 </table>
             </div>
 
+            {/* MODAL DE NOVA VIAGEM */}
             {modalViagem && (
-                <div style={styles.overlay}>
+                <div style={styles.modalOverlay}>
                     <div style={styles.modal}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '20px', borderBottom: '1px solid #222', paddingBottom: '10px' }}>
-                            <h3 style={{ color: '#FFD700', margin: 0 }}>LANÇAR CICLO: {motSelecionado?.nome.toUpperCase()}</h3>
-                            <button onClick={() => setModalViagem(false)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}><X /></button>
+                        <div style={styles.modalHeader}>
+                            <h3 style={styles.modalTitle}>
+                                📋 NOVA VIAGEM: {motSelecionado?.nome?.toUpperCase()}
+                            </h3>
+                            <button 
+                                onClick={() => {
+                                    setModalViagem(false);
+                                    setMotSelecionado(null);
+                                }}
+                                style={styles.modalCloseButton}
+                            >
+                                <X size={20} />
+                            </button>
                         </div>
 
-                        <div style={styles.sectionHeader}>1. DADOS DA CARGA (COLETA)</div>
-                        <div style={styles.formGrid}>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>DT / VIAGEM</label>
-                                <input style={styles.input} value={dadosViagem.dt} onChange={e => setDadosViagem({...dadosViagem, dt: e.target.value})} />
-                            </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CLIENTE COLETA</label>
-                                <select style={styles.input} value={dadosViagem.clienteColeta} onChange={e => aoMudarCliente('COLETA', e.target.value)}>
-                                    <option value="">Selecione...</option>
-                                    {cercas.map(c => <option key={c.id} value={c.cliente}>{c.cliente} - {c.cidade}</option>)}
-                                </select>
-                            </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CIDADE COLETA (AUTO)</label>
-                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.cidadeColeta} readOnly />
-                            </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>DATA/HORA COLETA</label>
-                                <input type="datetime-local" style={styles.input} onChange={e => setDadosViagem({...dadosViagem, dataColeta: e.target.value})} />
+                        {/* FORMULÁRIO */}
+                        <div style={styles.formSection}>
+                            <div style={styles.sectionHeader}>📍 COLETA</div>
+                            <div style={styles.formGrid}>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>DT / VIAGEM</label>
+                                    <input 
+                                        style={styles.input}
+                                        value={dadosViagem.dt}
+                                        onChange={e => setDadosViagem({...dadosViagem, dt: e.target.value})}
+                                        placeholder="Número da DT"
+                                    />
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>CLIENTE COLETA</label>
+                                    <select 
+                                        style={styles.input}
+                                        value={dadosViagem.clienteColeta}
+                                        onChange={e => aoMudarCliente('COLETA', e.target.value)}
+                                    >
+                                        <option value="">Selecione...</option>
+                                        {cercas.map(c => (
+                                            <option key={c.id} value={c.cliente}>{c.cliente}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>CIDADE COLETA</label>
+                                    <input 
+                                        style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                                        value={dadosViagem.cidadeColeta}
+                                        readOnly
+                                    />
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>DATA/HORA COLETA</label>
+                                    <input 
+                                        type="datetime-local"
+                                        style={styles.input}
+                                        value={dadosViagem.dataColeta}
+                                        onChange={e => setDadosViagem({...dadosViagem, dataColeta: e.target.value})}
+                                    />
+                                </div>
                             </div>
                         </div>
 
-                        <div style={{...styles.sectionHeader, marginTop: '20px'}}>2. DESTINO FINAL (ENTREGA)</div>
-                        <div style={styles.formGrid}>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CLIENTE ENTREGA</label>
-                                <select style={styles.input} value={dadosViagem.clienteEntrega} onChange={e => aoMudarCliente('ENTREGA', e.target.value)}>
-                                    <option value="">Selecione...</option>
-                                    {cercas.map(c => <option key={c.id} value={c.cliente}>{c.cliente} - {c.cidade}</option>)}
-                                </select>
-                            </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>CIDADE DESTINO (AUTO)</label>
-                                <input style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}} value={dadosViagem.destinoCidade} readOnly />
-                            </div>
-                            <div style={styles.inputGroup}>
-                                <label style={styles.labelForm}>DATA/HORA ENTREGA</label>
-                                <input type="datetime-local" style={styles.input} onChange={e => setDadosViagem({...dadosViagem, dataEntrega: e.target.value})} />
-                            </div>
-                            <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
-                                <label style={styles.labelForm}>OBSERVAÇÃO (ENDEREÇO NF)</label>
-                                <input style={styles.input} placeholder="Instruções adicionais" onChange={e => setDadosViagem({...dadosViagem, observacao: e.target.value})} />
+                        <div style={styles.formSection}>
+                            <div style={styles.sectionHeader}>🏁 ENTREGA</div>
+                            <div style={styles.formGrid}>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>CLIENTE ENTREGA</label>
+                                    <select 
+                                        style={styles.input}
+                                        value={dadosViagem.clienteEntrega}
+                                        onChange={e => aoMudarCliente('ENTREGA', e.target.value)}
+                                    >
+                                        <option value="">Selecione...</option>
+                                        {cercas.map(c => (
+                                            <option key={c.id} value={c.cliente}>{c.cliente}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>CIDADE DESTINO</label>
+                                    <input 
+                                        style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                                        value={dadosViagem.destinoCidade}
+                                        readOnly
+                                    />
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>TIPO VIAGEM</label>
+                                    <select 
+                                        style={styles.input}
+                                        value={dadosViagem.tipoViagem}
+                                        onChange={e => setDadosViagem({...dadosViagem, tipoViagem: e.target.value})}
+                                    >
+                                        <option value="CARREGADO">CARREGADO</option>
+                                        <option value="VAZIO">VAZIO</option>
+                                        <option value="MUDANÇA">MUDANÇA</option>
+                                    </select>
+                                </div>
+                                <div style={styles.inputGroup}>
+                                    <label style={styles.label}>CÓDIGO DESTINO</label>
+                                    <input 
+                                        style={styles.input}
+                                        value={dadosViagem.codigoDestino}
+                                        onChange={e => setDadosViagem({...dadosViagem, codigoDestino: e.target.value})}
+                                        placeholder="001"
+                                    />
+                                </div>
+                                <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                                    <label style={styles.label}>DATA/HORA ENTREGA</label>
+                                    <input 
+                                        type="datetime-local"
+                                        style={styles.input}
+                                        value={dadosViagem.dataEntrega}
+                                        onChange={e => setDadosViagem({...dadosViagem, dataEntrega: e.target.value})}
+                                    />
+                                </div>
                             </div>
                         </div>
 
-                        <button onClick={salvarViagem} style={styles.btnSalvar}>
-                            <Send size={18} /> ENVIAR ROTEIRO COMPLETO
+                        <div style={styles.formSection}>
+                            <div style={styles.sectionHeader}>📝 OBSERVAÇÕES</div>
+                            <div style={styles.formGrid}>
+                                <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                                    <textarea 
+                                        style={{...styles.input, minHeight: '80px'}}
+                                        value={dadosViagem.observacao}
+                                        onChange={e => setDadosViagem({...dadosViagem, observacao: e.target.value})}
+                                        placeholder="Instruções, endereço completo, contato, etc..."
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        <button onClick={salvarViagem} style={styles.saveButton}>
+                            <Send size={18} /> ENVIAR ROTEIRO PARA O MOTORISTA
                         </button>
                     </div>
                 </div>
             )}
-            
-            <style>{`.spin { animation: rotation 2s infinite linear; } @keyframes rotation { from { transform: rotate(0deg); } to { transform: rotate(359deg); } }`}</style>
+
+            <style>{`
+                .spin { animation: rotation 2s infinite linear; }
+                @keyframes rotation {
+                    from { transform: rotate(0deg); }
+                    to { transform: rotate(359deg); }
+                }
+            `}</style>
         </div>
     );
 };
 
 const styles = {
-    searchContainer: { display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#0a0a0a', padding: '8px 15px', borderRadius: '12px', border: '1px solid #1a1a1a' },
-    searchInput: { background: 'none', border: 'none', color: '#fff', outline: 'none', fontSize: '13px', width: '220px' },
-    cardHeader: { backgroundColor: '#0a0a0a', padding: '15px', borderRadius: '12px', border: '1px solid #1a1a1a', display: 'flex', alignItems: 'center', gap: '15px' },
-    label: { color: '#444', fontSize: '9px', fontWeight: 'bold' },
-    val: { fontSize: '22px', fontWeight: '900', color: '#fff' },
-    mapWrapper: { height: '380px', width: '100%', borderRadius: '15px', overflow: 'hidden', border: '1px solid #1a1a1a', marginBottom: '25px' },
-    tableWrapper: { backgroundColor: '#0a0a0a', borderRadius: '15px', border: '1px solid #1a1a1a', padding: '10px', overflowX: 'auto' },
-    th: { padding: '15px', textAlign: 'left', fontSize: '11px', color: '#444', fontWeight: '700' },
-    td: { padding: '12px 15px' },
-    tr: { borderBottom: '1px solid #111' },
-    badgePlaca: { fontSize: '10px', color: '#FFD700', backgroundColor: '#1a1a1a', padding: '3px 7px', borderRadius: '5px', fontWeight: 'bold' },
-    badgeVel: { fontSize: '10px', fontWeight: '800', padding: '4px 8px', borderRadius: '4px' },
-    btnForce: { background: '#111', border: '1px solid #222', padding: '6px', borderRadius: '6px', cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center' },
-    actionBtn: { border: 'none', padding: '8px', borderRadius: '8px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10000 },
-    modal: { backgroundColor: '#0a0a0a', padding: '25px', borderRadius: '20px', border: '1px solid #333', width: '95%', maxWidth: '650px', maxHeight: '90vh', overflowY: 'auto' },
-    sectionHeader: { color: '#FFD700', fontSize: '12px', fontWeight: 'bold', borderLeft: '3px solid #FFD700', paddingLeft: '10px', marginBottom: '15px' },
-    formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' },
-    inputGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
-    labelForm: { fontSize: '10px', color: '#666', fontWeight: 'bold' },
-    input: { backgroundColor: '#111', border: '1px solid #333', padding: '10px', borderRadius: '8px', color: '#fff', fontSize: '13px' },
-    btnSalvar: { width: '100%', marginTop: '25px', padding: '15px', backgroundColor: '#FFD700', border: 'none', borderRadius: '10px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' },
-    selectStatus: {
+    container: {
+        padding: '20px',
+        backgroundColor: '#000',
+        minHeight: '100vh',
+        fontFamily: "'Inter', 'Segoe UI', sans-serif"
+    },
+    header: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '25px',
+        flexWrap: 'wrap',
+        gap: '15px'
+    },
+    title: {
+        color: '#fff',
+        margin: 0,
+        fontSize: '20px',
+        fontWeight: '800'
+    },
+    highlight: {
+        color: '#FFD700'
+    },
+    searchContainer: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        backgroundColor: '#0a0a0a',
+        padding: '8px 15px',
+        borderRadius: '12px',
+        border: '1px solid #1a1a1a'
+    },
+    searchInput: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        outline: 'none',
+        fontSize: '13px',
+        width: '220px'
+    },
+    cardsGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: '15px',
+        marginBottom: '25px'
+    },
+    card: {
+        backgroundColor: '#0a0a0a',
+        padding: '15px',
+        borderRadius: '12px',
+        border: '1px solid #1a1a1a',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px',
+        transition: 'transform 0.2s',
+        cursor: 'pointer'
+    },
+    cardValue: {
+        fontSize: '22px',
+        fontWeight: '900',
+        color: '#fff',
+        display: 'block',
+        lineHeight: '1.2'
+    },
+    cardLabel: {
+        color: '#444',
+        fontSize: '9px',
+        fontWeight: 'bold',
+        textTransform: 'uppercase'
+    },
+    mapContainer: {
+        height: '380px',
+        width: '100%',
+        borderRadius: '15px',
+        overflow: 'hidden',
+        border: '1px solid #1a1a1a',
+        marginBottom: '25px'
+    },
+    tableContainer: {
+        backgroundColor: '#0a0a0a',
+        borderRadius: '15px',
+        border: '1px solid #1a1a1a',
+        padding: '10px',
+        overflowX: 'auto'
+    },
+    table: {
+        width: '100%',
+        borderCollapse: 'collapse',
+        minWidth: '1000px'
+    },
+    th: {
+        padding: '15px',
+        textAlign: 'left',
+        fontSize: '11px',
+        color: '#444',
+        fontWeight: '700',
+        borderBottom: '2px solid #111'
+    },
+    tr: {
+        borderBottom: '1px solid #111'
+    },
+    td: {
+        padding: '12px 15px',
+        verticalAlign: 'middle'
+    },
+    placaBadge: {
+        fontSize: '10px',
+        color: '#FFD700',
+        backgroundColor: '#1a1a1a',
+        padding: '3px 7px',
+        borderRadius: '5px',
+        fontWeight: 'bold',
+        display: 'inline-block'
+    },
+    statusSelect: {
         padding: '6px 10px',
         borderRadius: '8px',
         fontSize: '11px',
         fontWeight: 'bold',
-        outline: 'none',
-        cursor: 'pointer',
-        border: '1px solid',
+        border: '1px solid #333',
         backgroundColor: '#000',
-        width: '145px'
+        width: '145px',
+        cursor: 'pointer',
+        outline: 'none'
+    },
+    gpsButton: {
+        background: '#111',
+        border: '1px solid #222',
+        padding: '6px',
+        borderRadius: '6px',
+        cursor: 'pointer',
+        color: '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'background 0.2s'
+    },
+    velocidadeBadge: {
+        fontSize: '10px',
+        fontWeight: '800',
+        padding: '4px 8px',
+        borderRadius: '4px',
+        display: 'inline-block'
+    },
+    actionButton: {
+        border: 'none',
+        padding: '8px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'opacity 0.2s'
+    },
+    modalOverlay: {
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0,0,0,0.9)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 10000,
+        padding: '20px'
+    },
+    modal: {
+        backgroundColor: '#0a0a0a',
+        padding: '25px',
+        borderRadius: '20px',
+        border: '1px solid #333',
+        width: '100%',
+        maxWidth: '700px',
+        maxHeight: '90vh',
+        overflowY: 'auto'
+    },
+    modalHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '25px',
+        borderBottom: '1px solid #222',
+        paddingBottom: '15px'
+    },
+    modalTitle: {
+        color: '#FFD700',
+        margin: 0,
+        fontSize: '18px'
+    },
+    modalCloseButton: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        cursor: 'pointer',
+        padding: '5px'
+    },
+    formSection: {
+        marginBottom: '25px'
+    },
+    sectionHeader: {
+        color: '#FFD700',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        borderLeft: '3px solid #FFD700',
+        paddingLeft: '10px',
+        marginBottom: '15px',
+        textTransform: 'uppercase'
+    },
+    formGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: '15px'
+    },
+    inputGroup: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+    },
+    label: {
+        fontSize: '10px',
+        color: '#666',
+        fontWeight: 'bold',
+        textTransform: 'uppercase'
+    },
+    input: {
+        backgroundColor: '#111',
+        border: '1px solid #333',
+        padding: '12px',
+        borderRadius: '8px',
+        color: '#fff',
+        fontSize: '13px',
+        fontFamily: 'inherit',
+        outline: 'none',
+        transition: 'border 0.2s'
+    },
+    saveButton: {
+        width: '100%',
+        marginTop: '25px',
+        padding: '15px',
+        backgroundColor: '#FFD700',
+        border: 'none',
+        borderRadius: '10px',
+        fontWeight: '900',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '10px',
+        color: '#000',
+        fontSize: '14px',
+        textTransform: 'uppercase',
+        transition: 'background 0.2s'
     }
 };
 

@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, doc, deleteDoc, updateDoc } from "firebase/firestore";
 import { 
     History, Search, User, MapPin, Calendar, 
-    ArrowRight, ChevronDown, ChevronUp, Clock, Hash, Eye, X, Image as ImageIcon
+    ArrowRight, ChevronDown, ChevronUp, Clock, Hash, Eye, X, Image as ImageIcon,
+    Trash2, Pencil // Novos ícones
 } from 'lucide-react';
 
 const HistoricoViagens = () => {
     const [viagens, setViagens] = useState([]);
     const [filtro, setFiltro] = useState('');
     const [motoristasExpandidos, setMotoristasExpandidos] = useState({});
-    const [imagemModal, setImagemModal] = useState(null); // Estado para o Modal
+    const [imagemModal, setImagemModal] = useState(null);
 
     useEffect(() => {
         const q = query(collection(db, "viagens_ativas"), orderBy("criadoEm", "desc"));
@@ -23,6 +24,32 @@ const HistoricoViagens = () => {
         });
         return () => unsubscribe();
     }, []);
+
+    // FUNÇÃO PARA EXCLUIR
+    const excluirViagem = async (id) => {
+        if (window.confirm("Tem certeza que deseja apagar este registro permanentemente?")) {
+            try {
+                await deleteDoc(doc(db, "viagens_ativas", id));
+            } catch (error) {
+                console.error("Erro ao excluir:", error);
+                alert("Erro ao excluir viagem.");
+            }
+        }
+    };
+
+    // FUNÇÃO PARA EDITAR STATUS
+    const editarStatus = async (viagem) => {
+        const novoStatus = window.prompt("Digite o novo status da carga:", viagem.statusOperacional);
+        if (novoStatus !== null && novoStatus !== "") {
+            try {
+                const viagemRef = doc(db, "viagens_ativas", viagem.id);
+                await updateDoc(viagemRef, { statusOperacional: novoStatus });
+            } catch (error) {
+                console.error("Erro ao atualizar:", error);
+                alert("Erro ao atualizar status.");
+            }
+        }
+    };
 
     const viagensAgrupadas = viagens.reduce((acc, viagem) => {
         const nome = viagem.motoristaNome || "Não Identificado";
@@ -73,7 +100,7 @@ const HistoricoViagens = () => {
                         {motoristasExpandidos[nome] && (
                             <div style={styles.detalhesViagens}>
                                 {viagensAgrupadas[nome].map((viagem, index) => (
-                                    <div key={index} style={styles.viagemItem}>
+                                    <div key={viagem.id} style={styles.viagemItem}>
                                         <div style={styles.viagemMain}>
                                             <div style={styles.infoPonto}>
                                                 <small style={styles.tagColeta}>ORIGEM</small>
@@ -90,6 +117,15 @@ const HistoricoViagens = () => {
                                             </div>
 
                                             <div style={styles.infoMeta}>
+                                                <div style={styles.acoesGestor}>
+                                                    <button onClick={() => editarStatus(viagem)} style={styles.btnIconEdit} title="Editar Status">
+                                                        <Pencil size={14} />
+                                                    </button>
+                                                    <button onClick={() => excluirViagem(viagem.id)} style={styles.btnIconDelete} title="Apagar Carga">
+                                                        <Trash2 size={14} />
+                                                    </button>
+                                                </div>
+                                                
                                                 <div 
                                                     style={{
                                                         ...styles.metaBadge, 
@@ -101,7 +137,6 @@ const HistoricoViagens = () => {
                                                 </div>
                                                 <div style={styles.metaItem}><Hash size={12} /> DT: {viagem.dt}</div>
                                                 
-                                                {/* BOTÃO DE VISUALIZAR CANHOTO */}
                                                 {viagem.urlCanhoto ? (
                                                     <button 
                                                         onClick={() => setImagemModal(viagem.urlCanhoto)}
@@ -136,7 +171,7 @@ const HistoricoViagens = () => {
 };
 
 const styles = {
-    // ... manter seus estilos anteriores e adicionar/ajustar estes:
+    // ... manter seus estilos anteriores e adicionar estes novos:
     container: { padding: '20px', color: '#fff', backgroundColor: '#000', minHeight: '100vh' },
     header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
     title: { display: 'flex', alignItems: 'center', gap: '12px', fontSize: '22px', margin: 0, fontWeight: '800' },
@@ -162,7 +197,11 @@ const styles = {
     metaItem: { fontSize: '11px', color: '#888', display: 'flex', alignItems: 'center', gap: '5px' },
     metaBadge: { fontSize: '9px', fontWeight: '900', padding: '4px 10px', borderRadius: '4px' },
     
-    // Novos Estilos do Canhoto
+    // NOVOS ESTILOS DE GESTÃO
+    acoesGestor: { display: 'flex', gap: '8px', marginBottom: '4px' },
+    btnIconEdit: { background: 'none', border: 'none', color: '#3498db', cursor: 'pointer', padding: '4px' },
+    btnIconDelete: { background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', padding: '4px' },
+    
     btnVerCanhoto: { 
         backgroundColor: '#1a1a1a', 
         color: '#FFD700', 
@@ -173,23 +212,13 @@ const styles = {
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
-        gap: '5px',
-        transition: '0.3s'
+        gap: '5px'
     },
     semCanhoto: { fontSize: '10px', color: '#444', fontStyle: 'italic' },
-    
-    // Overlay do Modal
-    overlay: { 
-        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
-        backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', 
-        justifyContent: 'center', alignItems: 'center', zIndex: 9999 
-    },
+    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
     modalContent: { position: 'relative', maxWidth: '80%', maxHeight: '80%' },
-    imgFull: { width: '100%', borderRadius: '10px', boxShadow: '0 0 20px rgba(255,215,0,0.2)' },
-    closeBtn: { 
-        position: 'absolute', top: '-50px', right: '-50px', 
-        background: 'none', border: 'none', color: '#fff', cursor: 'pointer' 
-    }
+    imgFull: { width: '100%', borderRadius: '10px' },
+    closeBtn: { position: 'absolute', top: '-50px', right: '-50px', background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }
 };
 
 export default HistoricoViagens;
