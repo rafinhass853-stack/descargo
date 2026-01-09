@@ -16,12 +16,13 @@ import 'leaflet.markercluster/dist/MarkerCluster.css';
 import 'leaflet.markercluster/dist/MarkerCluster.Default.css';
 
 const caminhaoIcon = new L.Icon({
-    iconUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-icon.png',
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
-    shadowSize: [41, 41]
+    // Substitua pelo caminho local da sua imagem ou uma URL direta
+    iconUrl: 'https://cdn-icons-png.flaticon.com/512/3448/3448339.png', 
+    iconSize: [40, 40],     // Tamanho ajustado para ser mais visível
+    iconAnchor: [20, 20],   // Ponto de ancoragem no centro do ícone
+    popupAnchor: [0, -20],  // Onde o balão de informações (popup) vai aparecer
+    // Geralmente ícones de veículos não usam a sombra padrão de "gota"
+    shadowUrl: null 
 });
 
 const ChangeView = ({ center, zoom }) => {
@@ -243,10 +244,7 @@ const DashboardGeral = () => {
             // 1. SALVAR NA COLEÇÃO PRINCIPAL QUE O APP USA (ordens_servico)
             await setDoc(doc(db, "ordens_servico", viagemId), viagemData);
             console.log("✅ Salvo em ordens_servico");
-            
-            // 2. SALVAR BACKUP (viagens_ativas) - para MinhasViagens.js
-            await setDoc(doc(db, "viagens_ativas", viagemId), viagemData);
-            console.log("✅ Salvo em viagens_ativas");
+
             
             // 3. ENVIAR COMANDO PARA O APP
             await setDoc(doc(db, "comandos_roteiro", motSelecionado.id), {

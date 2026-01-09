@@ -9,6 +9,7 @@ import {
 } from 'lucide-react';
 
 // Importação das Telas de Operação
+import DashboardGeral from './DashboardGeral';
 import PainelCargas from './PainelCargas';
 import Motoristas from './Motoristas';
 import Veiculos from './Veiculos';
@@ -19,11 +20,8 @@ import Folgas from './Folgas';
 import Roteirizacao from './Roteirizacao';
 import Escala from './Escala';
 import JornadaHodometro from './JornadaHodometro';
-import HistoricoViagens from './HistoricoViagens'; // Novo componente
-
-// Importação dos Dashboards
-import DashboardGeral from './DashboardGeral';
-import DashboardCargas from './DashboardCargas';
+import HistoricoViagens from './HistoricoViagens';
+import Abastecimento from './Abastecimento'; // NOVO IMPORT
 
 const PainelGestor = () => {
     const [motoristasOnline, setMotoristasOnline] = useState([]);
@@ -65,6 +63,9 @@ const PainelGestor = () => {
             case 'historico':
                 return <HistoricoViagens />;
             
+            case 'abastecimento': // NOVA ABA
+                return <Abastecimento />;
+            
             case 'relatorio_viagens':
                 return <DashboardCargas />;
             
@@ -100,6 +101,11 @@ const PainelGestor = () => {
 
                     <div onClick={() => setMenuAtivo('historico')} style={menuAtivo === 'historico' ? styles.navItemAtivo : styles.navItem}>
                         <History size={18} /> Histórico de Viagens
+                    </div>
+
+                    {/* NOVA ABA: ABASTECIMENTO */}
+                    <div onClick={() => setMenuAtivo('abastecimento')} style={menuAtivo === 'abastecimento' ? styles.navItemAtivo : styles.navItem}>
+                        <Fuel size={18} /> Controle de Abastecimento
                     </div>
 
                     <div onClick={() => setMenuAtivo('escala')} style={menuAtivo === 'escala' ? styles.navItemAtivo : styles.navItem}>

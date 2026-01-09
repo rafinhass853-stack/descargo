@@ -1,168 +1,876 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, where, doc, deleteDoc, updateDoc } from "firebase/firestore";
 import { 
-    History, Search, User, MapPin, Calendar, 
-    ArrowRight, ChevronDown, ChevronUp, Clock, Hash, Eye, X, Image as ImageIcon,
-    Trash2, Pencil // Novos ícones
+    History, Search, User, ArrowRight, ChevronDown, ChevronUp, 
+    Image as ImageIcon, Trash2, X, Calendar as CalendarIcon, Pencil, Save, Clock,
+    MapPin, Truck, Package, CheckCircle, AlertCircle, FileText
 } from 'lucide-react';
 
 const HistoricoViagens = () => {
     const [viagens, setViagens] = useState([]);
-    const [filtro, setFiltro] = useState('');
+    const [filtroNome, setFiltroNome] = useState('');
+    const [dataInicio, setDataInicio] = useState('');
+    const [dataFim, setDataFim] = useState('');
+    const [abaAtiva, setAbaAtiva] = useState('ativas');
     const [motoristasExpandidos, setMotoristasExpandidos] = useState({});
     const [imagemModal, setImagemModal] = useState(null);
+    const [editandoCarga, setEditandoCarga] = useState(null);
+    const [detalhesModal, setDetalhesModal] = useState(null);
+    const [notificacao, setNotificacao] = useState(null);
 
+    // Mostrar notificação temporária
+    const mostrarNotificacao = (mensagem, tipo = 'info') => {
+        setNotificacao({ mensagem, tipo });
+        setTimeout(() => setNotificacao(null), 3000);
+    };
+
+    // Converter datas do Firebase para input
+    const paraInputDate = (timestamp) => {
+        if (!timestamp) return '';
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        return date.toISOString().split('T')[0];
+    };
+
+    const paraInputDateTime = (timestamp) => {
+        if (!timestamp) return '';
+        const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+        return date.toISOString().slice(0, 16);
+    };
+
+    const paraFirebaseDateTime = (dateString) => {
+        if (!dateString) return null;
+        return new Date(dateString);
+    };
+
+    // Carregar dados do Firestore
     useEffect(() => {
-        const q = query(collection(db, "viagens_ativas"), orderBy("criadoEm", "desc"));
+        const q = query(
+            collection(db, "ordens_servico"), 
+            orderBy("criadoEm", "desc")
+        );
+        
         const unsubscribe = onSnapshot(q, (snapshot) => {
             const lista = [];
             snapshot.forEach((doc) => {
-                lista.push({ id: doc.id, ...doc.data() });
+                const dados = doc.data();
+                
+                // Verificar se tem canhoto e se precisa atualizar status
+                if (dados.urlCanhoto && (!dados.chegouAoDestino || !dados.finalizada)) {
+                    // Atualiza localmente enquanto o Firestore processa
+                    dados.chegouAoDestino = true;
+                    dados.finalizada = true;
+                }
+                
+                lista.push({ 
+                    id: doc.id, 
+                    ...dados,
+                    // Garantir que os campos de data são objetos Date para filtro
+                    dataColetaObj: dados.dataColeta ? (dados.dataColeta.toDate ? dados.dataColeta.toDate() : new Date(dados.dataColeta)) : null,
+                    dataEntregaObj: dados.dataEntrega ? (dados.dataEntrega.toDate ? dados.dataEntrega.toDate() : new Date(dados.dataEntrega)) : null,
+                    criadoEmObj: dados.criadoEm ? (dados.criadoEm.toDate ? dados.criadoEm.toDate() : new Date(dados.criadoEm)) : null
+                });
             });
             setViagens(lista);
         });
+        
         return () => unsubscribe();
     }, []);
 
-    // FUNÇÃO PARA EXCLUIR
-    const excluirViagem = async (id) => {
-        if (window.confirm("Tem certeza que deseja apagar este registro permanentemente?")) {
-            try {
-                await deleteDoc(doc(db, "viagens_ativas", id));
-            } catch (error) {
-                console.error("Erro ao excluir:", error);
-                alert("Erro ao excluir viagem.");
+    // Filtros combinados
+    const viagensFiltradas = viagens.filter(v => {
+        // Filtro por status (ativa/finalizada)
+        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto;
+        if (abaAtiva === 'finalizadas' && !isFinalizada) return false;
+        if (abaAtiva === 'ativas' && isFinalizada) return false;
+        
+        // Filtro por nome do motorista
+        const bateNome = v.motoristaNome?.toLowerCase().includes(filtroNome.toLowerCase()) || 
+                         v.cavalo?.toLowerCase().includes(filtroNome.toLowerCase()) ||
+                         v.carreta?.toLowerCase().includes(filtroNome.toLowerCase());
+        
+        // Filtro por data
+        if (dataInicio || dataFim) {
+            const dataColeta = v.dataColetaObj || v.criadoEmObj;
+            if (!dataColeta) return false;
+            
+            const dataViagem = new Date(dataColeta);
+            
+            if (dataInicio) {
+                const inicio = new Date(dataInicio);
+                inicio.setHours(0, 0, 0, 0);
+                if (dataViagem < inicio) return false;
+            }
+            
+            if (dataFim) {
+                const fim = new Date(dataFim);
+                fim.setHours(23, 59, 59, 999);
+                if (dataViagem > fim) return false;
             }
         }
-    };
+        
+        return bateNome;
+    });
 
-    // FUNÇÃO PARA EDITAR STATUS
-    const editarStatus = async (viagem) => {
-        const novoStatus = window.prompt("Digite o novo status da carga:", viagem.statusOperacional);
-        if (novoStatus !== null && novoStatus !== "") {
-            try {
-                const viagemRef = doc(db, "viagens_ativas", viagem.id);
-                await updateDoc(viagemRef, { statusOperacional: novoStatus });
-            } catch (error) {
-                console.error("Erro ao atualizar:", error);
-                alert("Erro ao atualizar status.");
-            }
-        }
-    };
-
-    const viagensAgrupadas = viagens.reduce((acc, viagem) => {
-        const nome = viagem.motoristaNome || "Não Identificado";
+    // Agrupar por motorista
+    const viagensAgrupadas = viagensFiltradas.reduce((acc, v) => {
+        const nome = v.motoristaNome || "Não identificado";
         if (!acc[nome]) acc[nome] = [];
-        acc[nome].push(viagem);
+        acc[nome].push(v);
         return acc;
     }, {});
 
-    const toggleMotorista = (nome) => {
-        setMotoristasExpandidos(prev => ({ ...prev, [nome]: !prev[nome] }));
+    // Salvar alterações
+    const salvarAlteracoes = async () => {
+        if (!editandoCarga) return;
+        
+        try {
+            const ref = doc(db, "ordens_servico", editandoCarga.id);
+            let dadosAtualizados = {
+                ...editandoCarga,
+                dataColeta: editandoCarga.dataColeta ? paraFirebaseDateTime(editandoCarga.dataColeta) : null,
+                dataEntrega: editandoCarga.dataEntrega ? paraFirebaseDateTime(editandoCarga.dataEntrega) : null,
+                atualizadoEm: new Date()
+            };
+            
+            // Verificar se foi adicionado um canhoto
+            const tinhaCanhotoAntes = viagens.find(v => v.id === editandoCarga.id)?.urlCanhoto;
+            const temCanhotoAgora = editandoCarga.urlCanhoto;
+            
+            // Se adicionou um canhoto, finalizar automaticamente
+            if (temCanhotoAgora && !tinhaCanhotoAntes) {
+                dadosAtualizados = {
+                    ...dadosAtualizados,
+                    chegouAoDestino: true,
+                    finalizada: true,
+                    dataFinalizacao: new Date()
+                };
+                mostrarNotificacao('Viagem finalizada automaticamente com o canhoto!', 'success');
+            }
+            
+            // Remover objetos Date temporários
+            delete dadosAtualizados.dataColetaObj;
+            delete dadosAtualizados.dataEntregaObj;
+            delete dadosAtualizados.criadoEmObj;
+            
+            await updateDoc(ref, dadosAtualizados);
+            setEditandoCarga(null);
+            mostrarNotificacao("OS atualizada com sucesso!", 'success');
+        } catch (e) { 
+            console.error("Erro ao salvar:", e);
+            mostrarNotificacao("Erro ao salvar alterações.", 'error'); 
+        }
     };
 
-    const nomesMotoristas = Object.keys(viagensAgrupadas).filter(nome => 
-        nome.toLowerCase().includes(filtro.toLowerCase())
-    );
+    // Função para abrir modal de imagem do canhoto
+    const abrirModalCanhoto = async (viagem) => {
+        setImagemModal({
+            url: viagem.urlCanhoto,
+            viagemId: viagem.id,
+            viagemNome: viagem.motoristaNome || 'Viagem'
+        });
+    };
+
+    // Modal de detalhes
+    const abrirModalDetalhes = (viagem) => {
+        setDetalhesModal(viagem);
+    };
+
+    // Renderizar notificação
+    const renderNotificacao = () => {
+        if (!notificacao) return null;
+        
+        const estilo = {
+            position: 'fixed',
+            top: '20px',
+            right: '20px',
+            padding: '15px 20px',
+            borderRadius: '8px',
+            background: notificacao.tipo === 'success' ? '#16a34a' : 
+                       notificacao.tipo === 'error' ? '#e74c3c' : '#3498db',
+            color: '#fff',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+        };
+        
+        return (
+            <div style={estilo}>
+                {notificacao.tipo === 'success' ? <CheckCircle size={20} /> : 
+                 notificacao.tipo === 'error' ? <AlertCircle size={20} /> : 
+                 <AlertCircle size={20} />}
+                <span>{notificacao.mensagem}</span>
+            </div>
+        );
+    };
 
     return (
         <div style={styles.container}>
+            {/* NOTIFICAÇÃO */}
+            {renderNotificacao()}
+            
+            {/* HEADER */}
             <header style={styles.header}>
                 <div>
-                    <h2 style={styles.title}><History size={24} color="#FFD700" /> Histórico de Operações</h2>
-                    <p style={styles.subtitle}>Gestão de canhotos e status de carga</p>
+                    <h2 style={styles.title}>
+                        <History size={28} color="#FFD700" /> 
+                        <span>DESCARGO</span>
+                    </h2>
+                    <p style={styles.subtitle}>Norteamiento</p>
                 </div>
-                <div style={styles.searchBar}>
-                    <Search size={18} color="#FFD700" />
-                    <input 
-                        placeholder="Filtrar por nome do motorista..." 
-                        style={styles.searchInput}
-                        onChange={(e) => setFiltro(e.target.value)}
-                    />
+                <div style={styles.AbasContainer}>
+                    <button 
+                        onClick={() => setAbaAtiva('ativas')} 
+                        style={{
+                            ...styles.abaBtn, 
+                            backgroundColor: abaAtiva === 'ativas' ? '#FFD700' : 'transparent',
+                            color: abaAtiva === 'ativas' ? '#000' : '#666',
+                            border: `1px solid ${abaAtiva === 'ativas' ? '#FFD700' : '#333'}`
+                        }}
+                    >
+                        <Truck size={14} /> ATIVAS
+                    </button>
+                    <button 
+                        onClick={() => setAbaAtiva('finalizadas')} 
+                        style={{
+                            ...styles.abaBtn, 
+                            backgroundColor: abaAtiva === 'finalizadas' ? '#16a34a' : 'transparent',
+                            color: abaAtiva === 'finalizadas' ? '#fff' : '#666',
+                            border: `1px solid ${abaAtiva === 'finalizadas' ? '#16a34a' : '#333'}`
+                        }}
+                    >
+                        <CheckCircle size={14} /> FINALIZADAS
+                    </button>
                 </div>
             </header>
 
-            <div style={styles.listaContainer}>
-                {nomesMotoristas.map(nome => (
-                    <div key={nome} style={styles.cardMotorista}>
-                        <div style={styles.motoristaHeader} onClick={() => toggleMotorista(nome)}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                                <div style={styles.avatar}><User size={20} /></div>
-                                <div>
-                                    <h3 style={styles.nomeMot}>{nome.toUpperCase()}</h3>
-                                    <span style={styles.qtdViagens}>{viagensAgrupadas[nome].length} viagem(ns)</span>
-                                </div>
-                            </div>
-                            {motoristasExpandidos[nome] ? <ChevronUp /> : <ChevronDown />}
-                        </div>
-
-                        {motoristasExpandidos[nome] && (
-                            <div style={styles.detalhesViagens}>
-                                {viagensAgrupadas[nome].map((viagem, index) => (
-                                    <div key={viagem.id} style={styles.viagemItem}>
-                                        <div style={styles.viagemMain}>
-                                            <div style={styles.infoPonto}>
-                                                <small style={styles.tagColeta}>ORIGEM</small>
-                                                <div style={styles.cidadeText}>{viagem.clienteColeta}</div>
-                                                <div style={styles.subText}>{viagem.cidadeColeta}</div>
-                                            </div>
-
-                                            <div style={styles.seta}><ArrowRight size={20} color="#333" /></div>
-
-                                            <div style={styles.infoPonto}>
-                                                <small style={styles.tagEntrega}>DESTINO</small>
-                                                <div style={styles.cidadeText}>{viagem.clienteEntrega}</div>
-                                                <div style={styles.subText}>{viagem.destinoCidade}</div>
-                                            </div>
-
-                                            <div style={styles.infoMeta}>
-                                                <div style={styles.acoesGestor}>
-                                                    <button onClick={() => editarStatus(viagem)} style={styles.btnIconEdit} title="Editar Status">
-                                                        <Pencil size={14} />
-                                                    </button>
-                                                    <button onClick={() => excluirViagem(viagem.id)} style={styles.btnIconDelete} title="Apagar Carga">
-                                                        <Trash2 size={14} />
-                                                    </button>
-                                                </div>
-                                                
-                                                <div 
-                                                    style={{
-                                                        ...styles.metaBadge, 
-                                                        backgroundColor: viagem.urlCanhoto ? '#2ecc71' : '#FFD700',
-                                                        color: viagem.urlCanhoto ? '#fff' : '#000'
-                                                    }}
-                                                >
-                                                    {viagem.statusOperacional}
-                                                </div>
-                                                <div style={styles.metaItem}><Hash size={12} /> DT: {viagem.dt}</div>
-                                                
-                                                {viagem.urlCanhoto ? (
-                                                    <button 
-                                                        onClick={() => setImagemModal(viagem.urlCanhoto)}
-                                                        style={styles.btnVerCanhoto}
-                                                    >
-                                                        <ImageIcon size={14} /> Ver Canhoto
-                                                    </button>
-                                                ) : (
-                                                    <div style={styles.semCanhoto}>Pendente</div>
-                                                )}
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
+            {/* BARRA DE FILTROS */}
+            <div style={styles.filterSection}>
+                <div style={styles.filterGrid}>
+                    <div style={styles.searchBar}>
+                        <Search size={18} color="#555" />
+                        <input 
+                            placeholder="Buscar motorista, cavalo ou carreta..." 
+                            style={styles.searchInput}
+                            value={filtroNome}
+                            onChange={(e) => setFiltroNome(e.target.value)}
+                        />
                     </div>
-                ))}
+                    
+                    <div style={styles.dateFilters}>
+                        <div style={styles.dateInputGroup}>
+                            <CalendarIcon size={16} />
+                            <input 
+                                type="date" 
+                                style={styles.dateInput}
+                                value={dataInicio}
+                                onChange={(e) => setDataInicio(e.target.value)}
+                            />
+                            <span style={styles.dateLabel}>De</span>
+                        </div>
+                        
+                        <div style={styles.dateInputGroup}>
+                            <CalendarIcon size={16} />
+                            <input 
+                                type="date" 
+                                style={styles.dateInput}
+                                value={dataFim}
+                                onChange={(e) => setDataFim(e.target.value)}
+                            />
+                            <span style={styles.dateLabel}>Até</span>
+                        </div>
+                        
+                        <button 
+                            style={styles.btnLimparFiltros}
+                            onClick={() => {
+                                setDataInicio('');
+                                setDataFim('');
+                                setFiltroNome('');
+                            }}
+                        >
+                            Limpar filtros
+                        </button>
+                    </div>
+                </div>
+                
+                <div style={styles.resumoContainer}>
+                    <div style={styles.resumoItem}>
+                        <span style={styles.resumoLabel}>Total de Viagens:</span>
+                        <span style={styles.resumoValor}>{viagensFiltradas.length}</span>
+                    </div>
+                    <div style={styles.resumoItem}>
+                        <span style={styles.resumoLabel}>Motoristas:</span>
+                        <span style={styles.resumoValor}>{Object.keys(viagensAgrupadas).length}</span>
+                    </div>
+                    <div style={styles.resumoItem}>
+                        <span style={styles.resumoLabel}>Com Canhoto:</span>
+                        <span style={styles.resumoValor}>
+                            {viagensFiltradas.filter(v => v.urlCanhoto).length}
+                        </span>
+                    </div>
+                </div>
             </div>
 
-            {/* MODAL DE IMAGEM */}
+            {/* LISTA DE VIAGENS AGRUPADAS POR MOTORISTA */}
+            <div style={styles.listaContainer}>
+                {Object.keys(viagensAgrupadas).length === 0 ? (
+                    <div style={styles.emptyState}>
+                        <Package size={48} color="#666" />
+                        <p>Nenhuma viagem encontrada com os filtros atuais.</p>
+                    </div>
+                ) : (
+                    Object.keys(viagensAgrupadas).map(nome => (
+                        <div key={nome} style={styles.cardMotorista}>
+                            <div 
+                                style={styles.motoristaHeader} 
+                                onClick={() => setMotoristasExpandidos(p => ({...p, [nome]: !p[nome]}))}
+                            >
+                                <div style={styles.motoristaInfo}>
+                                    <div style={styles.avatar}>
+                                        <User size={20} />
+                                    </div>
+                                    <div>
+                                        <h3 style={styles.nomeMot}>{nome.toUpperCase()}</h3>
+                                        <p style={styles.motoristaDetalhes}>
+                                            {viagensAgrupadas[nome][0]?.cavalo && `Cavalo: ${viagensAgrupadas[nome][0].cavalo}`}
+                                            {viagensAgrupadas[nome][0]?.carreta && ` | Carreta: ${viagensAgrupadas[nome][0].carreta}`}
+                                        </p>
+                                    </div>
+                                </div>
+                                <div style={styles.motoristaStats}>
+                                    <span style={styles.statBadge}>
+                                        {viagensAgrupadas[nome].length} {viagensAgrupadas[nome].length === 1 ? 'VIAGEM' : 'VIAGENS'}
+                                    </span>
+                                    {motoristasExpandidos[nome] ? <ChevronUp color="#FFD700" /> : <ChevronDown color="#FFD700" />}
+                                </div>
+                            </div>
+
+                            {motoristasExpandidos[nome] && (
+                                <div style={styles.detalhesViagens}>
+                                    {viagensAgrupadas[nome].map((v) => {
+                                        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto;
+                                        const temCanhoto = !!v.urlCanhoto;
+                                        
+                                        return (
+                                            <div key={v.id} style={styles.viagemItem}>
+                                                <div style={styles.viagemMain}>
+                                                    {/* ORIGEM */}
+                                                    <div style={styles.infoPonto}>
+                                                        <div style={styles.tagContainer}>
+                                                            <span style={styles.tagOrigem}>
+                                                                <MapPin size={10} /> COLETA
+                                                            </span>
+                                                            {v.confirmaceoPendente && (
+                                                                <span style={styles.tagAtencao}>
+                                                                    <AlertCircle size={10} /> PENDENTE
+                                                                </span>
+                                                            )}
+                                                            {temCanhoto && (
+                                                                <span style={styles.tagCanhoto}>
+                                                                    <CheckCircle size={10} /> CANHOTO
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div style={styles.cidadeText}>{v.cidadeColeta || v.origemCidade}</div>
+                                                        <div style={styles.clienteSubText}>{v.clienteColeta}</div>
+                                                        <div style={styles.dataText}>
+                                                            <Clock size={12}/> 
+                                                            {v.dataColeta ? paraInputDateTime(v.dataColeta).replace('T', ' ') : '--/--/-- --:--'}
+                                                        </div>
+                                                    </div>
+
+                                                    <ArrowRight size={20} color="#FFD700" style={styles.arrowIcon} />
+
+                                                    {/* DESTINO */}
+                                                    <div style={styles.infoPonto}>
+                                                        <div style={styles.tagContainer}>
+                                                            <span style={styles.tagDestino}>
+                                                                <MapPin size={10} /> ENTREGA
+                                                            </span>
+                                                        </div>
+                                                        <div style={styles.cidadeText}>{v.cidadeDestino || v.destinoCidade}</div>
+                                                        <div style={styles.clienteSubText}>{v.clienteEntrega}</div>
+                                                        <div style={styles.dataText}>
+                                                            <Clock size={12}/> 
+                                                            {v.dataEntrega ? paraInputDateTime(v.dataEntrega).replace('T', ' ') : '--/--/-- --:--'}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* STATUS E AÇÕES */}
+                                                    <div style={styles.infoStatus}>
+                                                        <div style={styles.acoesContainer}>
+                                                            <button 
+                                                                onClick={() => abrirModalDetalhes(v)}
+                                                                style={styles.btnIcon}
+                                                                title="Ver detalhes"
+                                                            >
+                                                                <FileText size={16} color="#3498db"/>
+                                                            </button>
+                                                            <button 
+                                                                onClick={() => setEditandoCarga(v)}
+                                                                style={styles.btnIcon}
+                                                                title="Editar"
+                                                            >
+                                                                <Pencil size={16} color="#FFD700"/>
+                                                            </button>
+                                                            <button 
+                                                                onClick={async () => {
+                                                                    if (window.confirm("Tem certeza que deseja excluir esta viagem?")) {
+                                                                        await deleteDoc(doc(db, "ordens_servico", v.id));
+                                                                        mostrarNotificacao('Viagem excluída com sucesso!', 'success');
+                                                                    }
+                                                                }} 
+                                                                style={styles.btnIcon}
+                                                                title="Excluir"
+                                                            >
+                                                                <Trash2 size={16} color="#e74c3c" />
+                                                            </button>
+                                                        </div>
+                                                        <div style={{
+                                                            ...styles.statusBadge,
+                                                            backgroundColor: isFinalizada ? '#16a34a' : '#ca8a04',
+                                                            border: temCanhoto ? '2px solid #FFD700' : 'none'
+                                                        }}>
+                                                            {temCanhoto ? 'FINALIZADA (CANHOTO)' : 
+                                                             isFinalizada ? 'FINALIZADA' : 'EM CURSO'}
+                                                        </div>
+                                                        
+                                                        {/* BOTÃO PARA VER CANHOTO */}
+                                                        {v.urlCanhoto && (
+                                                            <button 
+                                                                onClick={() => abrirModalCanhoto(v)}
+                                                                style={styles.btnCanhoto}
+                                                            >
+                                                                <ImageIcon size={14}/> Ver Canhoto
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                
+                                                {/* INFO ADICIONAL */}
+                                                <div style={styles.viagemExtra}>
+                                                    <div style={styles.extraItem}>
+                                                        <span style={styles.extraLabel}>Cavalo:</span>
+                                                        <span style={styles.extraValue}>{v.cavalo || 'S/ PLACA'}</span>
+                                                    </div>
+                                                    <div style={styles.extraItem}>
+                                                        <span style={styles.extraLabel}>Carreta:</span>
+                                                        <span style={styles.extraValue}>{v.carreta || '--'}</span>
+                                                    </div>
+                                                    <div style={styles.extraItem}>
+                                                        <span style={styles.extraLabel}>Criado em:</span>
+                                                        <span style={styles.extraValue}>
+                                                            {v.criadoEm ? paraInputDateTime(v.criadoEm).replace('T', ' ') : '--/--/-- --:--'}
+                                                        </span>
+                                                    </div>
+                                                    {v.urlCanhoto && (
+                                                        <div style={styles.extraItem}>
+                                                            <span style={styles.extraLabel}>Finalizada com canhoto:</span>
+                                                            <span style={{...styles.extraValue, color: '#16a34a'}}>
+                                                                Sim
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    ))
+                )}
+            </div>
+
+            {/* MODAL DE DETALHES */}
+            {detalhesModal && (
+                <div style={styles.overlay}>
+                    <div style={styles.modalDetalhes}>
+                        <div style={styles.modalHeader}>
+                            <div>
+                                <h3 style={styles.modalTitle}>
+                                    <FileText size={20} /> DETALHES DA ORDEM DE SERVIÇO
+                                </h3>
+                                <p style={styles.modalSubtitle}>ID: {detalhesModal.id}</p>
+                            </div>
+                            <button 
+                                onClick={() => setDetalhesModal(null)}
+                                style={styles.btnClose}
+                            >
+                                <X size={24} />
+                            </button>
+                        </div>
+                        
+                        <div style={styles.modalContent}>
+                            {/* INFORMAÇÕES PRINCIPAIS */}
+                            <div style={styles.modalSection}>
+                                <h4 style={styles.sectionTitle}>
+                                    <Truck size={16} /> INFORMAÇÕES DA VIAGEM
+                                </h4>
+                                <div style={styles.infoGrid}>
+                                    <div style={styles.infoItem}>
+                                        <span style={styles.infoLabel}>Motorista:</span>
+                                        <span style={styles.infoValue}>{detalhesModal.motoristaNome || 'Não informado'}</span>
+                                    </div>
+                                    <div style={styles.infoItem}>
+                                        <span style={styles.infoLabel}>Cavalo:</span>
+                                        <span style={styles.infoValue}>{detalhesModal.cavalo || 'S/ PLACA'}</span>
+                                    </div>
+                                    <div style={styles.infoItem}>
+                                        <span style={styles.infoLabel}>Carreta:</span>
+                                        <span style={styles.infoValue}>{detalhesModal.carreta || '--'}</span>
+                                    </div>
+                                    <div style={styles.infoItem}>
+                                        <span style={styles.infoLabel}>Status:</span>
+                                        <span style={{
+                                            ...styles.infoValue,
+                                            color: detalhesModal.chegouAoDestino || detalhesModal.urlCanhoto ? '#16a34a' : '#ca8a04',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            {detalhesModal.urlCanhoto ? 'FINALIZADA (COM CANHOTO)' : 
+                                             detalhesModal.chegouAoDestino ? 'FINALIZADA' : 'EM ANDAMENTO'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* TRAJETO */}
+                            <div style={styles.modalSection}>
+                                <h4 style={styles.sectionTitle}>
+                                    <MapPin size={16} /> TRAJETO
+                                </h4>
+                                <div style={styles.trajetoContainer}>
+                                    <div style={styles.trajetoItem}>
+                                        <div style={styles.trajetoHeader}>
+                                            <div style={{...styles.trajetoIcon, backgroundColor: '#3498db'}}>
+                                                <MapPin size={12} />
+                                            </div>
+                                            <h5 style={styles.trajetoTitle}>COLETA</h5>
+                                        </div>
+                                        <div style={styles.trajetoContent}>
+                                            <p style={styles.trajetoCliente}>{detalhesModal.clienteColeta}</p>
+                                            <p style={styles.trajetoCidade}>{detalhesModal.cidadeColeta || detalhesModal.origemCidade}</p>
+                                            <p style={styles.trajetoData}>
+                                                <Clock size={12} /> {detalhesModal.dataColeta ? paraInputDateTime(detalhesModal.dataColeta).replace('T', ' ') : '--/--/-- --:--'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    
+                                    <ArrowRight size={24} color="#FFD700" style={{margin: '0 20px', alignSelf: 'center'}} />
+                                    
+                                    <div style={styles.trajetoItem}>
+                                        <div style={styles.trajetoHeader}>
+                                            <div style={{...styles.trajetoIcon, backgroundColor: '#e67e22'}}>
+                                                <MapPin size={12} />
+                                            </div>
+                                            <h5 style={styles.trajetoTitle}>ENTREGA</h5>
+                                        </div>
+                                        <div style={styles.trajetoContent}>
+                                            <p style={styles.trajetoCliente}>{detalhesModal.clienteEntrega}</p>
+                                            <p style={styles.trajetoCidade}>{detalhesModal.cidadeDestino || detalhesModal.destinoCidade}</p>
+                                            <p style={styles.trajetoData}>
+                                                <Clock size={12} /> {detalhesModal.dataEntrega ? paraInputDateTime(detalhesModal.dataEntrega).replace('T', ' ') : '--/--/-- --:--'}
+                                            </p>
+                                            {(detalhesModal.chegouAoDestino || detalhesModal.urlCanhoto) && detalhesModal.dataFinalizacao && (
+                                                <p style={styles.trajetoFinalizado}>
+                                                    <CheckCircle size={12} /> Finalizado em: {paraInputDateTime(detalhesModal.dataFinalizacao).replace('T', ' ')}
+                                                    {detalhesModal.urlCanhoto && ' (com canhoto)'}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            {/* CANHOTO */}
+                            {detalhesModal.urlCanhoto && (
+                                <div style={styles.modalSection}>
+                                    <h4 style={styles.sectionTitle}>
+                                        <ImageIcon size={16} /> COMPROVANTE/CANHOTO
+                                    </h4>
+                                    <div style={styles.canhotoContainer}>
+                                        <div style={styles.canhotoStatus}>
+                                            <CheckCircle size={20} color="#16a34a" />
+                                            <span style={styles.canhotoStatusText}>
+                                                Esta viagem foi finalizada automaticamente com o envio do canhoto
+                                            </span>
+                                        </div>
+                                        <button 
+                                            onClick={() => abrirModalCanhoto(detalhesModal)}
+                                            style={styles.btnVerCanhoto}
+                                        >
+                                            <ImageIcon size={18} /> VER CANHOTO COMPLETO
+                                        </button>
+                                        <p style={styles.canhotoInfo}>
+                                            Clique para visualizar a imagem enviada pelo motorista
+                                        </p>
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {/* METADADOS */}
+                            <div style={styles.modalSection}>
+                                <h4 style={styles.sectionTitle}>
+                                    <CalendarIcon size={16} /> METADADOS
+                                </h4>
+                                <div style={styles.metadataGrid}>
+                                    <div style={styles.metadataItem}>
+                                        <span style={styles.metadataLabel}>Criado em:</span>
+                                        <span style={styles.metadataValue}>
+                                            {detalhesModal.criadoEm ? paraInputDateTime(detalhesModal.criadoEm).replace('T', ' ') : '--/--/-- --:--'}
+                                        </span>
+                                    </div>
+                                    <div style={styles.metadataItem}>
+                                        <span style={styles.metadataLabel}>Atualizado em:</span>
+                                        <span style={styles.metadataValue}>
+                                            {detalhesModal.atualizadoEm ? paraInputDateTime(detalhesModal.atualizadoEm).replace('T', ' ') : '--/--/-- --:--'}
+                                        </span>
+                                    </div>
+                                    <div style={styles.metadataItem}>
+                                        <span style={styles.metadataLabel}>Tem Canhoto:</span>
+                                        <span style={{
+                                            ...styles.metadataValue,
+                                            color: detalhesModal.urlCanhoto ? '#16a34a' : '#e74c3c',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            {detalhesModal.urlCanhoto ? 'SIM' : 'NÃO'}
+                                        </span>
+                                    </div>
+                                    {detalhesModal.confirmaceoPendente !== undefined && (
+                                        <div style={styles.metadataItem}>
+                                            <span style={styles.metadataLabel}>Confirmação Pendente:</span>
+                                            <span style={{
+                                                ...styles.metadataValue,
+                                                color: detalhesModal.confirmaceoPendente ? '#e74c3c' : '#16a34a'
+                                            }}>
+                                                {detalhesModal.confirmaceoPendente ? 'SIM' : 'NÃO'}
+                                            </span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div style={styles.modalFooter}>
+                            <button 
+                                onClick={() => {
+                                    setEditandoCarga(detalhesModal);
+                                    setDetalhesModal(null);
+                                }}
+                                style={styles.btnEditarModal}
+                            >
+                                <Pencil size={16} /> EDITAR OS
+                            </button>
+                            <button 
+                                onClick={() => setDetalhesModal(null)}
+                                style={styles.btnFecharModal}
+                            >
+                                FECHAR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DE EDIÇÃO */}
+            {editandoCarga && (
+                <div style={styles.overlay}>
+                    <div style={styles.modalEdit}>
+                        <div style={styles.modalEditHeader}>
+                            <h3><Pencil size={18}/> EDITAR ORDEM DE SERVIÇO</h3>
+                            <button onClick={() => setEditandoCarga(null)} style={styles.btnClose}><X /></button>
+                        </div>
+                        
+                        <div style={styles.formGrid}>
+                            {/* MOTORISTA E VEÍCULO */}
+                            <h4 style={styles.formSectionTitle}><User size={14} /> MOTORISTA E VEÍCULO</h4>
+                            <div style={styles.inputGroup}>
+                                <label>MOTORISTA</label>
+                                <input 
+                                    value={editandoCarga.motoristaNome || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, motoristaNome: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>CAVALO</label>
+                                <input 
+                                    value={editandoCarga.cavalo || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, cavalo: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>CARRETA</label>
+                                <input 
+                                    value={editandoCarga.carreta || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, carreta: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+
+                            {/* COLETA */}
+                            <h4 style={styles.formSectionTitle}><MapPin size={14} /> COLETA (ORIGEM)</h4>
+                            <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                                <label>CLIENTE COLETA</label>
+                                <input 
+                                    value={editandoCarga.clienteColeta || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, clienteColeta: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>CIDADE COLETA</label>
+                                <input 
+                                    value={editandoCarga.cidadeColeta || editandoCarga.origemCidade || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, cidadeColeta: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>DATA/HORA COLETA</label>
+                                <input 
+                                    type="datetime-local" 
+                                    value={paraInputDateTime(editandoCarga.dataColeta)} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, dataColeta: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+
+                            {/* ENTREGA */}
+                            <h4 style={styles.formSectionTitle}><MapPin size={14} /> ENTREGA (DESTINO)</h4>
+                            <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                                <label>CLIENTE ENTREGA</label>
+                                <input 
+                                    value={editandoCarga.clienteEntrega || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, clienteEntrega: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>CIDADE DESTINO</label>
+                                <input 
+                                    value={editandoCarga.cidadeDestino || editandoCarga.destinoCidade || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, cidadeDestino: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>DATA/HORA ENTREGA</label>
+                                <input 
+                                    type="datetime-local" 
+                                    value={paraInputDateTime(editandoCarga.dataEntrega)} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, dataEntrega: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                />
+                            </div>
+
+                            {/* CANHOTO */}
+                            <h4 style={styles.formSectionTitle}><ImageIcon size={14} /> CANHOTO</h4>
+                            <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                                <label>URL DO CANHOTO (Imagem)</label>
+                                <input 
+                                    value={editandoCarga.urlCanhoto || ''} 
+                                    onChange={e => setEditandoCarga({...editandoCarga, urlCanhoto: e.target.value})} 
+                                    style={styles.inputStyle} 
+                                    placeholder="Cole a URL da imagem do canhoto"
+                                />
+                                <small style={styles.helperText}>
+                                    {editandoCarga.urlCanhoto && !viagens.find(v => v.id === editandoCarga.id)?.urlCanhoto ? 
+                                     "⚠️ Ao adicionar um canhoto, esta viagem será automaticamente finalizada!" : 
+                                     "Adicione a URL da imagem do canhoto para finalizar a viagem"}
+                                </small>
+                            </div>
+
+                            {/* STATUS */}
+                            <h4 style={styles.formSectionTitle}><CheckCircle size={14} /> STATUS</h4>
+                            <div style={styles.inputGroup}>
+                                <label>CHEGOU AO DESTINO?</label>
+                                <select 
+                                    value={editandoCarga.chegouAoDestino ? 'true' : 'false'}
+                                    onChange={e => setEditandoCarga({...editandoCarga, chegouAoDestino: e.target.value === 'true'})}
+                                    style={styles.inputStyle}
+                                    disabled={!!editandoCarga.urlCanhoto}
+                                >
+                                    <option value="false">NÃO (EM CURSO)</option>
+                                    <option value="true">SIM (FINALIZADA)</option>
+                                </select>
+                                {editandoCarga.urlCanhoto && (
+                                    <small style={styles.helperText}>
+                                        Status bloqueado porque tem canhoto (finalizada automaticamente)
+                                    </small>
+                                )}
+                            </div>
+                            <div style={styles.inputGroup}>
+                                <label>CONFIRMAÇÃO PENDENTE?</label>
+                                <select 
+                                    value={editandoCarga.confirmaceoPendente ? 'true' : 'false'}
+                                    onChange={e => setEditandoCarga({...editandoCarga, confirmaceoPendente: e.target.value === 'true'})}
+                                    style={styles.inputStyle}
+                                >
+                                    <option value="false">NÃO</option>
+                                    <option value="true">SIM</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style={styles.modalEditFooter}>
+                            <button onClick={() => setEditandoCarga(null)} style={styles.btnCancelar}>
+                                CANCELAR
+                            </button>
+                            <button onClick={salvarAlteracoes} style={styles.btnSalvar}>
+                                <Save size={18}/> SALVAR ALTERAÇÕES
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DA IMAGEM DO CANHOTO */}
             {imagemModal && (
-                <div style={styles.overlay} onClick={() => setImagemModal(null)}>
-                    <div style={styles.modalContent} onClick={e => e.stopPropagation()}>
-                        <button style={styles.closeBtn} onClick={() => setImagemModal(null)}><X size={30} /></button>
-                        <img src={imagemModal} alt="Canhoto" style={styles.imgFull} />
+                <div style={styles.overlayImagem}>
+                    <div style={styles.modalImagemContainer}>
+                        <div style={styles.modalImagemHeader}>
+                            <div>
+                                <h3><ImageIcon size={20} /> CANHOTO/COMPROVANTE</h3>
+                                <p style={styles.imagemSubtitle}>
+                                    {imagemModal.viagemNome} • {imagemModal.viagemId}
+                                </p>
+                            </div>
+                            <button onClick={() => setImagemModal(null)} style={styles.btnClose}>
+                                <X size={24} />
+                            </button>
+                        </div>
+                        <div style={styles.modalImagemContent}>
+                            <div style={styles.imagemStatus}>
+                                <CheckCircle size={24} color="#16a34a" />
+                                <span>Viagem finalizada com este canhoto</span>
+                            </div>
+                            <img 
+                                src={imagemModal.url} 
+                                alt="Canhoto" 
+                                style={styles.imagemCanhoto}
+                                onError={(e) => {
+                                    e.target.onerror = null;
+                                    e.target.src = 'https://via.placeholder.com/600x400/111/FFD700?text=Imagem+n%C3%A3o+dispon%C3%ADvel';
+                                }}
+                            />
+                        </div>
+                        <div style={styles.modalImagemFooter}>
+                            <a 
+                                href={imagemModal.url} 
+                                target="_blank" 
+                                rel="noopener noreferrer"
+                                style={styles.btnDownload}
+                            >
+                                ABRIR EM NOVA ABA
+                            </a>
+                            <button onClick={() => setImagemModal(null)} style={styles.btnFecharImagem}>
+                                FECHAR
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -171,54 +879,822 @@ const HistoricoViagens = () => {
 };
 
 const styles = {
-    // ... manter seus estilos anteriores e adicionar estes novos:
-    container: { padding: '20px', color: '#fff', backgroundColor: '#000', minHeight: '100vh' },
-    header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
-    title: { display: 'flex', alignItems: 'center', gap: '12px', fontSize: '22px', margin: 0, fontWeight: '800' },
-    subtitle: { color: '#666', fontSize: '14px', margin: '5px 0 0 0' },
-    searchBar: { display: 'flex', alignItems: 'center', gap: '10px', backgroundColor: '#0a0a0a', padding: '10px 15px', borderRadius: '10px', border: '1px solid #222' },
-    searchInput: { background: 'none', border: 'none', color: '#fff', outline: 'none', width: '250px' },
-    listaContainer: { display: 'flex', flexDirection: 'column', gap: '15px' },
-    cardMotorista: { backgroundColor: '#0a0a0a', borderRadius: '12px', border: '1px solid #1a1a1a', overflow: 'hidden' },
-    motoristaHeader: { padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', backgroundColor: '#0d0d0d' },
-    avatar: { width: '45px', height: '45px', borderRadius: '50%', backgroundColor: '#1a1a1a', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#FFD700' },
-    nomeMot: { margin: 0, fontSize: '16px', fontWeight: '700', letterSpacing: '0.5px' },
-    qtdViagens: { fontSize: '12px', color: '#555' },
-    detalhesViagens: { padding: '15px', backgroundColor: '#050505', display: 'flex', flexDirection: 'column', gap: '12px' },
-    viagemItem: { backgroundColor: '#0a0a0a', border: '1px solid #222', borderRadius: '10px', padding: '15px' },
-    viagemMain: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '20px' },
-    infoPonto: { flex: 1 },
-    tagColeta: { color: '#3498db', fontSize: '9px', fontWeight: 'bold' },
-    tagEntrega: { color: '#e67e22', fontSize: '9px', fontWeight: 'bold' },
-    cidadeText: { fontSize: '14px', fontWeight: '700', marginTop: '4px' },
-    subText: { fontSize: '11px', color: '#666' },
-    seta: { display: 'flex', alignItems: 'center' },
-    infoMeta: { display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '160px', alignItems: 'flex-end' },
-    metaItem: { fontSize: '11px', color: '#888', display: 'flex', alignItems: 'center', gap: '5px' },
-    metaBadge: { fontSize: '9px', fontWeight: '900', padding: '4px 10px', borderRadius: '4px' },
-    
-    // NOVOS ESTILOS DE GESTÃO
-    acoesGestor: { display: 'flex', gap: '8px', marginBottom: '4px' },
-    btnIconEdit: { background: 'none', border: 'none', color: '#3498db', cursor: 'pointer', padding: '4px' },
-    btnIconDelete: { background: 'none', border: 'none', color: '#e74c3c', cursor: 'pointer', padding: '4px' },
-    
-    btnVerCanhoto: { 
-        backgroundColor: '#1a1a1a', 
-        color: '#FFD700', 
-        border: '1px solid #FFD700', 
-        padding: '5px 10px', 
-        borderRadius: '5px', 
-        fontSize: '11px', 
+    container: { 
+        padding: '20px', 
+        color: '#fff', 
+        backgroundColor: '#000', 
+        minHeight: '100vh', 
+        fontFamily: 'sans-serif',
+        background: 'linear-gradient(135deg, #0a0a0a 0%, #111 100%)',
+        position: 'relative'
+    },
+    header: { 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: '30px',
+        paddingBottom: '15px',
+        borderBottom: '2px solid #222'
+    },
+    title: { 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '15px', 
+        margin: 0,
+        fontSize: '28px',
+        fontWeight: 'bold',
+        letterSpacing: '1px'
+    },
+    subtitle: { 
+        color: '#666', 
+        fontSize: '14px',
+        marginTop: '5px',
+        textTransform: 'uppercase',
+        letterSpacing: '0.5px'
+    },
+    AbasContainer: { 
+        display: 'flex', 
+        gap: '10px',
+        background: '#111',
+        padding: '5px',
+        borderRadius: '8px',
+        border: '1px solid #222'
+    },
+    abaBtn: { 
+        background: 'none', 
+        border: 'none', 
+        padding: '10px 20px', 
+        cursor: 'pointer', 
+        fontWeight: 'bold',
+        borderRadius: '6px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        fontSize: '12px',
+        transition: 'all 0.3s ease'
+    },
+    filterSection: { 
+        marginBottom: '25px',
+        background: '#0a0a0a',
+        padding: '20px',
+        borderRadius: '12px',
+        border: '1px solid #222'
+    },
+    filterGrid: {
+        display: 'grid',
+        gridTemplateColumns: '1fr 2fr',
+        gap: '20px',
+        marginBottom: '20px'
+    },
+    searchBar: { 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '10px', 
+        background: '#111', 
+        padding: '12px 15px', 
+        borderRadius: '8px', 
+        border: '1px solid #333' 
+    },
+    searchInput: { 
+        background: 'none', 
+        border: 'none', 
+        color: '#fff', 
+        outline: 'none', 
+        width: '100%',
+        fontSize: '14px'
+    },
+    dateFilters: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px'
+    },
+    dateInputGroup: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        background: '#111',
+        padding: '10px 15px',
+        borderRadius: '8px',
+        border: '1px solid #333'
+    },
+    dateInput: {
+        background: 'none',
+        border: 'none',
+        color: '#fff',
+        outline: 'none',
+        fontSize: '14px',
+        width: '140px'
+    },
+    dateLabel: {
+        color: '#666',
+        fontSize: '12px',
+        minWidth: '25px'
+    },
+    btnLimparFiltros: {
+        background: 'transparent',
+        border: '1px solid #333',
+        color: '#999',
+        padding: '10px 15px',
+        borderRadius: '8px',
         cursor: 'pointer',
+        fontSize: '12px',
+        transition: 'all 0.3s ease',
+        marginLeft: 'auto'
+    },
+    resumoContainer: {
+        display: 'flex',
+        gap: '30px',
+        paddingTop: '15px',
+        borderTop: '1px solid #222'
+    },
+    resumoItem: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px'
+    },
+    resumoLabel: {
+        color: '#666',
+        fontSize: '12px',
+        textTransform: 'uppercase'
+    },
+    resumoValor: {
+        color: '#FFD700',
+        fontSize: '18px',
+        fontWeight: 'bold'
+    },
+    listaContainer: { 
+        display: 'flex', 
+        flexDirection: 'column', 
+        gap: '15px' 
+    },
+    emptyState: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '60px 20px',
+        background: '#0a0a0a',
+        borderRadius: '12px',
+        border: '1px solid #222',
+        color: '#666',
+        textAlign: 'center',
+        gap: '15px'
+    },
+    cardMotorista: { 
+        background: 'linear-gradient(135deg, #0a0a0a 0%, #111 100%)', 
+        borderRadius: '12px', 
+        border: '1px solid #1a1a1a',
+        overflow: 'hidden',
+        transition: 'all 0.3s ease'
+    },
+    motoristaHeader: { 
+        padding: '20px', 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        cursor: 'pointer', 
+        alignItems: 'center',
+        borderBottom: '1px solid #222'
+    },
+    motoristaInfo: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px'
+    },
+    avatar: { 
+        width: '45px', 
+        height: '45px', 
+        borderRadius: '50%', 
+        background: 'linear-gradient(135deg, #222 0%, #333 100%)', 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        color: '#FFD700',
+        border: '2px solid #333'
+    },
+    nomeMot: { 
+        margin: 0, 
+        fontSize: '16px',
+        fontWeight: 'bold',
+        letterSpacing: '0.5px'
+    },
+    motoristaDetalhes: {
+        margin: 0,
+        fontSize: '12px',
+        color: '#666',
+        marginTop: '3px'
+    },
+    motoristaStats: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px'
+    },
+    statBadge: {
+        background: '#222',
+        color: '#FFD700',
+        padding: '5px 12px',
+        borderRadius: '20px',
+        fontSize: '11px',
+        fontWeight: 'bold',
+        border: '1px solid #333'
+    },
+    detalhesViagens: { 
+        padding: '20px', 
+        background: '#050505',
+        borderTop: '1px solid #222'
+    },
+    viagemItem: { 
+        background: '#0a0a0a', 
+        padding: '20px', 
+        borderRadius: '10px', 
+        marginBottom: '15px', 
+        border: '1px solid #111' 
+    },
+    viagemMain: { 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: '15px'
+    },
+    infoPonto: { 
+        flex: 1,
+        minWidth: '200px'
+    },
+    tagContainer: {
+        display: 'flex',
+        gap: '8px',
+        marginBottom: '8px'
+    },
+    tagOrigem: { 
+        color: '#3498db', 
+        fontSize: '10px', 
+        fontWeight: 'bold',
+        background: 'rgba(52, 152, 219, 0.1)',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+    },
+    tagDestino: { 
+        color: '#e67e22', 
+        fontSize: '10px', 
+        fontWeight: 'bold',
+        background: 'rgba(230, 126, 34, 0.1)',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+    },
+    tagAtencao: {
+        color: '#e74c3c',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        background: 'rgba(231, 76, 60, 0.1)',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+    },
+    tagCanhoto: {
+        color: '#16a34a',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        background: 'rgba(22, 163, 74, 0.1)',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+    },
+    cidadeText: { 
+        fontSize: '16px', 
+        fontWeight: 'bold', 
+        margin: '6px 0 2px 0',
+        color: '#fff'
+    },
+    clienteSubText: { 
+        fontSize: '13px', 
+        color: '#999',
+        marginBottom: '5px'
+    },
+    dataText: { 
+        fontSize: '12px', 
+        color: '#FFD700', 
+        marginTop: '5px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: '5px' 
+    },
+    arrowIcon: {
+        margin: '0 20px',
+        color: '#FFD700',
+        opacity: 0.7
+    },
+    infoStatus: { 
+        textAlign: 'right', 
+        minWidth: '150px'
+    },
+    acoesContainer: { 
+        display: 'flex', 
+        gap: '10px', 
+        justifyContent: 'flex-end', 
+        marginBottom: '10px' 
+    },
+    btnIcon: { 
+        background: 'rgba(255, 255, 255, 0.05)', 
+        border: '1px solid #333', 
+        cursor: 'pointer',
+        width: '36px',
+        height: '36px',
+        borderRadius: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        transition: 'all 0.3s ease'
+    },
+    statusBadge: { 
+        fontSize: '11px', 
+        padding: '5px 12px', 
+        borderRadius: '20px', 
+        fontWeight: 'bold', 
+        color: '#fff',
+        display: 'inline-block',
+        marginBottom: '8px'
+    },
+    btnCanhoto: { 
+        background: 'rgba(255, 215, 0, 0.1)', 
+        color: '#FFD700', 
+        border: '1px solid rgba(255, 215, 0, 0.3)', 
+        fontSize: '11px', 
+        padding: '8px 12px', 
+        borderRadius: '6px', 
+        marginTop: '8px', 
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        transition: 'all 0.3s ease'
+    },
+    viagemExtra: {
+        display: 'flex',
+        gap: '30px',
+        paddingTop: '15px',
+        borderTop: '1px solid #222',
+        fontSize: '12px'
+    },
+    extraItem: {
+        display: 'flex',
+        gap: '8px'
+    },
+    extraLabel: {
+        color: '#666',
+        fontWeight: 'bold'
+    },
+    extraValue: {
+        color: '#999'
+    },
+    overlay: { 
+        position: 'fixed', 
+        inset: 0, 
+        background: 'rgba(0,0,0,0.95)', 
+        display: 'flex', 
+        justifyContent: 'center', 
+        alignItems: 'center', 
+        zIndex: 1000,
+        padding: '20px'
+    },
+    overlayImagem: {
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.98)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1001
+    },
+    modalDetalhes: {
+        background: '#111',
+        padding: '30px',
+        borderRadius: '15px',
+        width: '800px',
+        maxWidth: '90vw',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        border: '1px solid #333',
+        boxShadow: '0 20px 60px rgba(0,0,0,0.5)'
+    },
+    modalHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-start',
+        marginBottom: '25px',
+        paddingBottom: '15px',
+        borderBottom: '1px solid #222'
+    },
+    modalTitle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        margin: 0,
+        fontSize: '18px',
+        color: '#FFD700'
+    },
+    modalSubtitle: {
+        color: '#666',
+        fontSize: '12px',
+        marginTop: '5px'
+    },
+    modalContent: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '25px'
+    },
+    modalSection: {
+        background: '#0a0a0a',
+        padding: '20px',
+        borderRadius: '10px',
+        border: '1px solid #222'
+    },
+    sectionTitle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        margin: '0 0 15px 0',
+        fontSize: '14px',
+        color: '#FFD700',
+        paddingBottom: '10px',
+        borderBottom: '1px solid #222'
+    },
+    infoGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: '15px'
+    },
+    infoItem: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '5px'
+    },
+    infoLabel: {
+        fontSize: '12px',
+        color: '#666',
+        textTransform: 'uppercase',
+        fontWeight: 'bold'
+    },
+    infoValue: {
+        fontSize: '14px',
+        color: '#fff'
+    },
+    trajetoContainer: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'stretch'
+    },
+    trajetoItem: {
+        flex: 1,
+        background: '#050505',
+        padding: '20px',
+        borderRadius: '8px',
+        border: '1px solid #333'
+    },
+    trajetoHeader: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        marginBottom: '15px',
+        paddingBottom: '10px',
+        borderBottom: '1px solid #222'
+    },
+    trajetoIcon: {
+        width: '28px',
+        height: '28px',
+        borderRadius: '50%',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#fff'
+    },
+    trajetoTitle: {
+        margin: 0,
+        fontSize: '14px',
+        color: '#fff',
+        fontWeight: 'bold'
+    },
+    trajetoContent: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px'
+    },
+    trajetoCliente: {
+        fontSize: '16px',
+        fontWeight: 'bold',
+        color: '#fff',
+        margin: 0
+    },
+    trajetoCidade: {
+        fontSize: '14px',
+        color: '#999',
+        margin: 0
+    },
+    trajetoData: {
+        fontSize: '12px',
+        color: '#FFD700',
+        margin: 0,
         display: 'flex',
         alignItems: 'center',
         gap: '5px'
     },
-    semCanhoto: { fontSize: '10px', color: '#444', fontStyle: 'italic' },
-    overlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.95)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 },
-    modalContent: { position: 'relative', maxWidth: '80%', maxHeight: '80%' },
-    imgFull: { width: '100%', borderRadius: '10px' },
-    closeBtn: { position: 'absolute', top: '-50px', right: '-50px', background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }
+    trajetoFinalizado: {
+        fontSize: '12px',
+        color: '#16a34a',
+        margin: '10px 0 0 0',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '5px'
+    },
+    canhotoContainer: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        gap: '15px',
+        padding: '20px',
+        background: '#050505',
+        borderRadius: '8px',
+        border: '2px dashed #333'
+    },
+    canhotoStatus: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        background: 'rgba(22, 163, 74, 0.1)',
+        padding: '10px 15px',
+        borderRadius: '8px',
+        border: '1px solid rgba(22, 163, 74, 0.3)',
+        marginBottom: '15px'
+    },
+    canhotoStatusText: {
+        color: '#16a34a',
+        fontSize: '13px'
+    },
+    btnVerCanhoto: {
+        background: 'rgba(255, 215, 0, 0.1)',
+        color: '#FFD700',
+        border: '2px solid rgba(255, 215, 0, 0.3)',
+        padding: '12px 25px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        transition: 'all 0.3s ease'
+    },
+    canhotoInfo: {
+        color: '#666',
+        fontSize: '12px',
+        textAlign: 'center',
+        margin: 0
+    },
+    metadataGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, 1fr)',
+        gap: '15px'
+    },
+    metadataItem: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '5px'
+    },
+    metadataLabel: {
+        fontSize: '11px',
+        color: '#666',
+        textTransform: 'uppercase'
+    },
+    metadataValue: {
+        fontSize: '13px',
+        color: '#999'
+    },
+    modalFooter: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: '15px',
+        marginTop: '30px',
+        paddingTop: '20px',
+        borderTop: '1px solid #222'
+    },
+    btnEditarModal: {
+        background: 'rgba(255, 215, 0, 0.1)',
+        color: '#FFD700',
+        border: '1px solid rgba(255, 215, 0, 0.3)',
+        padding: '10px 20px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        transition: 'all 0.3s ease'
+    },
+    btnFecharModal: {
+        background: '#222',
+        color: '#fff',
+        border: '1px solid #333',
+        padding: '10px 25px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    },
+    modalEdit: { 
+        background: '#111', 
+        padding: '30px', 
+        borderRadius: '15px', 
+        width: '700px',
+        maxWidth: '90vw',
+        maxHeight: '90vh',
+        overflowY: 'auto',
+        border: '1px solid #333' 
+    },
+    modalEditHeader: { 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center',
+        marginBottom: '25px',
+        paddingBottom: '15px',
+        borderBottom: '1px solid #222' 
+    },
+    btnClose: { 
+    border: 'none', 
+    color: '#fff', 
+    cursor: 'pointer',
+    width: '40px',
+    height: '40px',
+    borderRadius: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#222', // Mantenha apenas este, que parece ser o que você quer
+    transition: 'all 0.3s ease'
+},
+    formGrid: { 
+        display: 'grid', 
+        gridTemplateColumns: '1fr 1fr', 
+        gap: '20px' 
+    },
+    formSectionTitle: { 
+        gridColumn: 'span 2', 
+        fontSize: '13px', 
+        color: '#FFD700', 
+        margin: '20px 0 10px 0', 
+        borderBottom: '1px solid #222',
+        paddingBottom: '8px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+    },
+    inputGroup: { 
+        display: 'flex', 
+        flexDirection: 'column', 
+        gap: '8px' 
+    },
+    inputStyle: { 
+        background: '#000', 
+        border: '1px solid #333', 
+        color: '#fff', 
+        padding: '12px', 
+        borderRadius: '8px', 
+        outline: 'none',
+        fontSize: '14px'
+    },
+    helperText: {
+        color: '#FFD700',
+        fontSize: '11px',
+        marginTop: '5px',
+        fontStyle: 'italic'
+    },
+    modalEditFooter: {
+        display: 'flex',
+        justifyContent: 'flex-end',
+        gap: '15px',
+        marginTop: '30px',
+        paddingTop: '20px',
+        borderTop: '1px solid #222'
+    },
+    btnCancelar: {
+        background: 'transparent',
+        color: '#999',
+        border: '1px solid #333',
+        padding: '12px 25px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    },
+    btnSalvar: { 
+        background: '#FFD700', 
+        color: '#000',
+        border: 'none', 
+        padding: '12px 30px', 
+        borderRadius: '8px', 
+        fontWeight: 'bold', 
+        cursor: 'pointer',
+        fontSize: '14px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        transition: 'all 0.3s ease'
+    },
+    modalImagemContainer: {
+        background: '#111',
+        borderRadius: '15px',
+        width: '90vw',
+        height: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        border: '1px solid #333',
+        overflow: 'hidden'
+    },
+    modalImagemHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '20px 30px',
+        borderBottom: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    imagemSubtitle: {
+        color: '#666',
+        fontSize: '12px',
+        marginTop: '3px'
+    },
+    modalImagemContent: {
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '20px',
+        overflow: 'hidden',
+        background: '#000',
+        position: 'relative'
+    },
+    imagemStatus: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        background: 'rgba(22, 163, 74, 0.1)',
+        padding: '10px 15px',
+        borderRadius: '8px',
+        border: '1px solid rgba(22, 163, 74, 0.3)',
+        marginBottom: '15px',
+        position: 'absolute',
+        top: '20px',
+        left: '20px',
+        right: '20px',
+        zIndex: 10
+    },
+    imagemCanhoto: {
+        maxWidth: '100%',
+        maxHeight: '100%',
+        objectFit: 'contain',
+        borderRadius: '8px',
+        border: '1px solid #333'
+    },
+    modalImagemFooter: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '20px 30px',
+        borderTop: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    btnDownload: {
+        background: 'rgba(52, 152, 219, 0.1)',
+        color: '#3498db',
+        border: '1px solid rgba(52, 152, 219, 0.3)',
+        padding: '10px 20px',
+        borderRadius: '8px',
+        textDecoration: 'none',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    },
+    btnFecharImagem: {
+        background: '#222',
+        color: '#fff',
+        border: '1px solid #333',
+        padding: '10px 25px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    }
 };
 
 export default HistoricoViagens;

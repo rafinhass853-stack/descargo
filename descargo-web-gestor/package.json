@@ -27,6 +27,7 @@
     "react-leaflet-draw": "^0.21.0",
     "react-leaflet-markercluster": "^5.0.0-rc.0",
     "react-select": "^5.10.2",
+    "xlsx": "^0.18.5",
     "yarn": "^1.22.22"
   },
   "devDependencies": {
