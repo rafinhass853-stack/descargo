@@ -131,106 +131,133 @@ const DashboardGeral = () => {
     };
 
     const salvarViagem = async () => {
-        if (!motSelecionado) return;
-        
-        // Buscar dados completos do motorista
-        const motoristaData = await buscarDadosMotorista(motSelecionado.id);
-        if (!motoristaData) {
-            alert("Erro: Motorista não encontrado no sistema!");
-            return;
-        }
-
-        const placas = getPlacasMotorista(motSelecionado.id);
-        
-        // Preparar dados para o APP
-        const viagemData = {
-            // IDENTIFICAÇÃO
-            id: motSelecionado.id, // Usar ID do motorista como chave
-            motoristaId: motSelecionado.id,
-            motoristaUid: motoristaData.uid || motSelecionado.id,
-            motoristaNome: motSelecionado.nome,
-            motoristaCpf: motSelecionado.cpf,
-            motoristaEmail: motoristaData.email || '',
-            motoristaTelefone: motoristaData.telefone || '',
-            
-            // VEÍCULO
-            cavalo: placas.cavalo || 'S/ PLACA',
-            carreta: placas.carreta || '',
-            
-            // STATUS
-            status: 'PROGRAMADO',
-            statusOperacional: 'PROGRAMADO',
-            viagemIniciada: false,
-            finalizada: false,
-            chegouAoDestino: false,
-            confirmacaoPendente: false,
-            
-            // DATAS
-            criadoEm: serverTimestamp(),
-            atualizadoEm: serverTimestamp(),
-            dataColeta: dadosViagem.dataColeta || '',
-            dataEntrega: dadosViagem.dataEntrega || '',
-            
-            // COLETA
-            dt: dadosViagem.dt,
-            clienteColeta: dadosViagem.clienteColeta,
-            origemCidade: dadosViagem.cidadeColeta,
-            linkColeta: dadosViagem.linkColeta || '',
-            
-            // ENTREGA (PADRÃO DO APP)
-            clienteEntrega: dadosViagem.clienteEntrega,
-            destinoCliente: dadosViagem.destinoCliente || dadosViagem.clienteEntrega,
-            destinoCidade: dadosViagem.destinoCidade,
-            destinoCodigo: dadosViagem.codigoDestino || '001',
-            linkEntrega: dadosViagem.linkEntrega || '',
-            
-            // CONFIGURAÇÕES
-            tipoViagem: dadosViagem.tipoViagem || 'CARREGADO',
-            observacao: dadosViagem.observacao || '',
-            filial: dadosViagem.filial || '1',
-            empresa: motoristaData.empresa || 'Transportadora',
-            
-            // FLAGS PARA CONTROLE
-            temDesenhoRota: false,
-            distanciaEstimada: 0,
-            tempoEstimado: 0
-        };
-
-        try {
-            // 1. SALVAR NA COLEÇÃO PRINCIPAL (ordens_servico)
-            await setDoc(doc(db, "ordens_servico", motSelecionado.id), viagemData);
-            
-            // 2. SALVAR BACKUP (viagens_ativas)
-            await setDoc(doc(db, "viagens_ativas", motSelecionado.id), viagemData);
-            
-            // 3. ENVIAR COMANDO PARA O APP
-            await setDoc(doc(db, "comandos_roteiro", motSelecionado.id), {
-                ...viagemData,
-                timestamp: serverTimestamp(),
-                tipo: "NOVA_VIAGEM",
-                acao: "ATUALIZAR_ROTEIRO",
-                origem: "PAINEL_GESTOR"
-            });
-
-            // 4. ATUALIZAR STATUS DO MOTORISTA
-            await alterarStatusEscala(motSelecionado.id, 'PROGRAMADO');
-            
-            // 5. LIMPAR FORMULÁRIO
-            setDadosViagem({
-                dt: '', dataColeta: '', clienteColeta: '', cidadeColeta: '',
-                linkColeta: '', destinoCidade: '', clienteEntrega: '',
-                dataEntrega: '', linkEntrega: '', observacao: '', filial: '1',
-                tipoViagem: 'CARREGADO', destinoCliente: '', origemCidade: '', codigoDestino: '001'
-            });
-            
-            alert("✅ Roteiro enviado com sucesso!");
-            setModalViagem(false);
-            
-        } catch (error) {
-            console.error("Erro ao salvar viagem:", error);
-            alert(`❌ Erro ao salvar: ${error.message}`);
-        }
+    if (!motSelecionado) return;
+    
+    console.log("💾 Salvando viagem para:", motSelecionado);
+    
+    // Buscar dados completos do motorista
+    const motoristaData = await buscarDadosMotorista(motSelecionado.id);
+    
+    // Se não encontrou, usar dados básicos
+    const dadosMotoristaFinal = motoristaData || {
+        id: motSelecionado.id,
+        uid: motSelecionado.id,
+        nome: motSelecionado.nome,
+        cpf: motSelecionado.cpf,
+        email: motSelecionado.email || '',
+        telefone: motSelecionado.telefone || '',
+        empresa: motSelecionado.empresa || 'Transportadora'
     };
+    
+    const placas = getPlacasMotorista(motSelecionado.id);
+    
+    // IMPORTANTE: Gerar um ID único para esta viagem
+    const viagemId = `${motSelecionado.id}_${Date.now()}`;
+    
+    // Preparar dados para o APP - FORMATO COMPATÍVEL COM MinhasViagens.js
+    const viagemData = {
+        // IDENTIFICAÇÃO DA VIAGEM
+        id: viagemId, // ID único da viagem
+        viagemId: viagemId, // Duplicado para compatibilidade
+        
+        // IDENTIFICAÇÃO DO MOTORISTA (CRÍTICO PARA O APP)
+        motoristaId: motSelecionado.id, // ID do motorista
+        motoristaUid: dadosMotoristaFinal.uid || motSelecionado.id, // UID para autenticação no app
+        motoristaNome: motSelecionado.nome,
+        motoristaCpf: motSelecionado.cpf,
+        motoristaEmail: dadosMotoristaFinal.email || '',
+        motoristaTelefone: dadosMotoristaFinal.telefone || '',
+        
+        // VEÍCULO
+        cavalo: placas.cavalo || 'S/ PLACA',
+        carreta: placas.carreta || '',
+        
+        // STATUS (COMPATÍVEL COM O APP)
+        status: 'PROGRAMADO',
+        statusOperacional: 'PROGRAMADO', // O app usa este campo
+        viagemIniciada: false,
+        finalizada: false,
+        chegouAoDestino: false,
+        confirmacaoPendente: false,
+        
+        // DATAS
+        criadoEm: serverTimestamp(),
+        atualizadoEm: serverTimestamp(),
+        dataColeta: dadosViagem.dataColeta || '',
+        dataEntrega: dadosViagem.dataEntrega || '',
+        
+        // COLETA
+        dt: dadosViagem.dt,
+        clienteColeta: dadosViagem.clienteColeta,
+        origemCidade: dadosViagem.cidadeColeta,
+        linkColeta: dadosViagem.linkColeta || '',
+        
+        // ENTREGA (CRÍTICO - O APP USA ESTES CAMPOS)
+        clienteEntrega: dadosViagem.clienteEntrega,
+        destinoCliente: dadosViagem.destinoCliente || dadosViagem.clienteEntrega,
+        destinoCidade: dadosViagem.destinoCidade,
+        destinoCodigo: dadosViagem.codigoDestino || '001',
+        linkEntrega: dadosViagem.linkEntrega || '',
+        
+        // CONFIGURAÇÕES
+        tipoViagem: dadosViagem.tipoViagem || 'CARREGADO',
+        observacao: dadosViagem.observacao || '',
+        filial: dadosViagem.filial || '1',
+        empresa: dadosMotoristaFinal.empresa || 'Transportadora',
+        
+        // FLAGS PARA CONTROLE
+        temDesenhoRota: false,
+        distanciaEstimada: 0,
+        tempoEstimado: 0,
+        
+        // CAMPOS PARA O SISTEMA DE CANHOTOS
+        urlCanhoto: null, // Inicialmente nulo - será preenchido no app
+        dataFinalizacao: null // Será preenchido quando finalizar
+    };
+
+    try {
+        console.log("📤 Salvando viagem no Firestore...");
+        console.log("ID da viagem:", viagemId);
+        console.log("Motorista ID:", motSelecionado.id);
+        console.log("Motorista UID:", dadosMotoristaFinal.uid);
+        
+        // 1. SALVAR NA COLEÇÃO DE VIAGENS ATIVAS (a que o app consulta)
+        await setDoc(doc(db, "viagens_ativas", viagemId), viagemData);
+        
+        // 2. SALVAR BACKUP NA ORDEM DE SERVIÇO (opcional)
+        await setDoc(doc(db, "ordens_servico", viagemId), viagemData);
+        
+        // 3. ENVIAR COMANDO PARA O APP
+        await setDoc(doc(db, "comandos_roteiro", motSelecionado.id), {
+            viagemData: viagemData,
+            viagemId: viagemId,
+            timestamp: serverTimestamp(),
+            tipo: "NOVA_VIAGEM",
+            acao: "ATUALIZAR_ROTEIRO",
+            origem: "PAINEL_GESTOR",
+            mensagem: "Nova viagem programada para você!"
+        });
+
+        // 4. ATUALIZAR STATUS DO MOTORISTA
+        await alterarStatusEscala(motSelecionado.id, 'PROGRAMADO');
+        
+        // 5. LIMPAR FORMULÁRIO
+        setDadosViagem({
+            dt: '', dataColeta: '', clienteColeta: '', cidadeColeta: '',
+            linkColeta: '', destinoCidade: '', clienteEntrega: '',
+            dataEntrega: '', linkEntrega: '', observacao: '', filial: '1',
+            tipoViagem: 'CARREGADO', destinoCliente: '', origemCidade: '', codigoDestino: '001'
+        });
+        
+        console.log("✅ Roteiro salvo com sucesso!");
+        alert("✅ Roteiro enviado com sucesso!");
+        setModalViagem(false);
+        
+    } catch (error) {
+        console.error("❌ Erro ao salvar viagem:", error);
+        alert(`❌ Erro ao salvar: ${error.message}`);
+    }
+};
 
     // EFEITOS PARA CARREGAR DADOS
     useEffect(() => {
@@ -566,148 +593,166 @@ const DashboardGeral = () => {
                 </table>
             </div>
 
-            {/* MODAL DE NOVA VIAGEM */}
-            {modalViagem && (
-                <div style={styles.modalOverlay}>
-                    <div style={styles.modal}>
-                        <div style={styles.modalHeader}>
-                            <h3 style={styles.modalTitle}>
-                                📋 NOVA VIAGEM: {motSelecionado?.nome?.toUpperCase()}
-                            </h3>
-                            <button 
-                                onClick={() => {
-                                    setModalViagem(false);
-                                    setMotSelecionado(null);
-                                }}
-                                style={styles.modalCloseButton}
-                            >
-                                <X size={20} />
-                            </button>
-                        </div>
+           {/* MODAL DE NOVA VIAGEM */}
+{modalViagem && (
+    <div style={styles.modalOverlay}>
+        <div style={styles.modal}>
+            <div style={styles.modalHeader}>
+                <h3 style={styles.modalTitle}>
+                    📋 LANÇAR CICLO: {motSelecionado?.nome?.toUpperCase()}
+                </h3>
+                <button 
+                    onClick={() => {
+                        setModalViagem(false);
+                        setMotSelecionado(null);
+                    }}
+                    style={styles.modalCloseButton}
+                >
+                    <X size={20} />
+                </button>
+            </div>
 
-                        {/* FORMULÁRIO */}
-                        <div style={styles.formSection}>
-                            <div style={styles.sectionHeader}>📍 COLETA</div>
-                            <div style={styles.formGrid}>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>DT / VIAGEM</label>
-                                    <input 
-                                        style={styles.input}
-                                        value={dadosViagem.dt}
-                                        onChange={e => setDadosViagem({...dadosViagem, dt: e.target.value})}
-                                        placeholder="Número da DT"
-                                    />
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>CLIENTE COLETA</label>
-                                    <select 
-                                        style={styles.input}
-                                        value={dadosViagem.clienteColeta}
-                                        onChange={e => aoMudarCliente('COLETA', e.target.value)}
-                                    >
-                                        <option value="">Selecione...</option>
-                                        {cercas.map(c => (
-                                            <option key={c.id} value={c.cliente}>{c.cliente}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>CIDADE COLETA</label>
-                                    <input 
-                                        style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
-                                        value={dadosViagem.cidadeColeta}
-                                        readOnly
-                                    />
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>DATA/HORA COLETA</label>
-                                    <input 
-                                        type="datetime-local"
-                                        style={styles.input}
-                                        value={dadosViagem.dataColeta}
-                                        onChange={e => setDadosViagem({...dadosViagem, dataColeta: e.target.value})}
-                                    />
-                                </div>
-                            </div>
-                        </div>
+            {/* FORMULÁRIO */}
+            
+            {/* SEÇÃO 1: DADOS DA CARGA (COLETA) */}
+            <div style={styles.formSection}>
+                <div style={styles.sectionHeader}>
+                    1. DADOS DA CARGA (COLETA)
+                </div>
+                <div style={styles.formGrid}>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>DT / VIAGEM</label>
+                        <input 
+                            style={styles.input}
+                            value={dadosViagem.dt}
+                            onChange={e => setDadosViagem({...dadosViagem, dt: e.target.value})}
+                            placeholder="Número da DT"
+                        />
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>CLIENTE COLETA (CADASTRADOS)</label>
+                        <select 
+                            style={styles.input}
+                            value={dadosViagem.clienteColeta}
+                            onChange={e => aoMudarCliente('COLETA', e.target.value)}
+                        >
+                            <option value="">Selecione o Cliente...</option>
+                            {cercas.map(c => (
+                                <option key={c.id} value={c.cliente}>{c.cliente}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>CIDADE COLETA (AUTO)</label>
+                        <input 
+                            style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                            value={dadosViagem.cidadeColeta}
+                            readOnly
+                            placeholder="Cidade automática..."
+                        />
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>DATA/HORA COLETA</label>
+                        <input 
+                            type="datetime-local"
+                            style={styles.input}
+                            value={dadosViagem.dataColeta}
+                            onChange={e => setDadosViagem({...dadosViagem, dataColeta: e.target.value})}
+                            placeholder="dd/mm/aaaa --:--"
+                        />
+                    </div>
+                    <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                        <label style={styles.label}>LINK GOOGLE MAPS COLETA (AUTO)</label>
+                        <input 
+                            style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                            value={dadosViagem.linkColeta}
+                            readOnly
+                            placeholder="Link automático..."
+                        />
+                    </div>
+                </div>
+            </div>
 
-                        <div style={styles.formSection}>
-                            <div style={styles.sectionHeader}>🏁 ENTREGA</div>
-                            <div style={styles.formGrid}>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>CLIENTE ENTREGA</label>
-                                    <select 
-                                        style={styles.input}
-                                        value={dadosViagem.clienteEntrega}
-                                        onChange={e => aoMudarCliente('ENTREGA', e.target.value)}
-                                    >
-                                        <option value="">Selecione...</option>
-                                        {cercas.map(c => (
-                                            <option key={c.id} value={c.cliente}>{c.cliente}</option>
-                                        ))}
-                                    </select>
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>CIDADE DESTINO</label>
-                                    <input 
-                                        style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
-                                        value={dadosViagem.destinoCidade}
-                                        readOnly
-                                    />
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>TIPO VIAGEM</label>
-                                    <select 
-                                        style={styles.input}
-                                        value={dadosViagem.tipoViagem}
-                                        onChange={e => setDadosViagem({...dadosViagem, tipoViagem: e.target.value})}
-                                    >
-                                        <option value="CARREGADO">CARREGADO</option>
-                                        <option value="VAZIO">VAZIO</option>
-                                        <option value="MUDANÇA">MUDANÇA</option>
-                                    </select>
-                                </div>
-                                <div style={styles.inputGroup}>
-                                    <label style={styles.label}>CÓDIGO DESTINO</label>
-                                    <input 
-                                        style={styles.input}
-                                        value={dadosViagem.codigoDestino}
-                                        onChange={e => setDadosViagem({...dadosViagem, codigoDestino: e.target.value})}
-                                        placeholder="001"
-                                    />
-                                </div>
-                                <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
-                                    <label style={styles.label}>DATA/HORA ENTREGA</label>
-                                    <input 
-                                        type="datetime-local"
-                                        style={styles.input}
-                                        value={dadosViagem.dataEntrega}
-                                        onChange={e => setDadosViagem({...dadosViagem, dataEntrega: e.target.value})}
-                                    />
-                                </div>
-                            </div>
-                        </div>
+            {/* SEÇÃO 2: DESTINO FINAL (ENTREGA) */}
+            <div style={styles.formSection}>
+                <div style={styles.sectionHeader}>
+                    2. DESTINO FINAL (ENTREGA)
+                </div>
+                <div style={styles.formGrid}>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>CLIENTE ENTREGA (CADASTRADOS)</label>
+                        <select 
+                            style={styles.input}
+                            value={dadosViagem.clienteEntrega}
+                            onChange={e => aoMudarCliente('ENTREGA', e.target.value)}
+                        >
+                            <option value="">Selecione o Cliente...</option>
+                            {cercas.map(c => (
+                                <option key={c.id} value={c.cliente}>{c.cliente}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>CIDADE DESTINO (AUTO)</label>
+                        <input 
+                            style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                            value={dadosViagem.destinoCidade}
+                            readOnly
+                            placeholder="Cidade automática..."
+                        />
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>DATA/HORA ENTREGA</label>
+                        <input 
+                            type="datetime-local"
+                            style={styles.input}
+                            value={dadosViagem.dataEntrega}
+                            onChange={e => setDadosViagem({...dadosViagem, dataEntrega: e.target.value})}
+                            placeholder="dd/mm/aaaa --:--"
+                        />
+                    </div>
+                    <div style={styles.inputGroup}>
+                        <label style={styles.label}>LINK GOOGLE MAPS ENTREGA (AUTO)</label>
+                        <input 
+                            style={{...styles.input, backgroundColor: '#050505', color: '#FFD700'}}
+                            value={dadosViagem.linkEntrega}
+                            readOnly
+                            placeholder="Link automático..."
+                        />
+                    </div>
+                </div>
+            </div>
 
-                        <div style={styles.formSection}>
-                            <div style={styles.sectionHeader}>📝 OBSERVAÇÕES</div>
-                            <div style={styles.formGrid}>
-                                <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
-                                    <textarea 
-                                        style={{...styles.input, minHeight: '80px'}}
-                                        value={dadosViagem.observacao}
-                                        onChange={e => setDadosViagem({...dadosViagem, observacao: e.target.value})}
-                                        placeholder="Instruções, endereço completo, contato, etc..."
-                                    />
-                                </div>
-                            </div>
-                        </div>
+            {/* SEÇÃO 3: OBSERVAÇÃO */}
+            <div style={styles.formSection}>
+                <div style={styles.sectionHeader}>
+                    OBSERVAÇÃO (CONSIDERAR ENDEREÇO DA MP)
+                </div>
+                <div style={styles.formGrid}>
+                    <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
+                        <textarea 
+                            style={{...styles.input, minHeight: '80px'}}
+                            value={dadosViagem.observacao}
+                            onChange={e => setDadosViagem({...dadosViagem, observacao: e.target.value})}
+                            placeholder="Instruções adicionais"
+                        />
+                    </div>
+                </div>
+            </div>
 
+            {/* BOTÃO ENVIAR */}
+            <div style={styles.formSection}>
+                <div style={styles.formGrid}>
+                    <div style={{...styles.inputGroup, gridColumn: 'span 2'}}>
                         <button onClick={salvarViagem} style={styles.saveButton}>
-                            <Send size={18} /> ENVIAR ROTEIRO PARA O MOTORISTA
+                            <Send size={18} /> ENVIAR ROTEIRO COMPLETO PARA O MOTORISTA
                         </button>
                     </div>
                 </div>
-            )}
+            </div>
+        </div>
+    </div>
+)}
 
             <style>{`
                 .spin { animation: rotation 2s infinite linear; }

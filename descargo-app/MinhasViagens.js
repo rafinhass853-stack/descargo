@@ -8,27 +8,56 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
+// MinhasViagens.js - ATUALIZADO
 export default function MinhasViagens({ auth, db }) {
   const [loading, setLoading] = useState(true);
   const [viagens, setViagens] = useState([]);
-  const [abaAtiva, setAbaAtiva] = useState('ativas'); // 'ativas' ou 'historico'
+  const [abaAtiva, setAbaAtiva] = useState('ativas');
   const [uploading, setUploading] = useState(false);
   const [modalImagem, setModalImagem] = useState(null);
 
   useEffect(() => {
-    // Buscamos todas as viagens. Filtramos localmente ou por query se preferir.
-    const q = query(collection(db, "viagens_ativas"));
+    if (!auth.currentUser?.uid) {
+      setLoading(false);
+      return;
+    }
+
+    const motoristaUid = auth.currentUser.uid;
+    console.log("🔍 Buscando viagens para motorista UID:", motoristaUid);
+    
+    // Buscar viagens onde motoristaUid corresponde ao usuário logado
+    const q = query(
+      collection(db, "viagens_ativas"),
+      where("motoristaUid", "==", motoristaUid)
+    );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log("📥 Viagens recebidas:", snapshot.size);
       const lista = [];
       snapshot.forEach((doc) => {
-        lista.push({ id: doc.id, ...doc.data() });
+        const data = doc.data();
+        console.log("Viagem encontrada:", data.motoristaNome, "- Status:", data.statusOperacional);
+        lista.push({ id: doc.id, ...data });
       });
+      
+      // Ordenar por data (mais recente primeiro)
+      lista.sort((a, b) => {
+        const dateA = a.criadoEm?.toDate?.() || new Date(0);
+        const dateB = b.criadoEm?.toDate?.() || new Date(0);
+        return dateB - dateA;
+      });
+      
       setViagens(lista);
       setLoading(false);
+    }, (error) => {
+      console.error("❌ Erro ao buscar viagens:", error);
+      setLoading(false);
     });
+    
     return () => unsubscribe();
-  }, []);
+  }, [auth.currentUser?.uid]);
+
+  // Restante do código permanece igual...
 
   // Filtragem das viagens conforme a aba selecionada
   const viagensExibidas = viagens.filter(v => {
