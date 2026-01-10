@@ -498,7 +498,7 @@ const Abastecimento = () => {
               <option value="DIESEL">Diesel</option>
               <option value="GASOLINA">Gasolina</option>
               <option value="ETANOL">Etanol</option>
-              <option value="GNV">GNV</option>
+              <option value="ARLA">ARLA</option>
             </select>
             
             <input
