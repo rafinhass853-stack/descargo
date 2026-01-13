@@ -949,7 +949,7 @@ function App() {
         cargaAtiva={cargaAtiva} 
       />
       
-      {/* BARRA DE MENUS */}
+      {/* BARRA DE MENUS - AJUSTADA */}
       <View style={styles.floatingNavContainer}>
         <View style={styles.floatingNav}>
           {[
@@ -966,7 +966,9 @@ function App() {
               onPress={() => setActiveTab(key)} 
               activeOpacity={0.7}
             >
-              <IconLib name={icon} size={26} color={activeTab === key ? "#FFD700" : "#999"} />
+              <View style={styles.navIconContainer}>
+                <IconLib name={icon} size={22} color={activeTab === key ? "#FFD700" : "#999"} />
+              </View>
               <Text style={[styles.navText, { color: activeTab === key ? "#FFD700" : "#999" }]}>
                 {label}
               </Text>
@@ -1353,13 +1355,13 @@ const styles = StyleSheet.create({
     elevation: 5 
   },
   
-  // BARRA DE MENUS
+  // BARRA DE MENUS - AJUSTADA
   floatingNavContainer: { 
     position: 'absolute', 
     bottom: 0, 
     left: 0, 
     right: 0, 
-    paddingBottom: Platform.OS === 'ios' ? 30 : 20, 
+    paddingBottom: Platform.OS === 'ios' ? 25 : 15,
     paddingHorizontal: 10, 
     zIndex: 100, 
     backgroundColor: 'transparent' 
@@ -1368,7 +1370,8 @@ const styles = StyleSheet.create({
   floatingNav: { 
     flexDirection: 'row', 
     backgroundColor: '#151515', 
-    paddingVertical: 15,
+    paddingVertical: 12,
+    paddingHorizontal: 5,
     borderRadius: 20, 
     justifyContent: 'space-around', 
     borderWidth: 1, 
@@ -1377,19 +1380,31 @@ const styles = StyleSheet.create({
     shadowColor: '#000', 
     shadowOffset: { width: 0, height: 5 }, 
     shadowOpacity: 0.5, 
-    shadowRadius: 10 
+    shadowRadius: 10,
+    minHeight: 65,
   },
   
   navItem: { 
     alignItems: 'center', 
     flex: 1,
-    paddingVertical: 5,
+    paddingVertical: 4,
+    justifyContent: 'center',
   }, 
+  
+  navIconContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 28,
+    marginBottom: 3,
+  },
   
   navText: { 
     fontSize: 10,
-    marginTop: 6,
-    fontWeight: '600' 
+    fontWeight: '600',
+    textAlign: 'center',
+    lineHeight: 12,
+    minHeight: 14,
+    includeFontPadding: false,
   }, 
   
   modalOverlay: { 

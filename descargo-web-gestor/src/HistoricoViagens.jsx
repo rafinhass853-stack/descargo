@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { db } from "./firebase";
-import { collection, onSnapshot, query, orderBy, where, doc, deleteDoc, updateDoc } from "firebase/firestore";
+import { collection, onSnapshot, query, orderBy, where, doc, deleteDoc, updateDoc, getDocs } from "firebase/firestore";
 import { 
     History, Search, User, ArrowRight, ChevronDown, ChevronUp, 
     Image as ImageIcon, Trash2, X, Calendar as CalendarIcon, Pencil, Save, Clock,
-    MapPin, Truck, Package, CheckCircle, AlertCircle, FileText, Timer, Play, StopCircle
+    MapPin, Truck, Package, CheckCircle, AlertCircle, FileText, Timer, Play, StopCircle,
+    File, Images, Eye, Download
 } from 'lucide-react';
 
 const HistoricoViagens = () => {
     const [viagens, setViagens] = useState([]);
+    const [documentosAdicionais, setDocumentosAdicionais] = useState({});
     const [filtroNome, setFiltroNome] = useState('');
     const [dataInicio, setDataInicio] = useState('');
     const [dataFim, setDataFim] = useState('');
@@ -18,6 +20,8 @@ const HistoricoViagens = () => {
     const [editandoCarga, setEditandoCarga] = useState(null);
     const [detalhesModal, setDetalhesModal] = useState(null);
     const [notificacao, setNotificacao] = useState(null);
+    const [galeriaModal, setGaleriaModal] = useState(null);
+    const [documentosModal, setDocumentosModal] = useState(null);
 
     // Mostrar notificação temporária
     const mostrarNotificacao = (mensagem, tipo = 'info') => {
@@ -71,6 +75,36 @@ const HistoricoViagens = () => {
         }
     };
 
+    // Carregar documentos adicionais de cada viagem
+    const carregarDocumentosAdicionais = async (viagemId) => {
+        try {
+            const q = query(
+                collection(db, "documentos_viagem"),
+                where("viagemId", "==", viagemId)
+            );
+            
+            const snapshot = await getDocs(q);
+            const docs = [];
+            snapshot.forEach((docSnap) => {
+                const data = docSnap.data();
+                docs.push({
+                    id: docSnap.id,
+                    ...data,
+                    // Organizar por tipo
+                    isCanhoto: data.tipo === 'CANHOTOS',
+                    isDocumento: data.tipo !== 'CANHOTOS'
+                });
+            });
+            
+            setDocumentosAdicionais(prev => ({
+                ...prev,
+                [viagemId]: docs
+            }));
+        } catch (error) {
+            console.error("Erro ao carregar documentos:", error);
+        }
+    };
+
     // Carregar dados do Firestore
     useEffect(() => {
         const q = query(
@@ -107,7 +141,7 @@ const HistoricoViagens = () => {
                     dados.finalizada = true;
                 }
                 
-                lista.push({ 
+                const viagem = { 
                     id: doc.id, 
                     ...dados,
                     leadTimeTotal,
@@ -116,8 +150,19 @@ const HistoricoViagens = () => {
                     // Garantir que os campos de data são objetos Date para filtro
                     dataColetaObj: dados.dataColeta ? (dados.dataColeta.toDate ? dados.dataColeta.toDate() : new Date(dados.dataColeta)) : null,
                     dataEntregaObj: dados.dataEntrega ? (dados.dataEntrega.toDate ? dados.dataEntrega.toDate() : new Date(dados.dataEntrega)) : null,
-                    criadoEmObj: dados.criadoEm ? (dados.criadoEm.toDate ? dados.criadoEm.toDate() : new Date(dados.criadoEm)) : null
-                });
+                    criadoEmObj: dados.criadoEm ? (dados.criadoEm.toDate ? dados.criadoEm.toDate() : new Date(dados.criadoEm)) : null,
+                    // Array de URLs de canhotos (para compatibilidade com múltiplas fotos)
+                    urlsCanhotos: dados.urlsCanhotos || (dados.urlCanhoto ? [dados.urlCanhoto] : []),
+                    quantidadeFotos: dados.quantidadeFotos || (dados.urlCanhoto ? 1 : 0),
+                    observacoesMotorista: dados.observacoesMotorista || ''
+                };
+                
+                lista.push(viagem);
+                
+                // Carregar documentos adicionais para esta viagem
+                if (dados.finalizada || dados.urlCanhoto) {
+                    carregarDocumentosAdicionais(doc.id);
+                }
             });
             setViagens(lista);
         });
@@ -128,7 +173,7 @@ const HistoricoViagens = () => {
     // Filtros combinados
     const viagensFiltradas = viagens.filter(v => {
         // Filtro por status (ativa/finalizada)
-        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto;
+        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto || v.urlsCanhotos?.length > 0;
         if (abaAtiva === 'finalizadas' && !isFinalizada) return false;
         if (abaAtiva === 'ativas' && isFinalizada) return false;
         
@@ -188,6 +233,8 @@ const HistoricoViagens = () => {
             delete dadosAtualizados.dataColetaObj;
             delete dadosAtualizados.dataEntregaObj;
             delete dadosAtualizados.criadoEmObj;
+            delete dadosAtualizados.urlsCanhotos;
+            delete dadosAtualizados.quantidadeFotos;
             
             // Verificar se foi adicionado um canhoto
             const tinhaCanhotoAntes = viagens.find(v => v.id === editandoCarga.id)?.urlCanhoto;
@@ -214,11 +261,43 @@ const HistoricoViagens = () => {
     };
 
     // Função para abrir modal de imagem do canhoto
-    const abrirModalCanhoto = async (viagem) => {
+    const abrirModalCanhoto = async (viagem, urlIndex = 0) => {
+        const urls = viagem.urlsCanhotos || (viagem.urlCanhoto ? [viagem.urlCanhoto] : []);
         setImagemModal({
-            url: viagem.urlCanhoto,
+            url: urls[urlIndex],
             viagemId: viagem.id,
-            viagemNome: viagem.motoristaNome || 'Viagem'
+            viagemNome: viagem.motoristaNome || 'Viagem',
+            totalImagens: urls.length,
+            indiceAtual: urlIndex,
+            todasImagens: urls
+        });
+    };
+
+    // Função para abrir modal de galeria (todas as fotos)
+    const abrirModalGaleria = (viagem) => {
+        const documentos = documentosAdicionais[viagem.id] || [];
+        const canhotos = documentos.filter(d => d.tipo === 'CANHOTOS');
+        const outrosDocs = documentos.filter(d => d.tipo !== 'CANHOTOS');
+        
+        setGaleriaModal({
+            viagemId: viagem.id,
+            viagemNome: viagem.motoristaNome,
+            canhotos: canhotos,
+            outrosDocumentos: outrosDocs,
+            urlsCanhotos: viagem.urlsCanhotos || (viagem.urlCanhoto ? [viagem.urlCanhoto] : []),
+            quantidadeFotos: viagem.quantidadeFotos || (viagem.urlCanhoto ? 1 : 0),
+            observacoesMotorista: viagem.observacoesMotorista || ''
+        });
+    };
+
+    // Função para abrir modal de documentos
+    const abrirModalDocumentos = (viagem) => {
+        const documentos = documentosAdicionais[viagem.id] || [];
+        setDocumentosModal({
+            viagemId: viagem.id,
+            viagemNome: viagem.motoristaNome,
+            documentos: documentos,
+            totalDocumentos: documentos.length
         });
     };
 
@@ -286,6 +365,34 @@ const HistoricoViagens = () => {
         return null;
     };
 
+    // Renderizar badge de documentos
+    const renderBadgeDocumentos = (viagem) => {
+        const documentos = documentosAdicionais[viagem.id] || [];
+        const totalDocumentos = documentos.length;
+        
+        if (totalDocumentos === 0) return null;
+        
+        return (
+            <span style={styles.documentosBadge}>
+                <FileText size={10} /> {totalDocumentos} {totalDocumentos === 1 ? 'DOC' : 'DOCS'}
+            </span>
+        );
+    };
+
+    // Renderizar badge de fotos múltiplas
+    const renderBadgeFotos = (viagem) => {
+        const totalFotos = viagem.quantidadeFotos || (viagem.urlCanhoto ? 1 : 0);
+        const temMultiplasFotos = totalFotos > 1;
+        
+        if (!temMultiplasFotos) return null;
+        
+        return (
+            <span style={styles.fotosBadge}>
+                <Images size={10} /> {totalFotos} FOTOS
+            </span>
+        );
+    };
+
     return (
         <div style={styles.container}>
             {/* NOTIFICAÇÃO */}
@@ -298,7 +405,7 @@ const HistoricoViagens = () => {
                         <History size={28} color="#FFD700" /> 
                         <span>DESCARGO</span>
                     </h2>
-                    <p style={styles.subtitle}>Histórico de Viagens com Lead Time</p>
+                    <p style={styles.subtitle}>Histórico de Viagens com Documentos</p>
                 </div>
                 <div style={styles.AbasContainer}>
                     <button 
@@ -385,9 +492,13 @@ const HistoricoViagens = () => {
                         <span style={styles.resumoValor}>{Object.keys(viagensAgrupadas).length}</span>
                     </div>
                     <div style={styles.resumoItem}>
-                        <span style={styles.resumoLabel}>Com Lead Time:</span>
+                        <span style={styles.resumoLabel}>Com Documentos:</span>
                         <span style={styles.resumoValor}>
-                            {viagensFiltradas.filter(v => v.leadTimeColetaInicio || v.leadTimeEntregaInicio).length}
+                            {viagensFiltradas.filter(v => 
+                                v.urlCanhoto || 
+                                v.urlsCanhotos?.length > 0 || 
+                                (documentosAdicionais[v.id]?.length > 0)
+                            ).length}
                         </span>
                     </div>
                 </div>
@@ -430,9 +541,12 @@ const HistoricoViagens = () => {
                             {motoristasExpandidos[nome] && (
                                 <div style={styles.detalhesViagens}>
                                     {viagensAgrupadas[nome].map((v) => {
-                                        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto;
-                                        const temCanhoto = !!v.urlCanhoto;
+                                        const isFinalizada = v.chegouAoDestino === true || v.finalizada === true || v.urlCanhoto || v.urlsCanhotos?.length > 0;
+                                        const temCanhoto = !!v.urlCanhoto || v.urlsCanhotos?.length > 0;
                                         const temLeadTime = v.leadTimeColetaInicio || v.leadTimeEntregaInicio;
+                                        const temDocumentos = documentosAdicionais[v.id]?.length > 0;
+                                        const totalFotos = v.quantidadeFotos || (v.urlCanhoto ? 1 : 0);
+                                        const temMultiplasFotos = totalFotos > 1;
                                         
                                         return (
                                             <div key={v.id} style={styles.viagemItem}>
@@ -453,6 +567,8 @@ const HistoricoViagens = () => {
                                                                     <CheckCircle size={10} /> CANHOTO
                                                                 </span>
                                                             )}
+                                                            {renderBadgeFotos(v)}
+                                                            {renderBadgeDocumentos(v)}
                                                         </div>
                                                         <div style={styles.cidadeText}>{v.cidadeColeta || v.origemCidade}</div>
                                                         <div style={styles.clienteSubText}>{v.clienteColeta}</div>
@@ -533,6 +649,27 @@ const HistoricoViagens = () => {
                                                             >
                                                                 <FileText size={16} color="#3498db"/>
                                                             </button>
+                                                            
+                                                            {temDocumentos && (
+                                                                <button 
+                                                                    onClick={() => abrirModalDocumentos(v)}
+                                                                    style={styles.btnIcon}
+                                                                    title="Ver todos os documentos"
+                                                                >
+                                                                    <FileText size={16} color="#9b59b6"/>
+                                                                </button>
+                                                            )}
+                                                            
+                                                            {(temCanhoto || temMultiplasFotos) && (
+                                                                <button 
+                                                                    onClick={() => abrirModalGaleria(v)}
+                                                                    style={styles.btnIcon}
+                                                                    title="Ver galeria de fotos"
+                                                                >
+                                                                    <Images size={16} color="#FFD700"/>
+                                                                </button>
+                                                            )}
+                                                            
                                                             <button 
                                                                 onClick={() => setEditandoCarga(v)}
                                                                 style={styles.btnIcon}
@@ -573,14 +710,37 @@ const HistoricoViagens = () => {
                                                              isFinalizada ? 'FINALIZADA' : 'EM CURSO'}
                                                         </div>
                                                         
-                                                        {/* BOTÃO PARA VER CANHOTO */}
-                                                        {v.urlCanhoto && (
-                                                            <button 
-                                                                onClick={() => abrirModalCanhoto(v)}
-                                                                style={styles.btnCanhoto}
-                                                            >
-                                                                <ImageIcon size={14}/> Ver Canhoto
-                                                            </button>
+                                                        {/* BOTÕES PARA VER CANHOTO(S) */}
+                                                        {temCanhoto && (
+                                                            <div style={styles.btnCanhotoContainer}>
+                                                                {temMultiplasFotos ? (
+                                                                    <button 
+                                                                        onClick={() => abrirModalGaleria(v)}
+                                                                        style={styles.btnCanhotoMultiplo}
+                                                                    >
+                                                                        <Images size={14}/> Ver {totalFotos} Fotos
+                                                                    </button>
+                                                                ) : (
+                                                                    <button 
+                                                                        onClick={() => abrirModalCanhoto(v)}
+                                                                        style={styles.btnCanhoto}
+                                                                    >
+                                                                        <ImageIcon size={14}/> Ver Canhoto
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                        
+                                                        {/* OBSERVAÇÕES DO MOTORISTA */}
+                                                        {v.observacoesMotorista && (
+                                                            <div style={styles.observacaoContainer}>
+                                                                <span style={styles.observacaoLabel}>Obs do motorista:</span>
+                                                                <span style={styles.observacaoText} title={v.observacoesMotorista}>
+                                                                    {v.observacoesMotorista.length > 50 
+                                                                        ? v.observacoesMotorista.substring(0, 50) + '...' 
+                                                                        : v.observacoesMotorista}
+                                                                </span>
+                                                            </div>
                                                         )}
                                                     </div>
                                                 </div>
@@ -606,6 +766,14 @@ const HistoricoViagens = () => {
                                                             <span style={styles.extraLabel}>Lead Time:</span>
                                                             <span style={{...styles.extraValue, color: '#FFD700', fontWeight: 'bold'}}>
                                                                 {v.leadTimeTotal || 'Em andamento'}
+                                                            </span>
+                                                        </div>
+                                                    )}
+                                                    {temDocumentos && (
+                                                        <div style={styles.extraItem}>
+                                                            <span style={styles.extraLabel}>Documentos:</span>
+                                                            <span style={{...styles.extraValue, color: '#9b59b6', fontWeight: 'bold'}}>
+                                                                {documentosAdicionais[v.id]?.length || 0} docs
                                                             </span>
                                                         </div>
                                                     )}
@@ -798,29 +966,108 @@ const HistoricoViagens = () => {
                                 </div>
                             </div>
                             
-                            {/* CANHOTO */}
-                            {detalhesModal.urlCanhoto && (
+                            {/* DOCUMENTOS E FOTOS */}
+                            {(detalhesModal.urlCanhoto || detalhesModal.urlsCanhotos?.length > 0 || 
+                              documentosAdicionais[detalhesModal.id]?.length > 0) && (
                                 <div style={styles.modalSection}>
                                     <h4 style={styles.sectionTitle}>
-                                        <ImageIcon size={16} /> COMPROVANTE/CANHOTO
+                                        <File size={16} /> DOCUMENTOS E FOTOS
                                     </h4>
-                                    <div style={styles.canhotoContainer}>
-                                        <div style={styles.canhotoStatus}>
-                                            <CheckCircle size={20} color="#16a34a" />
-                                            <span style={styles.canhotoStatusText}>
-                                                Esta viagem foi finalizada automaticamente com o envio do canhoto
-                                            </span>
+                                    
+                                    {/* CANHOTOS/FOTOS */}
+                                    {(detalhesModal.urlCanhoto || detalhesModal.urlsCanhotos?.length > 0) && (
+                                        <div style={styles.canhotoContainer}>
+                                            <div style={styles.canhotoStatus}>
+                                                <CheckCircle size={20} color="#16a34a" />
+                                                <span style={styles.canhotoStatusText}>
+                                                    {detalhesModal.quantidadeFotos > 1 
+                                                        ? `Esta viagem foi finalizada com ${detalhesModal.quantidadeFotos} fotos enviadas pelo motorista`
+                                                        : 'Esta viagem foi finalizada automaticamente com o envio do canhoto'}
+                                                </span>
+                                            </div>
+                                            
+                                            {detalhesModal.urlsCanhotos?.length > 1 ? (
+                                                <button 
+                                                    onClick={() => abrirModalGaleria(detalhesModal)}
+                                                    style={styles.btnVerGaleria}
+                                                >
+                                                    <Images size={18} /> VER GALERIA ({detalhesModal.urlsCanhotos.length} FOTOS)
+                                                </button>
+                                            ) : (
+                                                <button 
+                                                    onClick={() => abrirModalCanhoto(detalhesModal)}
+                                                    style={styles.btnVerCanhoto}
+                                                >
+                                                    <ImageIcon size={18} /> VER CANHOTO COMPLETO
+                                                </button>
+                                            )}
+                                            
+                                            {detalhesModal.observacoesMotorista && (
+                                                <div style={styles.observacaoModal}>
+                                                    <strong>Observações do motorista:</strong>
+                                                    <p style={styles.observacaoModalText}>{detalhesModal.observacoesMotorista}</p>
+                                                </div>
+                                            )}
                                         </div>
-                                        <button 
-                                            onClick={() => abrirModalCanhoto(detalhesModal)}
-                                            style={styles.btnVerCanhoto}
-                                        >
-                                            <ImageIcon size={18} /> VER CANHOTO COMPLETO
-                                        </button>
-                                        <p style={styles.canhotoInfo}>
-                                            Clique para visualizar a imagem enviada pelo motorista
-                                        </p>
-                                    </div>
+                                    )}
+                                    
+                                    {/* DOCUMENTOS ADICIONAIS */}
+                                    {documentosAdicionais[detalhesModal.id]?.length > 0 && (
+                                        <div style={styles.documentosContainer}>
+                                            <h5 style={styles.documentosTitle}>
+                                                <FileText size={14} /> DOCUMENTOS ADICIONAIS ({documentosAdicionais[detalhesModal.id].length})
+                                            </h5>
+                                            <div style={styles.documentosList}>
+                                                {documentosAdicionais[detalhesModal.id].map((doc, index) => (
+                                                    <div key={doc.id} style={styles.documentoItem}>
+                                                        <div style={styles.documentoInfo}>
+                                                            <span style={styles.documentoTipo}>{doc.tipo || 'DOCUMENTO'}</span>
+                                                            <span style={styles.documentoData}>
+                                                                {doc.dataEnvio ? paraInputDateTime(doc.dataEnvio).replace('T', ' ') : '--/--/-- --:--'}
+                                                            </span>
+                                                            {doc.quantidade && (
+                                                                <span style={styles.documentoQuantidade}>
+                                                                    {doc.quantidade} {doc.tipo === 'CANHOTOS' ? 'fotos' : 'docs'}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        {doc.observacoes && (
+                                                            <p style={styles.documentoObservacoes}>
+                                                                Obs: {doc.observacoes}
+                                                            </p>
+                                                        )}
+                                                        {doc.urls?.length > 0 && (
+                                                            <button 
+                                                                onClick={() => {
+                                                                    if (doc.tipo === 'CANHOTOS' && doc.urls.length > 1) {
+                                                                        setGaleriaModal({
+                                                                            viagemId: detalhesModal.id,
+                                                                            viagemNome: detalhesModal.motoristaNome,
+                                                                            canhotos: [doc],
+                                                                            urlsCanhotos: doc.urls,
+                                                                            quantidadeFotos: doc.quantidade || doc.urls.length
+                                                                        });
+                                                                    } else if (doc.urls[0]) {
+                                                                        setImagemModal({
+                                                                            url: doc.urls[0],
+                                                                            viagemId: detalhesModal.id,
+                                                                            viagemNome: detalhesModal.motoristaNome
+                                                                        });
+                                                                    }
+                                                                }}
+                                                                style={styles.btnVerDocumento}
+                                                            >
+                                                                {doc.tipo === 'CANHOTOS' && doc.urls.length > 1 
+                                                                    ? <Images size={14} /> 
+                                                                    : <Eye size={14} />}
+                                                                Ver {doc.tipo === 'CANHOTOS' && doc.urls.length > 1 ? 'Fotos' : 'Documento'}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                             
@@ -846,10 +1093,20 @@ const HistoricoViagens = () => {
                                         <span style={styles.metadataLabel}>Tem Canhoto:</span>
                                         <span style={{
                                             ...styles.metadataValue,
-                                            color: detalhesModal.urlCanhoto ? '#16a34a' : '#e74c3c',
+                                            color: detalhesModal.urlCanhoto || detalhesModal.urlsCanhotos?.length > 0 ? '#16a34a' : '#e74c3c',
                                             fontWeight: 'bold'
                                         }}>
-                                            {detalhesModal.urlCanhoto ? 'SIM' : 'NÃO'}
+                                            {detalhesModal.urlCanhoto || detalhesModal.urlsCanhotos?.length > 0 ? 'SIM' : 'NÃO'}
+                                        </span>
+                                    </div>
+                                    <div style={styles.metadataItem}>
+                                        <span style={styles.metadataLabel}>Quantidade Fotos:</span>
+                                        <span style={{
+                                            ...styles.metadataValue,
+                                            color: '#FFD700',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            {detalhesModal.quantidadeFotos || (detalhesModal.urlCanhoto ? 1 : 0)}
                                         </span>
                                     </div>
                                     {(detalhesModal.leadTimeColetaInicio || detalhesModal.leadTimeEntregaInicio) && (
@@ -1101,9 +1358,48 @@ const HistoricoViagens = () => {
                             </button>
                         </div>
                         <div style={styles.modalImagemContent}>
+                            {/* CONTROLES DE NAVEGAÇÃO PARA MULTIPLAS FOTOS */}
+                            {imagemModal.totalImagens > 1 && (
+                                <div style={styles.navegacaoFotos}>
+                                    <button 
+                                        onClick={() => {
+                                            const novoIndice = (imagemModal.indiceAtual - 1 + imagemModal.totalImagens) % imagemModal.totalImagens;
+                                            abrirModalCanhoto(
+                                                { id: imagemModal.viagemId, motoristaNome: imagemModal.viagemNome, urlsCanhotos: imagemModal.todasImagens },
+                                                novoIndice
+                                            );
+                                        }}
+                                        style={styles.btnNavegacao}
+                                        disabled={imagemModal.totalImagens <= 1}
+                                    >
+                                        ←
+                                    </button>
+                                    <span style={styles.contadorFotos}>
+                                        {imagemModal.indiceAtual + 1} / {imagemModal.totalImagens}
+                                    </span>
+                                    <button 
+                                        onClick={() => {
+                                            const novoIndice = (imagemModal.indiceAtual + 1) % imagemModal.totalImagens;
+                                            abrirModalCanhoto(
+                                                { id: imagemModal.viagemId, motoristaNome: imagemModal.viagemNome, urlsCanhotos: imagemModal.todasImagens },
+                                                novoIndice
+                                            );
+                                        }}
+                                        style={styles.btnNavegacao}
+                                        disabled={imagemModal.totalImagens <= 1}
+                                    >
+                                        →
+                                    </button>
+                                </div>
+                            )}
+                            
                             <div style={styles.imagemStatus}>
                                 <CheckCircle size={24} color="#16a34a" />
-                                <span>Viagem finalizada com este canhoto</span>
+                                <span>
+                                    {imagemModal.totalImagens > 1 
+                                        ? `Foto ${imagemModal.indiceAtual + 1} de ${imagemModal.totalImagens} - Viagem finalizada` 
+                                        : 'Viagem finalizada com este canhoto'}
+                                </span>
                             </div>
                             <img 
                                 src={imagemModal.url} 
@@ -1122,9 +1418,215 @@ const HistoricoViagens = () => {
                                 rel="noopener noreferrer"
                                 style={styles.btnDownload}
                             >
-                                ABRIR EM NOVA ABA
+                                <Download size={16} /> BAIXAR IMAGEM
                             </a>
                             <button onClick={() => setImagemModal(null)} style={styles.btnFecharImagem}>
+                                FECHAR
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DE GALERIA (MULTIPLAS FOTOS) */}
+            {galeriaModal && (
+                <div style={styles.overlayImagem}>
+                    <div style={styles.modalGaleriaContainer}>
+                        <div style={styles.modalGaleriaHeader}>
+                            <div>
+                                <h3><Images size={20} /> GALERIA DE FOTOS</h3>
+                                <p style={styles.galeriaSubtitle}>
+                                    {galeriaModal.viagemNome} • {galeriaModal.quantidadeFotos || galeriaModal.urlsCanhotos?.length || 0} fotos
+                                </p>
+                            </div>
+                            <button onClick={() => setGaleriaModal(null)} style={styles.btnClose}>
+                                <X size={24} />
+                            </button>
+                        </div>
+                        
+                        <div style={styles.galeriaContent}>
+                            {/* OBSERVAÇÕES DO MOTORISTA */}
+                            {galeriaModal.observacoesMotorista && (
+                                <div style={styles.observacaoGaleria}>
+                                    <strong>Observações do motorista:</strong>
+                                    <p>{galeriaModal.observacoesMotorista}</p>
+                                </div>
+                            )}
+                            
+                            {/* LISTA DE CANHOTOS (do documento) */}
+                            {galeriaModal.canhotos?.length > 0 && galeriaModal.canhotos[0]?.urls?.length > 0 && (
+                                <div style={styles.canhotosContainer}>
+                                    <h4 style={styles.canhotosTitle}>
+                                        <CheckCircle size={16} /> CANHOTOS ENVIADOS ({galeriaModal.canhotos[0].quantidade || galeriaModal.canhotos[0].urls.length})
+                                    </h4>
+                                    <div style={styles.galeriaGrid}>
+                                        {galeriaModal.canhotos[0].urls.map((url, index) => (
+                                            <div key={index} style={styles.thumbnailContainer}>
+                                                <img 
+                                                    src={url} 
+                                                    alt={`Canhoto ${index + 1}`}
+                                                    style={styles.thumbnail}
+                                                    onClick={() => abrirModalCanhoto(
+                                                        { 
+                                                            id: galeriaModal.viagemId, 
+                                                            motoristaNome: galeriaModal.viagemNome, 
+                                                            urlsCanhotos: galeriaModal.canhotos[0].urls 
+                                                        }, 
+                                                        index
+                                                    )}
+                                                />
+                                                <span style={styles.thumbnailLabel}>Foto {index + 1}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {/* FOTOS DIRETAS (do campo urlsCanhotos) */}
+                            {galeriaModal.urlsCanhotos?.length > 0 && !galeriaModal.canhotos?.length && (
+                                <div style={styles.canhotosContainer}>
+                                    <h4 style={styles.canhotosTitle}>
+                                        <CheckCircle size={16} /> FOTOS ENVIADAS ({galeriaModal.urlsCanhotos.length})
+                                    </h4>
+                                    <div style={styles.galeriaGrid}>
+                                        {galeriaModal.urlsCanhotos.map((url, index) => (
+                                            <div key={index} style={styles.thumbnailContainer}>
+                                                <img 
+                                                    src={url} 
+                                                    alt={`Foto ${index + 1}`}
+                                                    style={styles.thumbnail}
+                                                    onClick={() => abrirModalCanhoto(
+                                                        { 
+                                                            id: galeriaModal.viagemId, 
+                                                            motoristaNome: galeriaModal.viagemNome, 
+                                                            urlsCanhotos: galeriaModal.urlsCanhotos 
+                                                        }, 
+                                                        index
+                                                    )}
+                                                />
+                                                <span style={styles.thumbnailLabel}>Foto {index + 1}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            
+                            {/* OUTROS DOCUMENTOS */}
+                            {galeriaModal.outrosDocumentos?.length > 0 && (
+                                <div style={styles.documentosGaleria}>
+                                    <h4 style={styles.documentosTitle}>
+                                        <File size={16} /> OUTROS DOCUMENTOS ({galeriaModal.outrosDocumentos.length})
+                                    </h4>
+                                    {galeriaModal.outrosDocumentos.map((doc, index) => (
+                                        <div key={doc.id} style={styles.documentoGaleriaItem}>
+                                            <div style={styles.documentoGaleriaInfo}>
+                                                <span style={styles.documentoGaleriaTipo}>{doc.tipo || 'DOCUMENTO'}</span>
+                                                <span style={styles.documentoGaleriaData}>
+                                                    {doc.dataEnvio ? paraInputDateTime(doc.dataEnvio).replace('T', ' ') : '--/--/-- --:--'}
+                                                </span>
+                                            </div>
+                                            {doc.observacoes && (
+                                                <p style={styles.documentoGaleriaObservacoes}>Obs: {doc.observacoes}</p>
+                                            )}
+                                            {doc.urls?.length > 0 && (
+                                                <div style={styles.documentoGaleriaAcoes}>
+                                                    {doc.urls.map((url, urlIndex) => (
+                                                        <a 
+                                                            key={urlIndex}
+                                                            href={url} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer"
+                                                            style={styles.btnVerDocumentoGaleria}
+                                                        >
+                                                            <Eye size={14} /> Ver {doc.tipo === 'CANHOTOS' ? 'Foto' : 'Doc'} {urlIndex + 1}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div style={styles.modalGaleriaFooter}>
+                            <button onClick={() => setGaleriaModal(null)} style={styles.btnFecharGaleria}>
+                                FECHAR GALERIA
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL DE DOCUMENTOS */}
+            {documentosModal && (
+                <div style={styles.overlay}>
+                    <div style={styles.modalDocumentos}>
+                        <div style={styles.modalDocumentosHeader}>
+                            <div>
+                                <h3><FileText size={20} /> TODOS OS DOCUMENTOS</h3>
+                                <p style={styles.documentosSubtitle}>
+                                    {documentosModal.viagemNome} • {documentosModal.totalDocumentos} documentos
+                                </p>
+                            </div>
+                            <button onClick={() => setDocumentosModal(null)} style={styles.btnClose}>
+                                <X size={24} />
+                            </button>
+                        </div>
+                        
+                        <div style={styles.modalDocumentosContent}>
+                            {documentosModal.documentos.length === 0 ? (
+                                <div style={styles.documentosVazio}>
+                                    <File size={48} color="#666" />
+                                    <p>Nenhum documento adicional encontrado para esta viagem.</p>
+                                </div>
+                            ) : (
+                                <div style={styles.documentosLista}>
+                                    {documentosModal.documentos.map((doc, index) => (
+                                        <div key={doc.id} style={styles.documentoItemCompleto}>
+                                            <div style={styles.documentoItemHeader}>
+                                                <div>
+                                                    <span style={styles.documentoItemTipo}>{doc.tipo || 'DOCUMENTO'}</span>
+                                                    <span style={styles.documentoItemData}>
+                                                        {doc.dataEnvio ? paraInputDateTime(doc.dataEnvio).replace('T', ' ') : '--/--/-- --:--'}
+                                                    </span>
+                                                </div>
+                                                <span style={styles.documentoItemQuantidade}>
+                                                    {doc.quantidade || doc.urls?.length || 0} {doc.tipo === 'CANHOTOS' ? 'fotos' : 'arquivos'}
+                                                </span>
+                                            </div>
+                                            
+                                            {doc.observacoes && (
+                                                <div style={styles.documentoItemObservacoes}>
+                                                    <strong>Observações:</strong> {doc.observacoes}
+                                                </div>
+                                            )}
+                                            
+                                            {doc.urls && doc.urls.length > 0 && (
+                                                <div style={styles.documentoItemLinks}>
+                                                    {doc.urls.map((url, urlIndex) => (
+                                                        <a 
+                                                            key={urlIndex}
+                                                            href={url} 
+                                                            target="_blank" 
+                                                            rel="noopener noreferrer"
+                                                            style={styles.documentoItemLink}
+                                                        >
+                                                            {doc.tipo === 'CANHOTOS' && doc.urls.length > 1 
+                                                                ? `Foto ${urlIndex + 1}` 
+                                                                : 'Abrir documento'}
+                                                        </a>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        
+                        <div style={styles.modalDocumentosFooter}>
+                            <button onClick={() => setDocumentosModal(null)} style={styles.btnFecharDocumentos}>
                                 FECHAR
                             </button>
                         </div>
@@ -1354,6 +1856,31 @@ const styles = {
         fontWeight: 'bold',
         border: '1px solid #333'
     },
+    // NOVOS BADGES
+    documentosBadge: {
+        background: 'rgba(155, 89, 182, 0.1)',
+        color: '#9b59b6',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        border: '1px solid rgba(155, 89, 182, 0.3)'
+    },
+    fotosBadge: {
+        background: 'rgba(255, 215, 0, 0.1)',
+        color: '#FFD700',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        padding: '3px 8px',
+        borderRadius: '4px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        border: '1px solid rgba(255, 215, 0, 0.3)'
+    },
     detalhesViagens: { 
         padding: '20px', 
         background: '#050505',
@@ -1379,7 +1906,8 @@ const styles = {
     tagContainer: {
         display: 'flex',
         gap: '8px',
-        marginBottom: '8px'
+        marginBottom: '8px',
+        flexWrap: 'wrap'
     },
     tagOrigem: { 
         color: '#3498db', 
@@ -1518,7 +2046,7 @@ const styles = {
     
     infoStatus: { 
         textAlign: 'right', 
-        minWidth: '150px'
+        minWidth: '180px'
     },
     
     acoesContainer: { 
@@ -1551,6 +2079,10 @@ const styles = {
         marginBottom: '8px'
     },
     
+    btnCanhotoContainer: {
+        marginTop: '8px'
+    },
+    
     btnCanhoto: { 
         background: 'rgba(255, 215, 0, 0.1)', 
         color: '#FFD700', 
@@ -1558,12 +2090,52 @@ const styles = {
         fontSize: '11px', 
         padding: '8px 12px', 
         borderRadius: '6px', 
-        marginTop: '8px', 
         cursor: 'pointer',
         display: 'flex',
         alignItems: 'center',
         gap: '6px',
-        transition: 'all 0.3s ease'
+        transition: 'all 0.3s ease',
+        width: '100%',
+        justifyContent: 'center'
+    },
+    
+    btnCanhotoMultiplo: { 
+        background: 'rgba(52, 152, 219, 0.1)', 
+        color: '#3498db', 
+        border: '1px solid rgba(52, 152, 219, 0.3)', 
+        fontSize: '11px', 
+        padding: '8px 12px', 
+        borderRadius: '6px', 
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        transition: 'all 0.3s ease',
+        width: '100%',
+        justifyContent: 'center'
+    },
+    
+    observacaoContainer: {
+        marginTop: '8px',
+        padding: '6px',
+        background: 'rgba(255, 255, 255, 0.05)',
+        borderRadius: '4px',
+        border: '1px solid #333',
+        textAlign: 'left'
+    },
+    
+    observacaoLabel: {
+        color: '#666',
+        fontSize: '10px',
+        fontWeight: 'bold',
+        display: 'block',
+        marginBottom: '2px'
+    },
+    
+    observacaoText: {
+        color: '#999',
+        fontSize: '10px',
+        display: 'block'
     },
     
     viagemExtra: {
@@ -1873,11 +2445,115 @@ const styles = {
         transition: 'all 0.3s ease'
     },
     
+    btnVerGaleria: {
+        background: 'rgba(52, 152, 219, 0.1)',
+        color: '#3498db',
+        border: '2px solid rgba(52, 152, 219, 0.3)',
+        padding: '12px 25px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        transition: 'all 0.3s ease'
+    },
+    
     canhotoInfo: {
         color: '#666',
         fontSize: '12px',
         textAlign: 'center',
         margin: 0
+    },
+    
+    // DOCUMENTOS CONTAINER
+    documentosContainer: {
+        marginTop: '20px',
+        padding: '20px',
+        background: '#050505',
+        borderRadius: '8px',
+        border: '1px solid #333'
+    },
+    
+    documentosTitle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        margin: '0 0 15px 0',
+        fontSize: '14px',
+        color: '#9b59b6'
+    },
+    
+    documentosList: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '10px'
+    },
+    
+    documentoItem: {
+        padding: '12px',
+        background: '#0a0a0a',
+        borderRadius: '6px',
+        border: '1px solid #222'
+    },
+    
+    documentoInfo: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px',
+        marginBottom: '8px',
+        fontSize: '12px'
+    },
+    
+    documentoTipo: {
+        color: '#9b59b6',
+        fontWeight: 'bold'
+    },
+    
+    documentoData: {
+        color: '#666'
+    },
+    
+    documentoQuantidade: {
+        color: '#FFD700',
+        fontWeight: 'bold'
+    },
+    
+    documentoObservacoes: {
+        color: '#999',
+        fontSize: '11px',
+        margin: '5px 0 8px 0',
+        fontStyle: 'italic'
+    },
+    
+    btnVerDocumento: {
+        background: 'rgba(155, 89, 182, 0.1)',
+        color: '#9b59b6',
+        border: '1px solid rgba(155, 89, 182, 0.3)',
+        padding: '6px 12px',
+        borderRadius: '4px',
+        cursor: 'pointer',
+        fontSize: '11px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        transition: 'all 0.3s ease'
+    },
+    
+    observacaoModal: {
+        width: '100%',
+        padding: '12px',
+        background: 'rgba(255, 215, 0, 0.05)',
+        borderRadius: '6px',
+        border: '1px solid rgba(255, 215, 0, 0.1)',
+        marginTop: '10px'
+    },
+    
+    observacaoModalText: {
+        color: '#FFD700',
+        fontSize: '13px',
+        marginTop: '5px'
     },
     
     metadataGrid: {
@@ -2079,12 +2755,50 @@ const styles = {
     modalImagemContent: {
         flex: 1,
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
         padding: '20px',
         overflow: 'hidden',
         background: '#000',
         position: 'relative'
+    },
+    
+    navegacaoFotos: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '20px',
+        marginBottom: '15px',
+        zIndex: 10,
+        position: 'absolute',
+        top: '20px',
+        left: 0,
+        right: 0
+    },
+    
+    btnNavegacao: {
+        background: 'rgba(255, 255, 255, 0.1)',
+        color: '#fff',
+        border: '1px solid #333',
+        width: '40px',
+        height: '40px',
+        borderRadius: '50%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '18px',
+        transition: 'all 0.3s ease'
+    },
+    
+    contadorFotos: {
+        color: '#FFD700',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        background: 'rgba(0,0,0,0.7)',
+        padding: '5px 15px',
+        borderRadius: '20px'
     },
     
     imagemStatus: {
@@ -2096,16 +2810,16 @@ const styles = {
         borderRadius: '8px',
         border: '1px solid rgba(22, 163, 74, 0.3)',
         marginBottom: '15px',
+        zIndex: 10,
         position: 'absolute',
-        top: '20px',
+        top: '60px',
         left: '20px',
-        right: '20px',
-        zIndex: 10
+        right: '20px'
     },
     
     imagemCanhoto: {
         maxWidth: '100%',
-        maxHeight: '100%',
+        maxHeight: 'calc(100% - 100px)',
         objectFit: 'contain',
         borderRadius: '8px',
         border: '1px solid #333'
@@ -2129,6 +2843,9 @@ const styles = {
         textDecoration: 'none',
         fontSize: '12px',
         fontWeight: 'bold',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
         transition: 'all 0.3s ease'
     },
     
@@ -2140,6 +2857,304 @@ const styles = {
         borderRadius: '8px',
         cursor: 'pointer',
         fontSize: '12px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    },
+    
+    // MODAL DE GALERIA
+    modalGaleriaContainer: {
+        background: '#111',
+        borderRadius: '15px',
+        width: '90vw',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        border: '1px solid #333',
+        overflow: 'hidden'
+    },
+    
+    modalGaleriaHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '20px 30px',
+        borderBottom: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    
+    galeriaSubtitle: {
+        color: '#666',
+        fontSize: '12px',
+        marginTop: '3px'
+    },
+    
+    galeriaContent: {
+        flex: 1,
+        overflowY: 'auto',
+        padding: '20px'
+    },
+    
+    observacaoGaleria: {
+        background: 'rgba(255, 215, 0, 0.05)',
+        padding: '15px',
+        borderRadius: '8px',
+        border: '1px solid rgba(255, 215, 0, 0.1)',
+        marginBottom: '20px'
+    },
+    
+    canhotosContainer: {
+        marginBottom: '30px'
+    },
+    
+    canhotosTitle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        margin: '0 0 15px 0',
+        fontSize: '16px',
+        color: '#FFD700'
+    },
+    
+    galeriaGrid: {
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+        gap: '15px'
+    },
+    
+    thumbnailContainer: {
+        cursor: 'pointer',
+        transition: 'all 0.3s ease'
+    },
+    
+    thumbnail: {
+        width: '100%',
+        height: '120px',
+        objectFit: 'cover',
+        borderRadius: '8px',
+        border: '2px solid #333',
+        transition: 'all 0.3s ease'
+    },
+    
+    thumbnailLabel: {
+        display: 'block',
+        textAlign: 'center',
+        color: '#999',
+        fontSize: '12px',
+        marginTop: '5px'
+    },
+    
+    documentosGaleria: {
+        marginTop: '30px'
+    },
+    
+    documentosTitle: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        margin: '0 0 15px 0',
+        fontSize: '16px',
+        color: '#9b59b6'
+    },
+    
+    documentoGaleriaItem: {
+        padding: '15px',
+        background: '#050505',
+        borderRadius: '8px',
+        border: '1px solid #222',
+        marginBottom: '10px'
+    },
+    
+    documentoGaleriaInfo: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '15px',
+        marginBottom: '10px',
+        fontSize: '12px'
+    },
+    
+    documentoGaleriaTipo: {
+        color: '#9b59b6',
+        fontWeight: 'bold'
+    },
+    
+    documentoGaleriaData: {
+        color: '#666'
+    },
+    
+    documentoGaleriaObservacoes: {
+        color: '#999',
+        fontSize: '12px',
+        marginBottom: '10px'
+    },
+    
+    documentoGaleriaAcoes: {
+        display: 'flex',
+        gap: '10px',
+        flexWrap: 'wrap'
+    },
+    
+    btnVerDocumentoGaleria: {
+        background: 'rgba(155, 89, 182, 0.1)',
+        color: '#9b59b6',
+        border: '1px solid rgba(155, 89, 182, 0.3)',
+        padding: '6px 12px',
+        borderRadius: '4px',
+        textDecoration: 'none',
+        fontSize: '11px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '6px',
+        transition: 'all 0.3s ease'
+    },
+    
+    modalGaleriaFooter: {
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '20px 30px',
+        borderTop: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    
+    btnFecharGaleria: {
+        background: '#222',
+        color: '#fff',
+        border: '1px solid #333',
+        padding: '12px 30px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '14px',
+        fontWeight: 'bold',
+        transition: 'all 0.3s ease'
+    },
+    
+    // MODAL DE DOCUMENTOS
+    modalDocumentos: {
+        background: '#111',
+        borderRadius: '15px',
+        width: '700px',
+        maxWidth: '90vw',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        border: '1px solid #333',
+        overflow: 'hidden'
+    },
+    
+    modalDocumentosHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        padding: '20px 30px',
+        borderBottom: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    
+    documentosSubtitle: {
+        color: '#666',
+        fontSize: '12px',
+        marginTop: '3px'
+    },
+    
+    modalDocumentosContent: {
+        flex: 1,
+        overflowY: 'auto',
+        padding: '30px'
+    },
+    
+    documentosVazio: {
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '60px 20px',
+        color: '#666',
+        textAlign: 'center',
+        gap: '20px'
+    },
+    
+    documentosLista: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '15px'
+    },
+    
+    documentoItemCompleto: {
+        padding: '20px',
+        background: '#050505',
+        borderRadius: '10px',
+        border: '1px solid #222'
+    },
+    
+    documentoItemHeader: {
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '15px'
+    },
+    
+    documentoItemTipo: {
+        color: '#9b59b6',
+        fontSize: '14px',
+        fontWeight: 'bold'
+    },
+    
+    documentoItemData: {
+        color: '#666',
+        fontSize: '12px',
+        marginLeft: '15px'
+    },
+    
+    documentoItemQuantidade: {
+        color: '#FFD700',
+        fontSize: '12px',
+        fontWeight: 'bold',
+        background: 'rgba(255, 215, 0, 0.1)',
+        padding: '4px 8px',
+        borderRadius: '4px'
+    },
+    
+    documentoItemObservacoes: {
+        color: '#999',
+        fontSize: '13px',
+        marginBottom: '15px',
+        padding: '10px',
+        background: 'rgba(255, 255, 255, 0.05)',
+        borderRadius: '6px'
+    },
+    
+    documentoItemLinks: {
+        display: 'flex',
+        gap: '10px',
+        flexWrap: 'wrap'
+    },
+    
+    documentoItemLink: {
+        background: 'rgba(155, 89, 182, 0.1)',
+        color: '#9b59b6',
+        border: '1px solid rgba(155, 89, 182, 0.3)',
+        padding: '8px 15px',
+        borderRadius: '6px',
+        textDecoration: 'none',
+        fontSize: '12px',
+        transition: 'all 0.3s ease'
+    },
+    
+    modalDocumentosFooter: {
+        display: 'flex',
+        justifyContent: 'center',
+        padding: '20px 30px',
+        borderTop: '1px solid #222',
+        background: '#0a0a0a'
+    },
+    
+    btnFecharDocumentos: {
+        background: '#222',
+        color: '#fff',
+        border: '1px solid #333',
+        padding: '12px 30px',
+        borderRadius: '8px',
+        cursor: 'pointer',
+        fontSize: '14px',
         fontWeight: 'bold',
         transition: 'all 0.3s ease'
     }

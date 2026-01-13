@@ -1,13 +1,16 @@
-// MinhasViagens.js - VERSÃO COMPLETA COM LEAD TIME
+// MinhasViagens.js - VERSÃO CORRIGIDA (sem expo-camera)
 import React, { useState, useEffect } from 'react';
 import { 
   View, Text, StyleSheet, FlatList, ActivityIndicator, 
-  SafeAreaView, StatusBar, TouchableOpacity, Alert, Image, Modal
+  SafeAreaView, StatusBar, TouchableOpacity, Alert, Image, Modal,
+  ScrollView, TextInput, Dimensions, Platform
 } from 'react-native';
-import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp } from 'firebase/firestore';
+import { collection, query, onSnapshot, doc, updateDoc, where, getDocs, serverTimestamp, addDoc } from 'firebase/firestore';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+
+const { width, height } = Dimensions.get('window');
 
 export default function MinhasViagens({ auth, db }) {
   const [loading, setLoading] = useState(true);
@@ -27,121 +30,104 @@ export default function MinhasViagens({ auth, db }) {
     entregaFim: null
   });
 
-  useEffect(() => {
-    buscarViagensDeTodasColecoes();
-  }, [auth.currentUser]);
+  // ESTADOS PARA UPLOAD MULTIPLO
+  const [modalUpload, setModalUpload] = useState(false);
+  const [viagemParaUpload, setViagemParaUpload] = useState(null);
+  const [fotosSelecionadas, setFotosSelecionadas] = useState([]);
+  const [observacoes, setObservacoes] = useState('');
+  const [uploadProgress, setUploadProgress] = useState(0);
+
+  // NOVO: MODAL PARA VER/EDITAR DOCUMENTOS DE VIAGENS FINALIZADAS
+  const [modalDocumentos, setModalDocumentos] = useState(false);
+  const [viagemDocumentos, setViagemDocumentos] = useState(null);
+  const [editandoObservacoes, setEditandoObservacoes] = useState(false);
+  const [novaObservacao, setNovaObservacao] = useState('');
+
+  // ESTADO PARA OTIMIZAÇÃO DE CAMERA
+  const [processandoCamera, setProcessandoCamera] = useState(false);
+  const [qualidadeCamera] = useState(0.7); // Reduz qualidade para performance
 
   useEffect(() => {
-    // Verificar se há viagem ativa ao iniciar
-    if (viagens.length > 0 && !loading) {
-      const viagemAtiva = viagens.find(v => !v.urlCanhoto && !v.finalizada);
-      if (viagemAtiva) {
-        console.log("✅ Viagem ativa encontrada no início:", viagemAtiva.id);
-      }
+    buscarViagensDeTodasColecoes();
+    // Solicitar permissões no início
+    solicitarPermissoes();
+  }, [auth.currentUser]);
+
+  const solicitarPermissoes = async () => {
+    const { status: cameraStatus } = await ImagePicker.requestCameraPermissionsAsync();
+    const { status: mediaStatus } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    
+    if (cameraStatus !== 'granted' || mediaStatus !== 'granted') {
+      Alert.alert(
+        'Permissões necessárias',
+        'Precisamos das permissões da câmera e galeria para tirar fotos dos documentos.',
+        [{ text: 'OK' }]
+      );
     }
-  }, [viagens, loading]);
+  };
+
+  useEffect(() => {
+    // Configurar listener para atualizações em tempo real apenas para viagens ativas
+    if (auth.currentUser && viagens.some(v => !v.finalizada)) {
+      const unsubscribe = onSnapshot(
+        query(collection(db, 'viagens_ativas'), where('motoristaUid', '==', auth.currentUser.uid)),
+        (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === 'modified') {
+              setViagens(prev => prev.map(v => 
+                v.id === change.doc.id ? { ...v, ...change.doc.data() } : v
+              ));
+            }
+          });
+        }
+      );
+      return () => unsubscribe();
+    }
+  }, [auth.currentUser, viagens]);
 
   const buscarViagensDeTodasColecoes = async () => {
     if (!auth.currentUser) {
-      console.log("⚠️ Usuário não autenticado");
       setLoading(false);
       return;
     }
 
     const user = auth.currentUser;
-    console.log("🔍 Buscando viagens para usuário:", {
-      uid: user.uid,
-      email: user.email
-    });
+    setLoading(true);
 
     try {
       let todasViagens = [];
       const colecoesParaBuscar = ['viagens_ativas', 'ordens_servico'];
       
-      for (const colecao of colecoesParaBuscar) {
+      // Busca otimizada com Promise.all
+      const promises = colecoesParaBuscar.map(async (colecao) => {
         try {
-          console.log(`🔎 Buscando na coleção: ${colecao}`);
+          const q = query(
+            collection(db, colecao),
+            where('motoristaUid', '==', user.uid)
+          );
+          const snapshot = await getDocs(q);
           
-          // Tentar por UID (campo pode variar)
-          const camposUid = ['motoristaUid', 'motoristaiUid', 'motoristaId', 'uid'];
-          
-          for (const campo of camposUid) {
-            const q = query(
-              collection(db, colecao),
-              where(campo, "==", user.uid)
-            );
-            
-            const snapshot = await getDocs(q);
-            console.log(`  Por ${campo}: ${snapshot.size} documentos`);
-            
-            snapshot.forEach(doc => {
-              const data = doc.data();
-              // Adicionar origem da coleção
-              const viagemComOrigem = { 
-                id: doc.id, 
-                ...data, 
-                origemColecao: colecao,
-                // Garantir que temos os campos padrão
-                motoristaUid: data.motoristaUid || data.motoristaiUid || data.motoristaId || user.uid,
-                motoristaNome: data.motoristaNome || data.nome || 'Motorista',
-                clienteEntrega: data.clienteEntrega || data.destinoCliente || 'Cliente não informado',
-                statusOperacional: data.statusOperacional || data.status || 'PROGRAMADO'
-              };
-              
-              // Evitar duplicatas
-              if (!todasViagens.find(v => v.id === doc.id && v.origemColecao === colecao)) {
-                todasViagens.push(viagemComOrigem);
-              }
-            });
-          }
-          
-          // Tentar por email também
-          if (user.email) {
-            const qEmail = query(
-              collection(db, colecao),
-              where("motoristaEmail", "==", user.email)
-            );
-            
-            const snapshotEmail = await getDocs(qEmail);
-            console.log(`  Por email: ${snapshotEmail.size} documentos`);
-            
-            snapshotEmail.forEach(doc => {
-              const data = doc.data();
-              const viagemComOrigem = { 
-                id: doc.id, 
-                ...data, 
-                origemColecao: colecao 
-              };
-              
-              if (!todasViagens.find(v => v.id === doc.id && v.origemColecao === colecao)) {
-                todasViagens.push(viagemComOrigem);
-              }
-            });
-          }
-          
+          return snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            origemColecao: colecao
+          }));
         } catch (error) {
-          console.log(`❌ Erro na coleção ${colecao}:`, error.message);
+          console.log(`Erro na coleção ${colecao}:`, error.message);
+          return [];
         }
-      }
-
-      console.log(`📊 Total encontrado: ${todasViagens.length} viagens`);
-      
-      // Log detalhado
-      todasViagens.forEach((v, i) => {
-        console.log(`Viagem ${i + 1}:`);
-        console.log(`  Coleção: ${v.origemColecao}`);
-        console.log(`  ID: ${v.id}`);
-        console.log(`  Motorista: ${v.motoristaNome}`);
-        console.log(`  UID no doc: ${v.motoristaUid || v.motoristaiUid}`);
-        console.log(`  Email: ${v.motoristaEmail}`);
-        console.log(`  Cliente: ${v.clienteEntrega}`);
-        console.log(`  Status: ${v.statusOperacional}`);
-        console.log(`  DT: ${v.dt}`);
-        console.log("---");
       });
 
-      // Ordenar por data (mais recente primeiro)
+      const resultados = await Promise.all(promises);
+      todasViagens = resultados.flat();
+
+      // Ordenar por status (ativas primeiro) e data
       todasViagens.sort((a, b) => {
+        // Viagens não finalizadas primeiro
+        if (!a.finalizada && b.finalizada) return -1;
+        if (a.finalizada && !b.finalizada) return 1;
+        
+        // Depois por data
         const dateA = a.criadoEm?.toDate?.() || new Date(0);
         const dateB = b.criadoEm?.toDate?.() || new Date(0);
         return dateB - dateA;
@@ -149,45 +135,55 @@ export default function MinhasViagens({ auth, db }) {
 
       setViagens(todasViagens);
       setColecoesAtivas([...new Set(todasViagens.map(v => v.origemColecao))]);
-      
-      // Se não encontrou nada, fazer busca completa para debug
-      if (todasViagens.length === 0) {
-        await buscarTodasViagensParaDebug();
-      }
 
     } catch (error) {
-      console.error("❌ Erro geral:", error);
+      console.error("Erro ao carregar viagens:", error);
       Alert.alert("Erro", "Falha ao carregar viagens");
     } finally {
       setLoading(false);
     }
   };
 
-  const buscarTodasViagensParaDebug = async () => {
+  // NOVA FUNÇÃO: ABRIR DOCUMENTOS DE VIAGEM FINALIZADA
+  const abrirDocumentosViagem = (viagem) => {
+    setViagemDocumentos(viagem);
+    setNovaObservacao(viagem.observacoesMotorista || '');
+    setModalDocumentos(true);
+  };
+
+  // NOVA FUNÇÃO: SALVAR OBSERVAÇÃO EDITADA
+  const salvarObservacaoEditada = async () => {
+    if (!viagemDocumentos) return;
+
     try {
-      const colecoes = ['viagens_ativas', 'ordens_servico'];
-      
-      for (const colecao of colecoes) {
-        console.log(`\n=== DEBUG: ${colecao.toUpperCase()} ===`);
-        const qAll = query(collection(db, colecao));
-        const snapshot = await getDocs(qAll);
-        
-        console.log(`Total na ${colecao}: ${snapshot.size}`);
-        
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          console.log(`📄 ${doc.id.substring(0, 20)}...`);
-          console.log(`   Motorista: ${data.motoristaNome || data.nome || 'N/D'}`);
-          console.log(`   UID: ${data.motoristaUid || data.motoristaiUid || data.motoristaId || 'N/D'}`);
-          console.log(`   Email: ${data.motoristaEmail || 'N/D'}`);
-          console.log(`   Status: ${data.statusOperacional || data.status || 'N/D'}`);
-          console.log(`   Cliente: ${data.clienteEntrega || data.destinoCliente || 'N/D'}`);
-          console.log("---");
-        });
+      const dadosAtualizacao = {
+        observacoesMotorista: novaObservacao,
+        atualizadoEm: serverTimestamp()
+      };
+
+      await updateDoc(doc(db, viagemDocumentos.origemColecao, viagemDocumentos.id), dadosAtualizacao);
+
+      // Atualizar na outra coleção
+      const outraColecao = viagemDocumentos.origemColecao === 'viagens_ativas' ? 'ordens_servico' : 'viagens_ativas';
+      try {
+        await updateDoc(doc(db, outraColecao, viagemDocumentos.id), dadosAtualizacao);
+      } catch (e) {
+        console.log("Não encontrado na outra coleção");
       }
-      
+
+      // Atualizar estado local
+      setViagens(prev => prev.map(v => 
+        v.id === viagemDocumentos.id && v.origemColecao === viagemDocumentos.origemColecao
+          ? { ...v, observacoesMotorista: novaObservacao }
+          : v
+      ));
+
+      setViagemDocumentos(prev => ({ ...prev, observacoesMotorista: novaObservacao }));
+      setEditandoObservacoes(false);
+      Alert.alert("✅ Sucesso", "Observação atualizada!");
     } catch (error) {
-      console.error("Erro no debug:", error);
+      console.error("Erro ao salvar observação:", error);
+      Alert.alert("❌ Erro", "Falha ao salvar observação");
     }
   };
 
@@ -196,7 +192,6 @@ export default function MinhasViagens({ auth, db }) {
     setViagemSelecionada(viagem);
     setModalLeadTime(true);
     
-    // Inicializar lead time com dados existentes
     setLeadTimeAtivo({
       coleta: viagem.leadTimeColetaInicio ? true : false,
       entrega: viagem.leadTimeEntregaInicio ? true : false,
@@ -228,16 +223,7 @@ export default function MinhasViagens({ auth, db }) {
         atualizadoEm: serverTimestamp()
       };
 
-      // Atualizar no Firestore
       await updateDoc(doc(db, viagemSelecionada.origemColecao, viagemSelecionada.id), dadosAtualizacao);
-
-      // Atualizar na outra coleção também
-      const outraColecao = viagemSelecionada.origemColecao === 'viagens_ativas' ? 'ordens_servico' : 'viagens_ativas';
-      try {
-        await updateDoc(doc(db, outraColecao, viagemSelecionada.id), dadosAtualizacao);
-      } catch (e) {
-        console.log("Não encontrado na outra coleção:", e.message);
-      }
 
       // Atualizar estado local
       setLeadTimeAtivo(prev => ({
@@ -246,7 +232,6 @@ export default function MinhasViagens({ auth, db }) {
         [`${tipo.toLowerCase()}Inicio`]: dataHora
       }));
 
-      // Atualizar lista de viagens
       setViagens(prev => prev.map(v => 
         v.id === viagemSelecionada.id ? {
           ...v,
@@ -273,16 +258,7 @@ export default function MinhasViagens({ auth, db }) {
         atualizadoEm: serverTimestamp()
       };
 
-      // Atualizar no Firestore
       await updateDoc(doc(db, viagemSelecionada.origemColecao, viagemSelecionada.id), dadosAtualizacao);
-
-      // Atualizar na outra coleção também
-      const outraColecao = viagemSelecionada.origemColecao === 'viagens_ativas' ? 'ordens_servico' : 'viagens_ativas';
-      try {
-        await updateDoc(doc(db, outraColecao, viagemSelecionada.id), dadosAtualizacao);
-      } catch (e) {
-        console.log("Não encontrado na outra coleção:", e.message);
-      }
 
       // Atualizar estado local
       setLeadTimeAtivo(prev => ({
@@ -291,7 +267,6 @@ export default function MinhasViagens({ auth, db }) {
         [`${tipo.toLowerCase()}Fim`]: dataHora
       }));
 
-      // Atualizar lista de viagens
       setViagens(prev => prev.map(v => 
         v.id === viagemSelecionada.id ? {
           ...v,
@@ -335,124 +310,512 @@ export default function MinhasViagens({ auth, db }) {
     }
   };
 
-  const enviarCanhoto = async (viagemId, colecaoOrigem = 'viagens_ativas') => {
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== 'granted') {
-      Alert.alert("Erro", "Precisamos de permissão para a câmera.");
-      return;
-    }
-
-    Alert.alert(
-      "Enviar Canhoto",
-      "Escolha a origem da foto:",
-      [
-        { text: "Câmera", onPress: () => tirarFoto(viagemId, colecaoOrigem, true) },
-        { text: "Galeria", onPress: () => tirarFoto(viagemId, colecaoOrigem, false) },
-        { text: "Cancelar", style: "cancel" }
-      ]
-    );
+  // FUNÇÃO PARA ENVIAR CANHOTO
+  const enviarCanhoto = async (viagem) => {
+    setViagemParaUpload(viagem);
+    setModalUpload(true);
+    setFotosSelecionadas([]);
+    setObservacoes('');
   };
 
-  const tirarFoto = async (viagemId, colecaoOrigem, usarCamera) => {
-    const options = {
-      allowsEditing: true,
-      quality: 0.7,
+  // FUNÇÃO OTIMIZADA PARA ADICIONAR FOTOS
+  const adicionarFotos = async (usarCamera = false) => {
+    try {
+      // Configurar opções otimizadas
+      const options = {
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: false,
+        quality: qualidadeCamera, // Qualidade reduzida para melhor performance
+        base64: false,
+        exif: false, // Desabilitar dados EXIF para performance
+        allowsMultipleSelection: true,
+        selectionLimit: 20, // Limite aumentado
+      };
+
+      setProcessandoCamera(true); // Indicador de processamento
+
+      const result = usarCamera 
+        ? await ImagePicker.launchCameraAsync({
+            ...options,
+            cameraType: ImagePicker.CameraType.back,
+          })
+        : await ImagePicker.launchImageLibraryAsync(options);
+
+      if (!result.canceled && result.assets) {
+        const novasFotos = result.assets.map(asset => ({
+          uri: asset.uri,
+          nome: `foto_${Date.now()}_${Math.random().toString(36).substring(7)}.jpg`,
+          tipo: 'image/jpeg',
+          enviada: false,
+          tamanho: asset.fileSize || 0
+        }));
+        
+        setFotosSelecionadas(prev => [...prev, ...novasFotos]);
+      }
+    } catch (error) {
+      console.error("Erro ao adicionar fotos:", error);
+      Alert.alert("Erro", "Falha ao acessar a câmera ou galeria");
+    } finally {
+      setProcessandoCamera(false);
+    }
+  };
+
+  // MODAL DE UPLOAD MULTIPLO OTIMIZADO
+  const ModalUploadCanhoto = ({ visible, onClose, viagem, onFinalizar }) => {
+    const [uploadingIndividual, setUploadingIndividual] = useState(false);
+    const [fotosLocais, setFotosLocais] = useState(fotosSelecionadas);
+    const [obsLocal, setObsLocal] = useState(observacoes);
+    
+    useEffect(() => {
+      setFotosLocais(fotosSelecionadas);
+    }, [fotosSelecionadas]);
+    
+    useEffect(() => {
+      setObsLocal(observacoes);
+    }, [observacoes]);
+
+    const removerFoto = (index) => {
+      const novasFotos = [...fotosLocais];
+      novasFotos.splice(index, 1);
+      setFotosLocais(novasFotos);
+      setFotosSelecionadas(novasFotos);
     };
 
-    const result = usarCamera 
-      ? await ImagePicker.launchCameraAsync(options)
-      : await ImagePicker.launchImageLibraryAsync(options);
-
-    if (!result.canceled) {
-      setUploading(true);
+    const uploadFoto = async (foto, viagemId, index) => {
       try {
-        const response = await fetch(result.assets[0].uri);
+        const response = await fetch(foto.uri);
         const blob = await response.blob();
         const storage = getStorage();
-        const fileRef = ref(storage, `canhotos/${viagemId}_${Date.now()}.jpg`);
+        
+        const fileName = `${viagemId}_${Date.now()}_${index}.jpg`;
+        const fileRef = ref(storage, `canhotos/${fileName}`);
         
         await uploadBytes(fileRef, blob);
         const photoUrl = await getDownloadURL(fileRef);
-
-        // Calcular lead time total
-        const viagem = viagens.find(v => v.id === viagemId && v.origemColecao === colecaoOrigem);
-        let leadTimeTotal = '00:00:00';
         
-        if (viagem) {
-          const tempoColeta = calcularTempoDecorrido(viagem.leadTimeColetaInicio, viagem.leadTimeColetaFim);
-          const tempoEntrega = calcularTempoDecorrido(viagem.leadTimeEntregaInicio, viagem.leadTimeEntregaFim);
+        const fotosAtualizadas = [...fotosLocais];
+        fotosAtualizadas[index] = { ...fotosAtualizadas[index], enviada: true, url: photoUrl };
+        setFotosLocais(fotosAtualizadas);
+        
+        return photoUrl;
+      } catch (error) {
+        console.error("Erro upload foto:", error);
+        throw error;
+      }
+    };
+
+    const enviarTodasFotos = async () => {
+      if (fotosLocais.length === 0) {
+        Alert.alert("Atenção", "Adicione pelo menos uma foto.");
+        return;
+      }
+
+      setUploadingIndividual(true);
+      setUploadProgress(0);
+      
+      try {
+        const urls = [];
+        
+        for (let i = 0; i < fotosLocais.length; i++) {
+          const foto = fotosLocais[i];
+          if (!foto.enviada) {
+            const url = await uploadFoto(foto, viagem.id, i);
+            urls.push(url);
+          } else {
+            urls.push(foto.url);
+          }
           
-          // Somar os tempos (simplificado)
-          leadTimeTotal = tempoColeta; // Para simplificar, usar tempo da coleta
+          setUploadProgress(Math.round(((i + 1) / fotosLocais.length) * 100));
         }
 
-        // Atualizar na coleção de origem
-        await updateDoc(doc(db, colecaoOrigem, viagemId), {
-          urlCanhoto: photoUrl,
-          statusOperacional: "FINALIZADA",
-          dataFinalizacao: new Date().toISOString(),
-          atualizadoEm: new Date().toISOString(),
-          leadTimeTotal: leadTimeTotal,
-          finalizada: true,
-          chegouAoDestino: true
-        });
-
-        // Se também existe na outra coleção, atualizar lá também
-        const outraColecao = colecaoOrigem === 'viagens_ativas' ? 'ordens_servico' : 'viagens_ativas';
-        try {
-          await updateDoc(doc(db, outraColecao, viagemId), {
-            urlCanhoto: photoUrl,
-            statusOperacional: "FINALIZADA",
-            dataFinalizacao: new Date().toISOString(),
-            atualizadoEm: new Date().toISOString(),
-            leadTimeTotal: leadTimeTotal,
-            finalizada: true,
-            chegouAoDestino: true
-          });
-        } catch (e) {
-          console.log("Não encontrado na outra coleção:", e.message);
-        }
-
-        Alert.alert("✅ Sucesso", "Viagem finalizada com sucesso!");
-        
-        // Atualizar lista local
-        setViagens(prev => prev.map(v => 
-          v.id === viagemId && v.origemColecao === colecaoOrigem
-            ? { 
-                ...v, 
-                urlCanhoto: photoUrl, 
-                statusOperacional: "FINALIZADA",
-                leadTimeTotal: leadTimeTotal,
-                finalizada: true,
-                chegouAoDestino: true
-              }
-            : v
-        ));
+        Alert.alert(
+          "CONFIRMAR ENVIO",
+          `Deseja enviar ${fotosLocais.length} documento(s)?`,
+          [
+            { text: "CANCELAR", style: "cancel" },
+            { 
+              text: "ENVIAR", 
+              onPress: () => onFinalizar(urls, obsLocal)
+            }
+          ]
+        );
 
       } catch (error) {
-        console.error("Erro:", error);
-        Alert.alert("❌ Erro", "Falha no envio");
+        console.error("Erro no upload:", error);
+        Alert.alert("❌ Erro", "Falha no envio das fotos.");
       } finally {
-        setUploading(false);
+        setUploadingIndividual(false);
       }
+    };
+
+    return (
+      <Modal visible={visible} transparent animationType="slide">
+        <View style={styles.modalContainerUpload}>
+          <View style={styles.modalContentUpload}>
+            <View style={styles.modalHeaderUpload}>
+              <Text style={styles.modalTitleUpload}>ENVIAR DOCUMENTOS</Text>
+              <TouchableOpacity onPress={onClose} disabled={uploadingIndividual}>
+                <MaterialCommunityIcons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.modalScrollUpload} showsVerticalScrollIndicator={false}>
+              <View style={styles.viagemInfoUpload}>
+                <Text style={styles.viagemInfoTextUpload}>
+                  DT: {viagem?.dt || 'N/D'} - {viagem?.clienteEntrega || 'N/D'}
+                </Text>
+                <Text style={styles.viagemInfoSubUpload}>
+                  Tire fotos dos documentos necessários
+                </Text>
+              </View>
+
+              {processandoCamera && (
+                <View style={styles.cameraLentaOverlay}>
+                  <ActivityIndicator size="large" color="#FFD700" />
+                  <Text style={styles.cameraLentaText}>Processando...</Text>
+                </View>
+              )}
+
+              <View style={styles.fotosCounter}>
+                <MaterialCommunityIcons name="camera" size={20} color="#FFD700" />
+                <Text style={styles.fotosCounterText}>
+                  {fotosLocais.length} documento(s)
+                </Text>
+              </View>
+
+              <View style={styles.botoesAdicionarContainer}>
+                <TouchableOpacity 
+                  style={[styles.btnAdicionarFoto, (uploadingIndividual || processandoCamera) && styles.btnDisabled]}
+                  onPress={() => adicionarFotos(true)}
+                  disabled={uploadingIndividual || processandoCamera}
+                >
+                  <MaterialCommunityIcons name="camera-plus" size={24} color="#FFF" />
+                  <Text style={styles.btnAdicionarTexto}>TIRAR FOTO</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity 
+                  style={[styles.btnAdicionarFoto, (uploadingIndividual || processandoCamera) && styles.btnDisabled]}
+                  onPress={() => adicionarFotos(false)}
+                  disabled={uploadingIndividual || processandoCamera}
+                >
+                  <MaterialCommunityIcons name="image-multiple" size={24} color="#FFF" />
+                  <Text style={styles.btnAdicionarTexto}>GALERIA</Text>
+                </TouchableOpacity>
+              </View>
+
+              {uploadingIndividual && (
+                <View style={styles.uploadProgressContainer}>
+                  <Text style={styles.uploadProgressText}>
+                    Enviando: {uploadProgress}%
+                  </Text>
+                  <View style={styles.uploadProgressBar}>
+                    <View style={[styles.uploadProgressFill, { width: `${uploadProgress}%` }]} />
+                  </View>
+                </View>
+              )}
+
+              {fotosLocais.length > 0 && (
+                <View style={styles.fotosListaContainer}>
+                  <Text style={styles.fotosListaTitulo}>DOCUMENTOS SELECIONADOS:</Text>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                    <View style={styles.fotosLista}>
+                      {fotosLocais.map((foto, index) => (
+                        <View key={index} style={styles.fotoItem}>
+                          <Image 
+                            source={{ uri: foto.uri }} 
+                            style={styles.fotoThumbnail} 
+                            resizeMode="cover"
+                          />
+                          <View style={styles.fotoInfo}>
+                            <Text style={styles.fotoNome}>
+                              Doc {index + 1}
+                            </Text>
+                            <TouchableOpacity 
+                              style={styles.btnRemoverFoto}
+                              onPress={() => removerFoto(index)}
+                              disabled={foto.enviada}
+                            >
+                              <MaterialCommunityIcons 
+                                name={foto.enviada ? "check-circle" : "close-circle"} 
+                                size={20} 
+                                color={foto.enviada ? "#2ecc71" : "#e74c3c"} 
+                              />
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
+
+              <View style={styles.observacoesContainer}>
+                <Text style={styles.observacoesLabel}>Observações:</Text>
+                <TextInput
+                  style={styles.observacoesInput}
+                  placeholder="Ex: Nota fiscal, devolução, problemas, etc."
+                  placeholderTextColor="#666"
+                  value={obsLocal}
+                  onChangeText={setObsLocal}
+                  multiline
+                  numberOfLines={3}
+                  editable={!uploadingIndividual}
+                />
+              </View>
+
+              <View style={styles.legendaContainer}>
+                <View style={styles.legendaItem}>
+                  <MaterialCommunityIcons name="information" size={14} color="#FFD700" />
+                  <Text style={styles.legendaText}>
+                    Você pode adicionar até 20 documentos
+                  </Text>
+                </View>
+                <View style={styles.legendaItem}>
+                  <MaterialCommunityIcons name="information" size={14} color="#FFD700" />
+                  <Text style={styles.legendaText}>
+                    Toque na foto para visualizar
+                  </Text>
+                </View>
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalActionsUpload}>
+              <TouchableOpacity 
+                style={[styles.btnCancelarUpload, uploadingIndividual && styles.btnDisabled]}
+                onPress={onClose}
+                disabled={uploadingIndividual}
+              >
+                <Text style={styles.btnCancelarUploadText}>CANCELAR</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={[
+                  styles.btnEnviarUpload, 
+                  (fotosLocais.length === 0 || uploadingIndividual) && styles.btnEnviarDisabled
+                ]}
+                onPress={enviarTodasFotos}
+                disabled={fotosLocais.length === 0 || uploadingIndividual}
+              >
+                {uploadingIndividual ? (
+                  <ActivityIndicator color="#000" size="small" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="cloud-upload" size={20} color="#000" />
+                    <Text style={styles.btnEnviarUploadText}>
+                      ENVIAR ({fotosLocais.length})
+                    </Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  const finalizarViagemComFotos = async (urlsFotos, obs, viagem) => {
+    try {
+      const dadosAtualizacao = {
+        urlCanhoto: urlsFotos[0],
+        urlsCanhotos: urlsFotos,
+        statusOperacional: "FINALIZADA",
+        dataFinalizacao: new Date().toISOString(),
+        atualizadoEm: new Date().toISOString(),
+        finalizada: true,
+        chegouAoDestino: true,
+        observacoesMotorista: obs || '',
+        quantidadeFotos: urlsFotos.length
+      };
+
+      await updateDoc(doc(db, viagem.origemColecao, viagem.id), dadosAtualizacao);
+
+      // Salvar histórico de documentos
+      await addDoc(collection(db, 'documentos_viagem'), {
+        viagemId: viagem.id,
+        motoristaUid: auth.currentUser.uid,
+        motoristaNome: viagem.motoristaNome,
+        tipo: 'CANHOTOS',
+        urls: urlsFotos,
+        quantidade: urlsFotos.length,
+        observacoes: obs,
+        dt: viagem.dt,
+        cliente: viagem.clienteEntrega,
+        dataEnvio: serverTimestamp(),
+        status: 'ENVIADO'
+      });
+
+      Alert.alert("✅ Sucesso", `Viagem finalizada com ${urlsFotos.length} documento(s)!`);
+      
+      setViagens(prev => prev.map(v => 
+        v.id === viagem.id && v.origemColecao === viagem.origemColecao
+          ? { ...v, ...dadosAtualizacao }
+          : v
+      ));
+
+      setModalUpload(false);
+      setFotosSelecionadas([]);
+      setObservacoes('');
+      
+    } catch (error) {
+      console.error("Erro finalizar:", error);
+      Alert.alert("❌ Erro", "Falha ao finalizar viagem.");
     }
   };
 
+  // MODAL PARA VER/EDITAR DOCUMENTOS
+  const ModalDocumentosViagem = ({ visible, viagem, onClose }) => {
+    if (!viagem) return null;
+
+    return (
+      <Modal visible={visible} transparent animationType="slide">
+        <View style={styles.modalContainerDocumentos}>
+          <View style={styles.modalContentDocumentos}>
+            <View style={styles.modalHeaderDocumentos}>
+              <Text style={styles.modalTitleDocumentos}>DOCUMENTOS DA VIAGEM</Text>
+              <TouchableOpacity onPress={onClose}>
+                <MaterialCommunityIcons name="close" size={24} color="#FFF" />
+              </TouchableOpacity>
+            </View>
+            
+            <ScrollView style={styles.scrollDocumentos} showsVerticalScrollIndicator={false}>
+              <View style={styles.infoViagemDocumentos}>
+                <Text style={styles.infoTitleDocumentos}>DT: {viagem.dt || 'N/D'}</Text>
+                <Text style={styles.infoTextDocumentos}>Cliente: {viagem.clienteEntrega || 'N/D'}</Text>
+                <Text style={styles.infoSubDocumentos}>
+                  Finalizada em: {viagem.dataFinalizacao ? 
+                    new Date(viagem.dataFinalizacao).toLocaleDateString('pt-BR') : 
+                    'Data não disponível'}
+                </Text>
+              </View>
+
+              <View style={styles.sectionDocumentos}>
+                <View style={styles.sectionHeader}>
+                  <MaterialCommunityIcons name="file-document" size={20} color="#FFD700" />
+                  <Text style={styles.sectionTitle}>DOCUMENTOS ENVIADOS</Text>
+                </View>
+                
+                {viagem.urlsCanhotos && viagem.urlsCanhotos.length > 0 ? (
+                  <View style={styles.documentosGrid}>
+                    {viagem.urlsCanhotos.map((url, index) => (
+                      <TouchableOpacity 
+                        key={index} 
+                        style={styles.documentoItem}
+                        onPress={() => setModalImagem(url)}
+                      >
+                        <Image source={{ uri: url }} style={styles.documentoThumbnail} />
+                        <Text style={styles.documentoNome}>Documento {index + 1}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : viagem.urlCanhoto ? (
+                  <TouchableOpacity 
+                    style={styles.documentoItem}
+                    onPress={() => setModalImagem(viagem.urlCanhoto)}
+                  >
+                    <Image source={{ uri: viagem.urlCanhoto }} style={styles.documentoThumbnail} />
+                    <Text style={styles.documentoNome}>Canhoto Principal</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.semDocumentos}>Nenhum documento enviado</Text>
+                )}
+              </View>
+
+              <View style={styles.sectionDocumentos}>
+                <View style={styles.sectionHeader}>
+                  <MaterialCommunityIcons name="lead-pencil" size={20} color="#FFD700" />
+                  <Text style={styles.sectionTitle}>OBSERVAÇÕES</Text>
+                  <TouchableOpacity 
+                    style={styles.btnEditar}
+                    onPress={() => setEditandoObservacoes(true)}
+                  >
+                    <MaterialCommunityIcons name="pencil" size={16} color="#FFD700" />
+                  </TouchableOpacity>
+                </View>
+                
+                {editandoObservacoes ? (
+                  <View style={styles.editObservacoes}>
+                    <TextInput
+                      style={styles.inputObservacoes}
+                      value={novaObservacao}
+                      onChangeText={setNovaObservacao}
+                      multiline
+                      numberOfLines={4}
+                      placeholder="Digite suas observações..."
+                    />
+                    <View style={styles.editButtons}>
+                      <TouchableOpacity 
+                        style={styles.btnCancelarEdit}
+                        onPress={() => {
+                          setEditandoObservacoes(false);
+                          setNovaObservacao(viagem.observacoesMotorista || '');
+                        }}
+                      >
+                        <Text style={styles.btnCancelarEditText}>CANCELAR</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.btnSalvarEdit}
+                        onPress={salvarObservacaoEditada}
+                      >
+                        <Text style={styles.btnSalvarEditText}>SALVAR</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ) : (
+                  <Text style={styles.observacoesText}>
+                    {viagem.observacoesMotorista || 'Nenhuma observação registrada.'}
+                  </Text>
+                )}
+              </View>
+
+              {viagem.leadTimeColetaInicio && (
+                <View style={styles.sectionDocumentos}>
+                  <View style={styles.sectionHeader}>
+                    <MaterialCommunityIcons name="timer" size={20} color="#FFD700" />
+                    <Text style={styles.sectionTitle}>LEAD TIME</Text>
+                  </View>
+                  <View style={styles.leadTimeInfo}>
+                    <Text style={styles.leadTimeItemDoc}>
+                      <Text style={styles.leadTimeLabelDoc}>Coleta:</Text> 
+                      {viagem.leadTimeColetaInicio} → {viagem.leadTimeColetaFim || '--:--'}
+                    </Text>
+                    <Text style={styles.leadTimeItemDoc}>
+                      <Text style={styles.leadTimeLabelDoc}>Entrega:</Text> 
+                      {viagem.leadTimeEntregaInicio || '--:--'} → {viagem.leadTimeEntregaFim || '--:--'}
+                    </Text>
+                    {viagem.leadTimeTotal && (
+                      <Text style={styles.leadTimeTotalDoc}>
+                        Total: {viagem.leadTimeTotal}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
   const renderItem = ({ item }) => {
-    const temLeadTimeColeta = item.leadTimeColetaInicio || item.leadTimeColetaFim;
-    const temLeadTimeEntrega = item.leadTimeEntregaInicio || item.leadTimeEntregaFim;
+    const isFinalizada = item.finalizada || item.urlCanhoto;
     
     return (
-      <View style={styles.card}>
+      <TouchableOpacity 
+        style={styles.card}
+        onPress={() => isFinalizada && abrirDocumentosViagem(item)}
+        activeOpacity={isFinalizada ? 0.7 : 1}
+      >
         <View style={styles.cardHeader}>
           <View style={styles.headerLeft}>
             <View style={[styles.statusBadge, { 
-              backgroundColor: item.urlCanhoto ? '#2ecc71' : 
+              backgroundColor: isFinalizada ? '#2ecc71' : 
                              item.statusOperacional === 'PROGRAMADO' ? '#3498db' : 
                              '#FFD700' 
             }]}>
               <Text style={styles.statusText}>
-                {item.statusOperacional || 'PROGRAMADO'}
+                {isFinalizada ? 'FINALIZADA' : item.statusOperacional || 'PROGRAMADO'}
               </Text>
             </View>
             <Text style={styles.colecaoBadge}>
@@ -484,35 +847,25 @@ export default function MinhasViagens({ auth, db }) {
         </View>
 
         {/* LEAD TIME INFO */}
-        {(temLeadTimeColeta || temLeadTimeEntrega) && (
+        {(item.leadTimeColetaInicio || item.leadTimeEntregaInicio) && (
           <View style={styles.leadTimeSection}>
             <Text style={styles.leadTimeTitle}>⏱️ LEAD TIME</Text>
             <View style={styles.leadTimeGrid}>
-              {temLeadTimeColeta && (
+              {item.leadTimeColetaInicio && (
                 <View style={styles.leadTimeItem}>
                   <Text style={styles.leadTimeLabel}>Coleta:</Text>
                   <Text style={styles.leadTimeValue}>
-                    {item.leadTimeColetaInicio || '--:--'} → {item.leadTimeColetaFim || '--:--'}
+                    {item.leadTimeColetaInicio} → {item.leadTimeColetaFim || '--:--'}
                   </Text>
-                  {item.leadTimeColetaInicio && item.leadTimeColetaFim && (
-                    <Text style={styles.leadTimeDuration}>
-                      Tempo: {calcularTempoDecorrido(item.leadTimeColetaInicio, item.leadTimeColetaFim)}
-                    </Text>
-                  )}
                 </View>
               )}
               
-              {temLeadTimeEntrega && (
+              {item.leadTimeEntregaInicio && (
                 <View style={styles.leadTimeItem}>
                   <Text style={styles.leadTimeLabel}>Entrega:</Text>
                   <Text style={styles.leadTimeValue}>
                     {item.leadTimeEntregaInicio || '--:--'} → {item.leadTimeEntregaFim || '--:--'}
                   </Text>
-                  {item.leadTimeEntregaInicio && item.leadTimeEntregaFim && (
-                    <Text style={styles.leadTimeDuration}>
-                      Tempo: {calcularTempoDecorrido(item.leadTimeEntregaInicio, item.leadTimeEntregaFim)}
-                    </Text>
-                  )}
                 </View>
               )}
             </View>
@@ -525,50 +878,43 @@ export default function MinhasViagens({ auth, db }) {
           </View>
         )}
 
-        {item.observacao ? (
-          <View style={styles.obsSection}>
-            <Text style={styles.obsTitle}>OBSERVAÇÃO</Text>
-            <Text style={styles.obsText}>{item.observacao}</Text>
-          </View>
-        ) : null}
-
         <View style={styles.actionArea}>
-          {!item.urlCanhoto && !item.finalizada && (
-            <TouchableOpacity 
-              style={styles.btnLeadTime} 
-              onPress={() => abrirModalLeadTime(item)}
-            >
-              <MaterialCommunityIcons name="timer" size={20} color="#FFF" />
-              <Text style={styles.btnLeadTimeText}>REGISTRAR LEAD TIME</Text>
-            </TouchableOpacity>
-          )}
-          
-          {item.urlCanhoto ? (
-            <TouchableOpacity 
-              style={styles.btnVisualizar} 
-              onPress={() => setModalImagem(item.urlCanhoto)}
-            >
-              <MaterialCommunityIcons name="image-search" size={20} color="#FFD700" />
-              <Text style={styles.btnVisualizarText}>VER CANHOTO</Text>
-            </TouchableOpacity>
+          {!isFinalizada ? (
+            <>
+              <TouchableOpacity 
+                style={styles.btnLeadTime} 
+                onPress={() => abrirModalLeadTime(item)}
+              >
+                <MaterialCommunityIcons name="timer" size={20} color="#FFF" />
+                <Text style={styles.btnLeadTimeText}>REGISTRAR LEAD TIME</Text>
+              </TouchableOpacity>
+              
+              <TouchableOpacity 
+                style={styles.btnCanhoto} 
+                onPress={() => enviarCanhoto(item)}
+                disabled={uploading}
+              >
+                {uploading ? (
+                  <ActivityIndicator color="#000" />
+                ) : (
+                  <>
+                    <MaterialCommunityIcons name="camera" size={20} color="#000" />
+                    <Text style={styles.btnCanhotoText}>ENVIAR DOCUMENTOS</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </>
           ) : (
             <TouchableOpacity 
-              style={styles.btnCanhoto} 
-              onPress={() => enviarCanhoto(item.id, item.origemColecao)}
-              disabled={uploading}
+              style={styles.btnVisualizar} 
+              onPress={() => abrirDocumentosViagem(item)}
             >
-              {uploading ? (
-                <ActivityIndicator color="#000" />
-              ) : (
-                <>
-                  <MaterialCommunityIcons name="camera" size={20} color="#000" />
-                  <Text style={styles.btnCanhotoText}>ENTREGAR CANHOTO</Text>
-                </>
-              )}
+              <MaterialCommunityIcons name="file-document-multiple" size={20} color="#FFD700" />
+              <Text style={styles.btnVisualizarText}>VER DOCUMENTOS</Text>
             </TouchableOpacity>
           )}
         </View>
-      </View>
+      </TouchableOpacity>
     );
   };
 
@@ -581,7 +927,6 @@ export default function MinhasViagens({ auth, db }) {
     }
   };
 
-  // Filtragem
   const viagensExibidas = viagens.filter(v => {
     if (abaAtiva === 'ativas') return !v.urlCanhoto && !v.finalizada;
     return !!v.urlCanhoto || v.finalizada;
@@ -589,35 +934,42 @@ export default function MinhasViagens({ auth, db }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" />
+      <StatusBar barStyle="light-content" backgroundColor="#000" />
       
       <View style={styles.header}>
         <Text style={styles.title}>MINHAS VIAGENS</Text>
-        <TouchableOpacity 
-          style={styles.refreshButton}
-          onPress={() => {
-            setLoading(true);
-            buscarViagensDeTodasColecoes();
-          }}
-        >
-          <MaterialCommunityIcons name="refresh" size={22} color="#FFD700" />
-        </TouchableOpacity>
-      </View>
-
-      {/* INFO DAS COLEÇÕES ENCONTRADAS */}
-      {colecoesAtivas.length > 0 && (
-        <View style={styles.colecoesInfo}>
-          <Text style={styles.colecoesText}>
-            Buscando em: {colecoesAtivas.join(', ')}
-          </Text>
+        <View style={styles.headerButtons}>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => {
+              setLoading(true);
+              buscarViagensDeTodasColecoes();
+            }}
+          >
+            <MaterialCommunityIcons name="refresh" size={22} color="#FFD700" />
+          </TouchableOpacity>
+          <TouchableOpacity 
+            style={styles.headerButton}
+            onPress={() => Alert.alert(
+              "Ajuda",
+              "• Toque em uma viagem finalizada para ver documentos\n• Use REGISTRAR LEAD TIME para tempos\n• Tire fotos dos documentos para envio"
+            )}
+          >
+            <MaterialCommunityIcons name="help-circle" size={22} color="#FFD700" />
+          </TouchableOpacity>
         </View>
-      )}
+      </View>
 
       <View style={styles.tabBar}>
         <TouchableOpacity 
           style={[styles.tab, abaAtiva === 'ativas' && styles.tabAtiva]} 
           onPress={() => setAbaAtiva('ativas')}
         >
+          <MaterialCommunityIcons 
+            name="truck-delivery" 
+            size={20} 
+            color={abaAtiva === 'ativas' ? '#FFD700' : '#666'} 
+          />
           <Text style={[styles.tabText, abaAtiva === 'ativas' && styles.tabTextAtivo]}>
             ATIVAS ({viagens.filter(v => !v.urlCanhoto && !v.finalizada).length})
           </Text>
@@ -626,6 +978,11 @@ export default function MinhasViagens({ auth, db }) {
           style={[styles.tab, abaAtiva === 'historico' && styles.tabAtiva]} 
           onPress={() => setAbaAtiva('historico')}
         >
+          <MaterialCommunityIcons 
+            name="check-circle" 
+            size={20} 
+            color={abaAtiva === 'historico' ? '#FFD700' : '#666'} 
+          />
           <Text style={[styles.tabText, abaAtiva === 'historico' && styles.tabTextAtivo]}>
             FINALIZADAS ({viagens.filter(v => !!v.urlCanhoto || v.finalizada).length})
           </Text>
@@ -635,32 +992,34 @@ export default function MinhasViagens({ auth, db }) {
       {loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#FFD700" />
-          <Text style={styles.loadingText}>Buscando viagens...</Text>
+          <Text style={styles.loadingText}>Carregando viagens...</Text>
         </View>
       ) : viagensExibidas.length === 0 ? (
         <View style={styles.emptyContainer}>
-          <MaterialCommunityIcons name="truck-off" size={70} color="#333" />
-          <Text style={styles.emptyTitle}>Nenhuma viagem encontrada</Text>
+          <MaterialCommunityIcons 
+            name={abaAtiva === 'ativas' ? "truck-off" : "file-document"} 
+            size={70} 
+            color="#333" 
+          />
+          <Text style={styles.emptyTitle}>
+            {abaAtiva === 'ativas' ? 'Nenhuma viagem ativa' : 'Nenhuma viagem finalizada'}
+          </Text>
           <Text style={styles.emptyText}>
             {abaAtiva === 'ativas' 
-              ? "Você não tem viagens ativas no momento."
-              : "Você ainda não finalizou nenhuma viagem."}
+              ? "Você não tem viagens em andamento no momento."
+              : "Toque em uma viagem ativa para ver seus documentos."}
           </Text>
-          <TouchableOpacity 
-            style={styles.debugButton}
-            onPress={buscarTodasViagensParaDebug}
-          >
-            <Text style={styles.debugButtonText}>DEBUG NO CONSOLE</Text>
-          </TouchableOpacity>
         </View>
       ) : (
         <FlatList
           data={viagensExibidas}
           keyExtractor={item => `${item.id}_${item.origemColecao}`}
           renderItem={renderItem}
-          contentContainerStyle={{ padding: 15 }}
-          refreshing={loading}
-          onRefresh={buscarViagensDeTodasColecoes}
+          contentContainerStyle={styles.listContent}
+          showsVerticalScrollIndicator={false}
+          initialNumToRender={5}
+          maxToRenderPerBatch={10}
+          windowSize={5}
         />
       )}
 
@@ -689,19 +1048,22 @@ export default function MinhasViagens({ auth, db }) {
             <View style={styles.leadTimeContainer}>
               {/* COLETA */}
               <View style={styles.leadTimeBox}>
-                <Text style={styles.leadTimeBoxTitle}>⏱️ COLETA</Text>
+                <View style={styles.leadTimeBoxHeader}>
+                  <MaterialCommunityIcons name="package-variant" size={24} color="#FFD700" />
+                  <Text style={styles.leadTimeBoxTitle}>COLETA</Text>
+                </View>
                 
                 <View style={styles.leadTimeStatus}>
                   <Text style={styles.leadTimeStatusLabel}>Chegada:</Text>
                   <Text style={styles.leadTimeStatusValue}>
-                    {leadTimeAtivo.coletaInicio || '--/--/-- --:--'}
+                    {leadTimeAtivo.coletaInicio || '--:--'}
                   </Text>
                 </View>
                 
                 <View style={styles.leadTimeStatus}>
                   <Text style={styles.leadTimeStatusLabel}>Saída:</Text>
                   <Text style={styles.leadTimeStatusValue}>
-                    {leadTimeAtivo.coletaFim || '--/--/-- --:--'}
+                    {leadTimeAtivo.coletaFim || '--:--'}
                   </Text>
                 </View>
                 
@@ -711,7 +1073,7 @@ export default function MinhasViagens({ auth, db }) {
                       style={styles.btnIniciarLeadTime}
                       onPress={() => iniciarLeadTime('Coleta')}
                     >
-                      <MaterialCommunityIcons name="play" size={18} color="#FFF" />
+                      <MaterialCommunityIcons name="play-circle" size={20} color="#FFF" />
                       <Text style={styles.btnIniciarLeadTimeText}>INICIAR CHEGADA</Text>
                     </TouchableOpacity>
                   ) : !leadTimeAtivo.coletaFim ? (
@@ -719,32 +1081,36 @@ export default function MinhasViagens({ auth, db }) {
                       style={styles.btnFinalizarLeadTime}
                       onPress={() => finalizarLeadTime('Coleta')}
                     >
-                      <MaterialCommunityIcons name="stop" size={18} color="#FFF" />
+                      <MaterialCommunityIcons name="stop-circle" size={20} color="#FFF" />
                       <Text style={styles.btnFinalizarLeadTimeText}>REGISTRAR SAÍDA</Text>
                     </TouchableOpacity>
                   ) : (
-                    <Text style={styles.leadTimeConcluido}>
-                      ✓ Lead time concluído
-                    </Text>
+                    <View style={styles.leadTimeConcluido}>
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#2ecc71" />
+                      <Text style={styles.leadTimeConcluidoText}>Concluído</Text>
+                    </View>
                   )}
                 </View>
               </View>
               
               {/* ENTREGA */}
               <View style={styles.leadTimeBox}>
-                <Text style={styles.leadTimeBoxTitle}>⏱️ ENTREGA</Text>
+                <View style={styles.leadTimeBoxHeader}>
+                  <MaterialCommunityIcons name="truck-delivery" size={24} color="#FFD700" />
+                  <Text style={styles.leadTimeBoxTitle}>ENTREGA</Text>
+                </View>
                 
                 <View style={styles.leadTimeStatus}>
                   <Text style={styles.leadTimeStatusLabel}>Chegada:</Text>
                   <Text style={styles.leadTimeStatusValue}>
-                    {leadTimeAtivo.entregaInicio || '--/--/-- --:--'}
+                    {leadTimeAtivo.entregaInicio || '--:--'}
                   </Text>
                 </View>
                 
                 <View style={styles.leadTimeStatus}>
                   <Text style={styles.leadTimeStatusLabel}>Saída:</Text>
                   <Text style={styles.leadTimeStatusValue}>
-                    {leadTimeAtivo.entregaFim || '--/--/-- --:--'}
+                    {leadTimeAtivo.entregaFim || '--:--'}
                   </Text>
                 </View>
                 
@@ -754,7 +1120,7 @@ export default function MinhasViagens({ auth, db }) {
                       style={styles.btnIniciarLeadTime}
                       onPress={() => iniciarLeadTime('Entrega')}
                     >
-                      <MaterialCommunityIcons name="play" size={18} color="#FFF" />
+                      <MaterialCommunityIcons name="play-circle" size={20} color="#FFF" />
                       <Text style={styles.btnIniciarLeadTimeText}>INICIAR CHEGADA</Text>
                     </TouchableOpacity>
                   ) : !leadTimeAtivo.entregaFim ? (
@@ -762,13 +1128,14 @@ export default function MinhasViagens({ auth, db }) {
                       style={styles.btnFinalizarLeadTime}
                       onPress={() => finalizarLeadTime('Entrega')}
                     >
-                      <MaterialCommunityIcons name="stop" size={18} color="#FFF" />
+                      <MaterialCommunityIcons name="stop-circle" size={20} color="#FFF" />
                       <Text style={styles.btnFinalizarLeadTimeText}>REGISTRAR SAÍDA</Text>
                     </TouchableOpacity>
                   ) : (
-                    <Text style={styles.leadTimeConcluido}>
-                      ✓ Lead time concluído
-                    </Text>
+                    <View style={styles.leadTimeConcluido}>
+                      <MaterialCommunityIcons name="check-circle" size={20} color="#2ecc71" />
+                      <Text style={styles.leadTimeConcluidoText}>Concluído</Text>
+                    </View>
                   )}
                 </View>
               </View>
@@ -779,23 +1146,55 @@ export default function MinhasViagens({ auth, db }) {
                 style={styles.btnFecharModal}
                 onPress={() => setModalLeadTime(false)}
               >
-                <Text style={styles.btnFecharModalText}>FECHAR</Text>
+                <Text style={styles.btnFecharModalText}>VOLTAR</Text>
               </TouchableOpacity>
             </View>
           </View>
         </View>
       </Modal>
 
+      {/* MODAL DE UPLOAD */}
+      <ModalUploadCanhoto
+        visible={modalUpload}
+        onClose={() => {
+          setModalUpload(false);
+          setFotosSelecionadas([]);
+          setObservacoes('');
+        }}
+        viagem={viagemParaUpload}
+        onFinalizar={(urls, obs) => {
+          if (viagemParaUpload) {
+            finalizarViagemComFotos(urls, obs, viagemParaUpload);
+          }
+        }}
+      />
+
+      {/* MODAL DE DOCUMENTOS */}
+      <ModalDocumentosViagem
+        visible={modalDocumentos}
+        viagem={viagemDocumentos}
+        onClose={() => {
+          setModalDocumentos(false);
+          setEditandoObservacoes(false);
+          setNovaObservacao('');
+        }}
+      />
+
+      {/* MODAL DE IMAGEM */}
       <Modal visible={!!modalImagem} transparent animationType="fade">
-        <View style={styles.modalContainer}>
+        <View style={styles.modalImagemContainer}>
           <TouchableOpacity 
-            style={styles.modalClose} 
+            style={styles.modalImagemClose} 
             onPress={() => setModalImagem(null)}
           >
-            <MaterialCommunityIcons name="close-circle" size={40} color="#FFF" />
+            <MaterialCommunityIcons name="close" size={30} color="#FFF" />
           </TouchableOpacity>
           {modalImagem && (
-            <Image source={{ uri: modalImagem }} style={styles.fullImage} resizeMode="contain" />
+            <Image 
+              source={{ uri: modalImagem }} 
+              style={styles.fullImage} 
+              resizeMode="contain"
+            />
           )}
         </View>
       </Modal>
@@ -803,7 +1202,7 @@ export default function MinhasViagens({ auth, db }) {
   );
 }
 
-// ESTILOS COMPLETOS
+// ESTILOS OTIMIZADOS (mantém os mesmos estilos da versão anterior)
 const styles = StyleSheet.create({
   container: { 
     flex: 1, 
@@ -817,41 +1216,41 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15
+    paddingHorizontal: 15,
+    paddingVertical: 12,
+    paddingTop: Platform.OS === 'android' ? 25 : 12,
   },
   
   title: { 
     color: '#FFF', 
     fontSize: 20, 
-    fontWeight: '900' 
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
   
-  refreshButton: { 
-    padding: 5 
+  headerButtons: {
+    flexDirection: 'row',
+    gap: 15,
   },
   
-  colecoesInfo: {
-    backgroundColor: '#111',
-    padding: 8,
-    alignItems: 'center',
-  },
-  
-  colecoesText: {
-    color: '#888',
-    fontSize: 11,
+  headerButton: {
+    padding: 5,
   },
   
   tabBar: { 
     flexDirection: 'row', 
     height: 50, 
-    backgroundColor: '#050505' 
+    backgroundColor: '#050505',
+    borderBottomWidth: 1,
+    borderBottomColor: '#111',
   },
   
   tab: { 
     flex: 1, 
     justifyContent: 'center', 
-    alignItems: 'center' 
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
   },
   
   tabAtiva: { 
@@ -861,18 +1260,25 @@ const styles = StyleSheet.create({
   
   tabText: { 
     color: '#666', 
-    fontWeight: 'bold', 
+    fontWeight: '600', 
     fontSize: 12 
   },
   
   tabTextAtivo: { 
-    color: '#FFD700' 
+    color: '#FFD700',
+    fontWeight: 'bold',
+  },
+  
+  listContent: {
+    padding: 10,
+    paddingBottom: 20,
   },
   
   loadingContainer: { 
     flex: 1, 
     justifyContent: 'center', 
-    alignItems: 'center' 
+    alignItems: 'center',
+    backgroundColor: '#000',
   },
   
   loadingText: { 
@@ -885,7 +1291,8 @@ const styles = StyleSheet.create({
     flex: 1, 
     justifyContent: 'center', 
     alignItems: 'center', 
-    padding: 40 
+    padding: 40,
+    backgroundColor: '#000',
   },
   
   emptyTitle: { 
@@ -900,23 +1307,30 @@ const styles = StyleSheet.create({
     color: '#666', 
     textAlign: 'center', 
     marginBottom: 30,
-    fontSize: 12
+    fontSize: 14,
+    lineHeight: 20,
+    paddingHorizontal: 20,
   },
   
   card: { 
     backgroundColor: '#0A0A0A', 
-    borderRadius: 15, 
-    padding: 20, 
-    marginBottom: 20, 
+    borderRadius: 12, 
+    padding: 15, 
+    marginBottom: 10, 
     borderWidth: 1, 
-    borderColor: '#1A1A1A' 
+    borderColor: '#1A1A1A',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+    elevation: 3,
   },
   
   cardHeader: { 
     flexDirection: 'row', 
     justifyContent: 'space-between', 
     alignItems: 'flex-start',
-    marginBottom: 15 
+    marginBottom: 12,
   },
   
   headerLeft: {
@@ -931,14 +1345,17 @@ const styles = StyleSheet.create({
   
   statusBadge: { 
     paddingHorizontal: 10, 
-    paddingVertical: 5, 
-    borderRadius: 4 
+    paddingVertical: 4, 
+    borderRadius: 6,
+    minWidth: 80,
+    alignItems: 'center',
   },
   
   statusText: { 
     color: '#000', 
-    fontSize: 11, 
-    fontWeight: '900' 
+    fontSize: 10, 
+    fontWeight: '900',
+    textAlign: 'center',
   },
   
   colecaoBadge: {
@@ -965,8 +1382,8 @@ const styles = StyleSheet.create({
   
   infoGrid: {
     flexDirection: 'row',
-    gap: 15,
-    marginBottom: 15,
+    gap: 12,
+    marginBottom: 12,
   },
   
   infoBox: {
@@ -975,49 +1392,49 @@ const styles = StyleSheet.create({
   
   infoTitle: {
     color: '#FFD700',
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: 'bold',
     marginBottom: 4,
+    letterSpacing: 0.5,
   },
   
   infoText: {
     color: '#DDD',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   
   infoTextMain: {
     color: '#FFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
   },
   
   infoSub: {
     color: '#888',
-    fontSize: 12,
+    fontSize: 11,
     marginTop: 2,
   },
   
-  // LEAD TIME STYLES
   leadTimeSection: {
-    backgroundColor: 'rgba(255, 215, 0, 0.1)',
-    padding: 12,
+    backgroundColor: 'rgba(255, 215, 0, 0.05)',
+    padding: 10,
     borderRadius: 8,
-    marginBottom: 15,
+    marginBottom: 12,
     borderWidth: 1,
-    borderColor: 'rgba(255, 215, 0, 0.3)',
+    borderColor: 'rgba(255, 215, 0, 0.1)',
   },
   
   leadTimeTitle: {
     color: '#FFD700',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     marginBottom: 8,
   },
   
   leadTimeGrid: {
     flexDirection: 'row',
-    gap: 15,
+    gap: 12,
   },
   
   leadTimeItem: {
@@ -1033,49 +1450,23 @@ const styles = StyleSheet.create({
   leadTimeValue: {
     color: '#FFF',
     fontSize: 11,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  
-  leadTimeDuration: {
-    color: '#FFD700',
-    fontSize: 10,
-    fontWeight: 'bold',
+    fontWeight: '500',
   },
   
   leadTimeTotal: {
     color: '#FFD700',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     marginTop: 8,
     textAlign: 'center',
   },
   
-  obsSection: { 
-    backgroundColor: '#111', 
-    padding: 10, 
-    borderRadius: 8, 
-    marginBottom: 15 
-  },
-  
-  obsTitle: { 
-    color: '#FFD700', 
-    fontSize: 11, 
-    fontWeight: 'bold', 
-    marginBottom: 5 
-  },
-  
-  obsText: { 
-    color: '#CCC', 
-    fontSize: 12 
-  },
-  
   actionArea: { 
-    marginTop: 15, 
+    marginTop: 12, 
+    paddingTop: 12,
     borderTopWidth: 1, 
     borderTopColor: '#1A1A1A', 
-    paddingTop: 15,
-    gap: 10,
+    gap: 8,
   },
   
   btnLeadTime: {
@@ -1099,7 +1490,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row', 
     justifyContent: 'center', 
     alignItems: 'center',
-    padding: 15, 
+    padding: 12, 
     borderRadius: 8, 
     gap: 10 
   },
@@ -1107,47 +1498,34 @@ const styles = StyleSheet.create({
   btnCanhotoText: { 
     color: '#000', 
     fontWeight: '900', 
-    fontSize: 14 
+    fontSize: 13 
   },
   
   btnVisualizar: { 
-    borderWidth: 1, 
-    borderColor: '#FFD700', 
+    backgroundColor: 'rgba(255, 215, 0, 0.1)', 
     flexDirection: 'row', 
     justifyContent: 'center', 
     alignItems: 'center',
-    padding: 15, 
+    padding: 12, 
     borderRadius: 8, 
-    gap: 10 
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#FFD700',
   },
   
   btnVisualizarText: { 
     color: '#FFD700', 
     fontWeight: 'bold', 
-    fontSize: 14 
-  },
-  
-  debugButton: {
-    backgroundColor: '#222',
-    paddingHorizontal: 15,
-    paddingVertical: 10,
-    borderRadius: 8,
-    marginTop: 20,
-  },
-  
-  debugButtonText: {
-    color: '#FFD700',
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontSize: 13 
   },
   
   // MODAL LEAD TIME STYLES
   modalContainer: { 
     flex: 1, 
-    backgroundColor: 'rgba(0,0,0,0.95)', 
+    backgroundColor: 'rgba(0,0,0,0.9)', 
     justifyContent: 'center', 
     alignItems: 'center',
-    padding: 20,
+    padding: 15,
   },
   
   modalContentLeadTime: {
@@ -1164,7 +1542,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 15,
     paddingBottom: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#333',
@@ -1185,7 +1563,7 @@ const styles = StyleSheet.create({
   
   viagemInfoText: {
     color: '#FFF',
-    fontSize: 12,
+    fontSize: 13,
     marginBottom: 4,
   },
   
@@ -1201,12 +1579,17 @@ const styles = StyleSheet.create({
     borderColor: '#333',
   },
   
+  leadTimeBoxHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 15,
+  },
+  
   leadTimeBoxTitle: {
     color: '#FFD700',
-    fontSize: 14,
+    fontSize: 16,
     fontWeight: 'bold',
-    marginBottom: 15,
-    textAlign: 'center',
   },
   
   leadTimeStatus: {
@@ -1217,12 +1600,12 @@ const styles = StyleSheet.create({
   
   leadTimeStatusLabel: {
     color: '#AAA',
-    fontSize: 12,
+    fontSize: 13,
   },
   
   leadTimeStatusValue: {
     color: '#FFF',
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
   },
   
@@ -1243,7 +1626,7 @@ const styles = StyleSheet.create({
   btnIniciarLeadTimeText: {
     color: '#FFF',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 13,
   },
   
   btnFinalizarLeadTime: {
@@ -1259,15 +1642,21 @@ const styles = StyleSheet.create({
   btnFinalizarLeadTimeText: {
     color: '#FFF',
     fontWeight: 'bold',
-    fontSize: 12,
+    fontSize: 13,
   },
   
   leadTimeConcluido: {
-    color: '#2ecc71',
-    fontSize: 12,
-    fontWeight: 'bold',
-    textAlign: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
     padding: 12,
+  },
+  
+  leadTimeConcluidoText: {
+    color: '#2ecc71',
+    fontSize: 13,
+    fontWeight: 'bold',
   },
   
   modalFooter: {
@@ -1287,18 +1676,531 @@ const styles = StyleSheet.create({
   btnFecharModalText: {
     color: '#FFF',
     fontWeight: 'bold',
+    fontSize: 13,
+  },
+  
+  // MODAL UPLOAD STYLES
+  modalContainerUpload: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 10,
+  },
+
+  modalContentUpload: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 15,
+    padding: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '90%',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  modalHeaderUpload: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+
+  modalTitleUpload: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+
+  modalScrollUpload: {
+    maxHeight: height * 0.6,
+  },
+
+  cameraLentaOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+    borderRadius: 15,
+  },
+
+  cameraLentaText: {
+    color: '#FFD700',
+    marginTop: 10,
+    fontSize: 14,
+  },
+
+  viagemInfoUpload: {
+    backgroundColor: '#111',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+
+  viagemInfoTextUpload: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+
+  viagemInfoSubUpload: {
+    color: '#888',
     fontSize: 12,
   },
-  
-  modalClose: { 
-    position: 'absolute', 
-    top: 50, 
-    right: 20, 
-    zIndex: 10 
+
+  fotosCounter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
   },
-  
+
+  fotosCounterText: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginLeft: 10,
+  },
+
+  botoesAdicionarContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 15,
+  },
+
+  btnAdicionarFoto: {
+    flex: 1,
+    backgroundColor: '#333',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 8,
+    gap: 10,
+  },
+
+  btnAdicionarTexto: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+
+  btnDisabled: {
+    opacity: 0.5,
+  },
+
+  uploadProgressContainer: {
+    backgroundColor: '#111',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+
+  uploadProgressText: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+
+  uploadProgressBar: {
+    height: 6,
+    backgroundColor: '#333',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+
+  uploadProgressFill: {
+    height: '100%',
+    backgroundColor: '#FFD700',
+    borderRadius: 3,
+  },
+
+  fotosListaContainer: {
+    backgroundColor: '#111',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+
+  fotosListaTitulo: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 10,
+  },
+
+  fotosLista: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  fotoItem: {
+    width: 100,
+    backgroundColor: '#222',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  fotoThumbnail: {
+    width: '100%',
+    height: 80,
+    backgroundColor: '#000',
+  },
+
+  fotoInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 8,
+  },
+
+  fotoNome: {
+    color: '#FFF',
+    fontSize: 10,
+    flex: 1,
+  },
+
+  btnRemoverFoto: {
+    padding: 2,
+  },
+
+  observacoesContainer: {
+    backgroundColor: '#111',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+  },
+
+  observacoesLabel: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+
+  observacoesInput: {
+    backgroundColor: '#222',
+    color: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 12,
+    minHeight: 80,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  legendaContainer: {
+    backgroundColor: 'rgba(255, 215, 0, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
+    marginBottom: 15,
+    gap: 8,
+  },
+
+  legendaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  legendaText: {
+    color: '#FFD700',
+    fontSize: 11,
+  },
+
+  modalActionsUpload: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+
+  btnCancelarUpload: {
+    flex: 1,
+    backgroundColor: '#333',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+
+  btnCancelarUploadText: {
+    color: '#FFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+
+  btnEnviarUpload: {
+    flex: 2,
+    backgroundColor: '#FFD700',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 15,
+    borderRadius: 8,
+    gap: 10,
+  },
+
+  btnEnviarDisabled: {
+    backgroundColor: '#666',
+    opacity: 0.5,
+  },
+
+  btnEnviarUploadText: {
+    color: '#000',
+    fontWeight: '900',
+    fontSize: 14,
+  },
+
+  // MODAL DOCUMENTOS STYLES
+  modalContainerDocumentos: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 15,
+  },
+
+  modalContentDocumentos: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 15,
+    padding: 20,
+    width: '100%',
+    maxWidth: 500,
+    maxHeight: '90%',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  modalHeaderDocumentos: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#333',
+  },
+
+  modalTitleDocumentos: {
+    color: '#FFD700',
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+
+  scrollDocumentos: {
+    maxHeight: height * 0.7,
+  },
+
+  infoViagemDocumentos: {
+    backgroundColor: '#111',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 20,
+  },
+
+  infoTitleDocumentos: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginBottom: 8,
+  },
+
+  infoTextDocumentos: {
+    color: '#FFF',
+    fontSize: 14,
+    marginBottom: 4,
+  },
+
+  infoSubDocumentos: {
+    color: '#888',
+    fontSize: 12,
+    marginTop: 4,
+  },
+
+  sectionDocumentos: {
+    backgroundColor: '#111',
+    padding: 15,
+    borderRadius: 8,
+    marginBottom: 15,
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 15,
+  },
+
+  sectionTitle: {
+    color: '#FFD700',
+    fontSize: 14,
+    fontWeight: 'bold',
+    flex: 1,
+  },
+
+  btnEditar: {
+    padding: 5,
+  },
+
+  documentosGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 10,
+  },
+
+  documentoItem: {
+    width: (width - 100) / 3,
+    alignItems: 'center',
+  },
+
+  documentoThumbnail: {
+    width: '100%',
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#000',
+    marginBottom: 5,
+  },
+
+  documentoNome: {
+    color: '#AAA',
+    fontSize: 10,
+    textAlign: 'center',
+  },
+
+  semDocumentos: {
+    color: '#888',
+    fontSize: 12,
+    textAlign: 'center',
+    padding: 20,
+  },
+
+  editObservacoes: {
+    marginTop: 10,
+  },
+
+  inputObservacoes: {
+    backgroundColor: '#222',
+    color: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 13,
+    minHeight: 100,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: '#333',
+    marginBottom: 10,
+  },
+
+  editButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+
+  btnCancelarEdit: {
+    flex: 1,
+    backgroundColor: '#333',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+
+  btnCancelarEditText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  btnSalvarEdit: {
+    flex: 1,
+    backgroundColor: '#FFD700',
+    padding: 10,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+
+  btnSalvarEditText: {
+    color: '#000',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  observacoesText: {
+    color: '#CCC',
+    fontSize: 13,
+    lineHeight: 18,
+    padding: 10,
+    backgroundColor: '#222',
+    borderRadius: 8,
+  },
+
+  leadTimeInfo: {
+    gap: 8,
+  },
+
+  leadTimeItemDoc: {
+    color: '#FFF',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+
+  leadTimeLabelDoc: {
+    color: '#FFD700',
+    fontWeight: 'bold',
+  },
+
+  leadTimeTotalDoc: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: 'bold',
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+
+  modalImagemContainer: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.98)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  modalImagemClose: {
+    position: 'absolute',
+    top: 40,
+    right: 20,
+    zIndex: 10,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 5,
+  },
+
   fullImage: { 
-    width: '95%', 
-    height: '80%' 
+    width: width - 40, 
+    height: height - 100,
   }
 });
